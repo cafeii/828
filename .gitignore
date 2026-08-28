@@ -1,0 +1,16 @@
+CLAUDE.md
+.claude/
+
+# 内部资料与文档（含集群内部信息，不入公开仓库）
+docs/
+
+# 数据与实验产物
+dataset/
+logs/
+outputs/
+
+# 噪声
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
