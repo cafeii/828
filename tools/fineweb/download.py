@@ -21,7 +21,7 @@ from pathlib import Path
 DEFAULT_TARGET = "/work/projects/memos-b3/datasets/lzc_rnn/fineweb"
 URL_TMPL = ("https://modelscope.cn/api/v1/datasets/{repo}/repo"
             "?Revision={rev}&FilePath={path}")
-MAX_RETRY = 5
+MAX_RETRY = 8
 
 
 def make_opener() -> urllib.request.OpenerDirector:
@@ -49,13 +49,22 @@ def download_one(opener, repo: str, rev: str, target: Path, path: str,
     for attempt in range(MAX_RETRY):
         try:
             got = tmp.stat().st_size if tmp.exists() else 0
+            if got == size:
+                # 已下完但未重命名（上次在重命名前被中断）
+                tmp.rename(out)
+                return "done"
             req = urllib.request.Request(url)
             if got:
                 req.add_header("Range", f"bytes={got}-")
             with opener.open(req, timeout=120) as r:
-                if got and r.status != 206:
-                    # 服务端不支持续传：从头重来，避免追加导致文件损坏
-                    got = 0
+                if got:
+                    # 判定续传是否被接受：不看状态码（该网关返回 200 而非 206），
+                    # 看 Content-Range 头，或 Content-Length 是否等于剩余字节数
+                    cr = r.headers.get("Content-Range")
+                    cl = r.headers.get("Content-Length")
+                    resumed = bool(cr) or (cl and int(cl) == size - got)
+                    if not resumed:
+                        got = 0  # 全量响应：从头重来
                 with open(tmp, "ab" if got else "wb") as f:
                     # read1：单次 recv 有数据即返回写盘；
                     # read(大块) 在滴漏式慢连接上可能数小时不返回
