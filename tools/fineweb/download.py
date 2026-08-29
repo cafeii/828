@@ -22,7 +22,6 @@ DEFAULT_TARGET = "/work/projects/memos-b3/datasets/lzc_rnn/fineweb"
 URL_TMPL = ("https://modelscope.cn/api/v1/datasets/{repo}/repo"
             "?Revision={rev}&FilePath={path}")
 MAX_RETRY = 5
-CHUNK = 8 << 20  # 8MB
 
 
 def make_opener() -> urllib.request.OpenerDirector:
@@ -58,13 +57,16 @@ def download_one(opener, repo: str, rev: str, target: Path, path: str,
                     # 服务端不支持续传：从头重来，避免追加导致文件损坏
                     got = 0
                 with open(tmp, "ab" if got else "wb") as f:
-                    while chunk := r.read(CHUNK):
+                    # read1：单次 recv 有数据即返回写盘；
+                    # read(大块) 在滴漏式慢连接上可能数小时不返回
+                    while chunk := r.read1(1 << 20):
                         f.write(chunk)
             if tmp.stat().st_size != size:
                 raise IOError(f"大小不符: {tmp.stat().st_size} != {size}")
             tmp.rename(out)
             return "done"
         except Exception as e:
+            print(f"[retry] {path} 第 {attempt + 1} 次: {e}", flush=True)
             if attempt == MAX_RETRY - 1:
                 raise RuntimeError(f"{path} 下载失败: {e}") from e
             time.sleep(5 * (attempt + 1))
