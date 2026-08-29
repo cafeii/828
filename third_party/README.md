@@ -19,6 +19,7 @@
 
 - `Gated Delta Networks Improving Mamba2 with Delta Rule/` — GDN（ICLR 2025）
 - `Gated DeltaNet-2 Decoupling Erase and Write in Linear Attention/` — GDN-2
+- `Kimi Linear An Expressive, Efficient Attention Architecture/` — Kimi Linear（KDA）
 
 ## 改动纪律
 
