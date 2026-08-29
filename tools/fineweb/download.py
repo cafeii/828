@@ -4,8 +4,9 @@
 特性：文件级断点续传（已完成则跳过）、.part 临时文件原子落盘、
 失败重试、并行下载、结束时校验文件数与总字节数。
 
-用法: python3 download.py [manifest.json] [目标目录] [并行数]
+用法: python3 download.py [manifest.json] [目标目录] [并行数] [分片 i/n]
 默认: manifest.json 与脚本同目录, 目标 /work/projects/memos-b3/datasets/lzc_rnn/fineweb
+分片: 如 0/4 表示只下载第 0 片（按文件序隔 n 取 1），用于多节点并行。
 中断后直接重跑同一命令即可续传。
 """
 import json
@@ -78,9 +79,12 @@ def main() -> None:
 
     manifest = json.loads(manifest_path.read_text())
     files = manifest["files"]
-    total = manifest["total_bytes"]
+    if len(sys.argv) > 4:
+        shard_i, shard_n = (int(x) for x in sys.argv[4].split("/"))
+        files = files[shard_i::shard_n]
+    total = sum(f["size"] for f in files)
     print(f"[plan] {len(files)} 个文件, 共 {total / 1e9:.1f}GB, "
-          f"目标 {target}, 并行 {workers}")
+          f"目标 {target}, 并行 {workers}", flush=True)
 
     opener = make_opener()
     done_bytes = 0
