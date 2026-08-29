@@ -1,0 +1,673 @@
+{
+ "repo": "swift/fineweb",
+ "revision": "master",
+ "created": "2026-08-29T06:10:31.707229+00:00",
+ "subsets": [
+  "sample/10BT",
+  "sample/100BT"
+ ],
+ "total_files": 165,
+ "total_bytes": 333946950096,
+ "files": [
+  {
+   "path": "sample/10BT/000_00000.parquet",
+   "size": 2152311268
+  },
+  {
+   "path": "sample/10BT/001_00000.parquet",
+   "size": 2151672240
+  },
+  {
+   "path": "sample/10BT/002_00000.parquet",
+   "size": 2153028760
+  },
+  {
+   "path": "sample/10BT/003_00000.parquet",
+   "size": 2152170165
+  },
+  {
+   "path": "sample/10BT/004_00000.parquet",
+   "size": 2151468038
+  },
+  {
+   "path": "sample/10BT/005_00000.parquet",
+   "size": 2151810722
+  },
+  {
+   "path": "sample/10BT/006_00000.parquet",
+   "size": 2152066863
+  },
+  {
+   "path": "sample/10BT/007_00000.parquet",
+   "size": 2152755205
+  },
+  {
+   "path": "sample/10BT/008_00000.parquet",
+   "size": 2152289338
+  },
+  {
+   "path": "sample/10BT/009_00000.parquet",
+   "size": 2153193897
+  },
+  {
+   "path": "sample/10BT/010_00000.parquet",
+   "size": 2152329806
+  },
+  {
+   "path": "sample/10BT/011_00000.parquet",
+   "size": 2151723913
+  },
+  {
+   "path": "sample/10BT/012_00000.parquet",
+   "size": 2152298040
+  },
+  {
+   "path": "sample/10BT/013_00000.parquet",
+   "size": 2152920926
+  },
+  {
+   "path": "sample/10BT/014_00000.parquet",
+   "size": 576196037
+  },
+  {
+   "path": "sample/100BT/000_00000.parquet",
+   "size": 2152346205
+  },
+  {
+   "path": "sample/100BT/000_00001.parquet",
+   "size": 2153087034
+  },
+  {
+   "path": "sample/100BT/000_00002.parquet",
+   "size": 2153255600
+  },
+  {
+   "path": "sample/100BT/000_00003.parquet",
+   "size": 2153187667
+  },
+  {
+   "path": "sample/100BT/000_00004.parquet",
+   "size": 2152230666
+  },
+  {
+   "path": "sample/100BT/000_00005.parquet",
+   "size": 2152560581
+  },
+  {
+   "path": "sample/100BT/000_00006.parquet",
+   "size": 2151773732
+  },
+  {
+   "path": "sample/100BT/000_00007.parquet",
+   "size": 2152559921
+  },
+  {
+   "path": "sample/100BT/000_00008.parquet",
+   "size": 2153130548
+  },
+  {
+   "path": "sample/100BT/000_00009.parquet",
+   "size": 2152141133
+  },
+  {
+   "path": "sample/100BT/001_00000.parquet",
+   "size": 2153071997
+  },
+  {
+   "path": "sample/100BT/001_00001.parquet",
+   "size": 2152884231
+  },
+  {
+   "path": "sample/100BT/001_00002.parquet",
+   "size": 2153216587
+  },
+  {
+   "path": "sample/100BT/001_00003.parquet",
+   "size": 2151902288
+  },
+  {
+   "path": "sample/100BT/001_00004.parquet",
+   "size": 2152320199
+  },
+  {
+   "path": "sample/100BT/001_00005.parquet",
+   "size": 2152006060
+  },
+  {
+   "path": "sample/100BT/001_00006.parquet",
+   "size": 2153417056
+  },
+  {
+   "path": "sample/100BT/001_00007.parquet",
+   "size": 2152825344
+  },
+  {
+   "path": "sample/100BT/001_00008.parquet",
+   "size": 2153392913
+  },
+  {
+   "path": "sample/100BT/001_00009.parquet",
+   "size": 2151952726
+  },
+  {
+   "path": "sample/100BT/002_00000.parquet",
+   "size": 2152441587
+  },
+  {
+   "path": "sample/100BT/002_00001.parquet",
+   "size": 2153312591
+  },
+  {
+   "path": "sample/100BT/002_00002.parquet",
+   "size": 2152597588
+  },
+  {
+   "path": "sample/100BT/002_00003.parquet",
+   "size": 2151905845
+  },
+  {
+   "path": "sample/100BT/002_00004.parquet",
+   "size": 2153057486
+  },
+  {
+   "path": "sample/100BT/002_00005.parquet",
+   "size": 2152244911
+  },
+  {
+   "path": "sample/100BT/002_00006.parquet",
+   "size": 2152483173
+  },
+  {
+   "path": "sample/100BT/002_00007.parquet",
+   "size": 2151816760
+  },
+  {
+   "path": "sample/100BT/002_00008.parquet",
+   "size": 2151513321
+  },
+  {
+   "path": "sample/100BT/002_00009.parquet",
+   "size": 2152843799
+  },
+  {
+   "path": "sample/100BT/003_00000.parquet",
+   "size": 2153386601
+  },
+  {
+   "path": "sample/100BT/003_00001.parquet",
+   "size": 2151576937
+  },
+  {
+   "path": "sample/100BT/003_00002.parquet",
+   "size": 2152748052
+  },
+  {
+   "path": "sample/100BT/003_00003.parquet",
+   "size": 2153594314
+  },
+  {
+   "path": "sample/100BT/003_00004.parquet",
+   "size": 2151946862
+  },
+  {
+   "path": "sample/100BT/003_00005.parquet",
+   "size": 2152007608
+  },
+  {
+   "path": "sample/100BT/003_00006.parquet",
+   "size": 2151778186
+  },
+  {
+   "path": "sample/100BT/003_00007.parquet",
+   "size": 2152362271
+  },
+  {
+   "path": "sample/100BT/003_00008.parquet",
+   "size": 2151466152
+  },
+  {
+   "path": "sample/100BT/003_00009.parquet",
+   "size": 2151977227
+  },
+  {
+   "path": "sample/100BT/004_00000.parquet",
+   "size": 2152716583
+  },
+  {
+   "path": "sample/100BT/004_00001.parquet",
+   "size": 2153215642
+  },
+  {
+   "path": "sample/100BT/004_00002.parquet",
+   "size": 2152715808
+  },
+  {
+   "path": "sample/100BT/004_00003.parquet",
+   "size": 2152407351
+  },
+  {
+   "path": "sample/100BT/004_00004.parquet",
+   "size": 2153159671
+  },
+  {
+   "path": "sample/100BT/004_00005.parquet",
+   "size": 2152565334
+  },
+  {
+   "path": "sample/100BT/004_00006.parquet",
+   "size": 2153329615
+  },
+  {
+   "path": "sample/100BT/004_00007.parquet",
+   "size": 2152136705
+  },
+  {
+   "path": "sample/100BT/004_00008.parquet",
+   "size": 2151884540
+  },
+  {
+   "path": "sample/100BT/004_00009.parquet",
+   "size": 2152517939
+  },
+  {
+   "path": "sample/100BT/005_00000.parquet",
+   "size": 2152093359
+  },
+  {
+   "path": "sample/100BT/005_00001.parquet",
+   "size": 2151508457
+  },
+  {
+   "path": "sample/100BT/005_00002.parquet",
+   "size": 2153206318
+  },
+  {
+   "path": "sample/100BT/005_00003.parquet",
+   "size": 2152675256
+  },
+  {
+   "path": "sample/100BT/005_00004.parquet",
+   "size": 2153393863
+  },
+  {
+   "path": "sample/100BT/005_00005.parquet",
+   "size": 2151988418
+  },
+  {
+   "path": "sample/100BT/005_00006.parquet",
+   "size": 2151618381
+  },
+  {
+   "path": "sample/100BT/005_00007.parquet",
+   "size": 2152478346
+  },
+  {
+   "path": "sample/100BT/005_00008.parquet",
+   "size": 2151533722
+  },
+  {
+   "path": "sample/100BT/005_00009.parquet",
+   "size": 2151873358
+  },
+  {
+   "path": "sample/100BT/006_00000.parquet",
+   "size": 2153061571
+  },
+  {
+   "path": "sample/100BT/006_00001.parquet",
+   "size": 2152379418
+  },
+  {
+   "path": "sample/100BT/006_00002.parquet",
+   "size": 2153378453
+  },
+  {
+   "path": "sample/100BT/006_00003.parquet",
+   "size": 2153333157
+  },
+  {
+   "path": "sample/100BT/006_00004.parquet",
+   "size": 2153311344
+  },
+  {
+   "path": "sample/100BT/006_00005.parquet",
+   "size": 2152613071
+  },
+  {
+   "path": "sample/100BT/006_00006.parquet",
+   "size": 2151988561
+  },
+  {
+   "path": "sample/100BT/006_00007.parquet",
+   "size": 2153147386
+  },
+  {
+   "path": "sample/100BT/006_00008.parquet",
+   "size": 2152811029
+  },
+  {
+   "path": "sample/100BT/006_00009.parquet",
+   "size": 2153105369
+  },
+  {
+   "path": "sample/100BT/007_00000.parquet",
+   "size": 2151773578
+  },
+  {
+   "path": "sample/100BT/007_00001.parquet",
+   "size": 2152458185
+  },
+  {
+   "path": "sample/100BT/007_00002.parquet",
+   "size": 2152990413
+  },
+  {
+   "path": "sample/100BT/007_00003.parquet",
+   "size": 2152971365
+  },
+  {
+   "path": "sample/100BT/007_00004.parquet",
+   "size": 2152975975
+  },
+  {
+   "path": "sample/100BT/007_00005.parquet",
+   "size": 2152566372
+  },
+  {
+   "path": "sample/100BT/007_00006.parquet",
+   "size": 2152110628
+  },
+  {
+   "path": "sample/100BT/007_00007.parquet",
+   "size": 2152332566
+  },
+  {
+   "path": "sample/100BT/007_00008.parquet",
+   "size": 2152774486
+  },
+  {
+   "path": "sample/100BT/007_00009.parquet",
+   "size": 2151580553
+  },
+  {
+   "path": "sample/100BT/008_00000.parquet",
+   "size": 2153433680
+  },
+  {
+   "path": "sample/100BT/008_00001.parquet",
+   "size": 2152487073
+  },
+  {
+   "path": "sample/100BT/008_00002.parquet",
+   "size": 2152770937
+  },
+  {
+   "path": "sample/100BT/008_00003.parquet",
+   "size": 2153258185
+  },
+  {
+   "path": "sample/100BT/008_00004.parquet",
+   "size": 2153228549
+  },
+  {
+   "path": "sample/100BT/008_00005.parquet",
+   "size": 2152876584
+  },
+  {
+   "path": "sample/100BT/008_00006.parquet",
+   "size": 2151898678
+  },
+  {
+   "path": "sample/100BT/008_00007.parquet",
+   "size": 2151981870
+  },
+  {
+   "path": "sample/100BT/008_00008.parquet",
+   "size": 2152722440
+  },
+  {
+   "path": "sample/100BT/008_00009.parquet",
+   "size": 2151495777
+  },
+  {
+   "path": "sample/100BT/009_00000.parquet",
+   "size": 2152783419
+  },
+  {
+   "path": "sample/100BT/009_00001.parquet",
+   "size": 2151567665
+  },
+  {
+   "path": "sample/100BT/009_00002.parquet",
+   "size": 2153121132
+  },
+  {
+   "path": "sample/100BT/009_00003.parquet",
+   "size": 2152438549
+  },
+  {
+   "path": "sample/100BT/009_00004.parquet",
+   "size": 2153067447
+  },
+  {
+   "path": "sample/100BT/009_00005.parquet",
+   "size": 2151422847
+  },
+  {
+   "path": "sample/100BT/009_00006.parquet",
+   "size": 2153508779
+  },
+  {
+   "path": "sample/100BT/009_00007.parquet",
+   "size": 2151750048
+  },
+  {
+   "path": "sample/100BT/009_00008.parquet",
+   "size": 2152323874
+  },
+  {
+   "path": "sample/100BT/009_00009.parquet",
+   "size": 2153321074
+  },
+  {
+   "path": "sample/100BT/010_00000.parquet",
+   "size": 2153202381
+  },
+  {
+   "path": "sample/100BT/010_00001.parquet",
+   "size": 2152548029
+  },
+  {
+   "path": "sample/100BT/010_00002.parquet",
+   "size": 2151939217
+  },
+  {
+   "path": "sample/100BT/010_00003.parquet",
+   "size": 2151780585
+  },
+  {
+   "path": "sample/100BT/010_00004.parquet",
+   "size": 2152870860
+  },
+  {
+   "path": "sample/100BT/010_00005.parquet",
+   "size": 2152534457
+  },
+  {
+   "path": "sample/100BT/010_00006.parquet",
+   "size": 2152486760
+  },
+  {
+   "path": "sample/100BT/010_00007.parquet",
+   "size": 2152452104
+  },
+  {
+   "path": "sample/100BT/010_00008.parquet",
+   "size": 2153166375
+  },
+  {
+   "path": "sample/100BT/010_00009.parquet",
+   "size": 2152538147
+  },
+  {
+   "path": "sample/100BT/011_00000.parquet",
+   "size": 2151786312
+  },
+  {
+   "path": "sample/100BT/011_00001.parquet",
+   "size": 2151984321
+  },
+  {
+   "path": "sample/100BT/011_00002.parquet",
+   "size": 2153629250
+  },
+  {
+   "path": "sample/100BT/011_00003.parquet",
+   "size": 2152422679
+  },
+  {
+   "path": "sample/100BT/011_00004.parquet",
+   "size": 2152096921
+  },
+  {
+   "path": "sample/100BT/011_00005.parquet",
+   "size": 2151859860
+  },
+  {
+   "path": "sample/100BT/011_00006.parquet",
+   "size": 2152528897
+  },
+  {
+   "path": "sample/100BT/011_00007.parquet",
+   "size": 2152862024
+  },
+  {
+   "path": "sample/100BT/011_00008.parquet",
+   "size": 2152886684
+  },
+  {
+   "path": "sample/100BT/011_00009.parquet",
+   "size": 2152180646
+  },
+  {
+   "path": "sample/100BT/012_00000.parquet",
+   "size": 2152393084
+  },
+  {
+   "path": "sample/100BT/012_00001.parquet",
+   "size": 2152533712
+  },
+  {
+   "path": "sample/100BT/012_00002.parquet",
+   "size": 2152591693
+  },
+  {
+   "path": "sample/100BT/012_00003.parquet",
+   "size": 2152888462
+  },
+  {
+   "path": "sample/100BT/012_00004.parquet",
+   "size": 2153326182
+  },
+  {
+   "path": "sample/100BT/012_00005.parquet",
+   "size": 2151743694
+  },
+  {
+   "path": "sample/100BT/012_00006.parquet",
+   "size": 2151993750
+  },
+  {
+   "path": "sample/100BT/012_00007.parquet",
+   "size": 2152605506
+  },
+  {
+   "path": "sample/100BT/012_00008.parquet",
+   "size": 2151703717
+  },
+  {
+   "path": "sample/100BT/012_00009.parquet",
+   "size": 2151683822
+  },
+  {
+   "path": "sample/100BT/013_00000.parquet",
+   "size": 2152244766
+  },
+  {
+   "path": "sample/100BT/013_00001.parquet",
+   "size": 2152713918
+  },
+  {
+   "path": "sample/100BT/013_00002.parquet",
+   "size": 2153567763
+  },
+  {
+   "path": "sample/100BT/013_00003.parquet",
+   "size": 2153355523
+  },
+  {
+   "path": "sample/100BT/013_00004.parquet",
+   "size": 2152867417
+  },
+  {
+   "path": "sample/100BT/013_00005.parquet",
+   "size": 2153265164
+  },
+  {
+   "path": "sample/100BT/013_00006.parquet",
+   "size": 2151751173
+  },
+  {
+   "path": "sample/100BT/013_00007.parquet",
+   "size": 2153338144
+  },
+  {
+   "path": "sample/100BT/013_00008.parquet",
+   "size": 2152858007
+  },
+  {
+   "path": "sample/100BT/013_00009.parquet",
+   "size": 2153006466
+  },
+  {
+   "path": "sample/100BT/014_00000.parquet",
+   "size": 304599897
+  },
+  {
+   "path": "sample/100BT/014_00001.parquet",
+   "size": 256937978
+  },
+  {
+   "path": "sample/100BT/014_00002.parquet",
+   "size": 239809917
+  },
+  {
+   "path": "sample/100BT/014_00003.parquet",
+   "size": 225935323
+  },
+  {
+   "path": "sample/100BT/014_00004.parquet",
+   "size": 168994797
+  },
+  {
+   "path": "sample/100BT/014_00005.parquet",
+   "size": 178531658
+  },
+  {
+   "path": "sample/100BT/014_00006.parquet",
+   "size": 162199242
+  },
+  {
+   "path": "sample/100BT/014_00007.parquet",
+   "size": 150719478
+  },
+  {
+   "path": "sample/100BT/014_00008.parquet",
+   "size": 97668311
+  },
+  {
+   "path": "sample/100BT/014_00009.parquet",
+   "size": 96665293
+  }
+ ]
+}
