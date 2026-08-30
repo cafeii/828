@@ -1,0 +1,35 @@
+#!/bin/bash
+# 服务器冒烟sbatch模板（供 run-remote-experiment skill 填充）
+# 占位符：__EXP_ID__ __MODEL_NAME__ __USER_NAME__ __CONDA_ENV__ __TRAIN_DATA__ __VAL_DATA__
+#SBATCH --job-name=__USER_NAME__-memos-b3-lsa-smoke
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=100G
+#SBATCH --time=02:00:00
+#SBATCH --output=logs/__EXP_ID__/slurm-%j.out
+#SBATCH --error=logs/__EXP_ID__/slurm-%j.err
+
+set -e
+source ~/.bashrc
+conda activate __CONDA_ENV__
+cd /work/projects/memos-b3/code/lzc/rnn
+
+export TRITON_CACHE_DIR="outputs/__EXP_ID__/triton_cache"
+mkdir -p "$TRITON_CACHE_DIR"
+
+# 冒烟：几百step（max_tokens按 iters*block*mbs 换算），loss下降+ckpt保存恢复即通过
+python scripts/pretrain.py \
+  --model_name __MODEL_NAME__ \
+  --exp_name __EXP_ID__/__MODEL_NAME__ \
+  --train_data_dir __TRAIN_DATA__ \
+  --val_data_dir __VAL_DATA__ \
+  --out_root outputs \
+  --devices 1 \
+  --max_tokens 100000000 \
+  --micro_batch_size 8 \
+  --global_batch_size 64 \
+  --learning_rate 4e-4 \
+  --warmup_tokens 10000000 \
+  --save_step_interval 50 \
+  --eval_step_interval 100 \
+  --eval_iters 20
