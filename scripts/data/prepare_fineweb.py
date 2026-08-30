@@ -12,10 +12,24 @@ import numpy as np
 from litdata.processing.data_processor import DataChunkRecipe, DataProcessor
 
 
+def _default_num_workers() -> int:
+    """按Slurm实际分配的核数定worker数。
+
+    os.cpu_count()在Slurm里返回整个节点的核数（B3为224），而作业通常只分到
+    其中一部分，直接用会超订、反而变慢。sched_getaffinity才反映cgroup限额。
+    """
+    n = os.environ.get("SLURM_CPUS_PER_TASK") or os.environ.get("SLURM_CPUS_ON_NODE")
+    if n:
+        return int(n)
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count()
+
+
 class FineWebDataRecipe(DataChunkRecipe):
     is_generator = True
 
-    def __init__(self, tokenizer_path: str, chunk_size: int, row_groups_per_item: int = 64):
+    def __init__(self, tokenizer_path: str, chunk_size: int, row_groups_per_item: int = 16):
         super().__init__(chunk_size)
         self.tokenizer_path = tokenizer_path
         self.row_groups_per_item = row_groups_per_item
@@ -36,6 +50,8 @@ class FineWebDataRecipe(DataChunkRecipe):
         assert files, f"{input_dir} 下没有parquet文件"
         # item粒度取 (文件, row_group区间) 而非整文件：10BT只有15个2GB文件，
         # 按文件分发时并行度被文件数卡死（40 worker只有15个在干活）。
+        # 10BT共14874个row group，per_item=16 → 937个item，对64 worker约15个/worker，
+        # 尾部不均衡可控；单item约32MB，摊得住进程池调度开销。
         items = []
         for file in files:
             num_rg = pq.ParquetFile(file).num_row_groups
@@ -77,7 +93,7 @@ def prepare(
         input_dir=str(input_dir),
         output_dir=str(output_dir),
         fast_dev_run=fast_dev_run,
-        num_workers=num_workers or os.cpu_count(),
+        num_workers=num_workers or _default_num_workers(),
         num_downloaders=1,
     )
 
@@ -98,6 +114,6 @@ if __name__ == "__main__":
     p.add_argument("--tokenizer_path", type=Path, default=Path("checkpoints/Llama-2-7b-hf"))
     p.add_argument("--chunk_size", type=int, default=2049 * 16384)
     p.add_argument("--num_workers", type=int, default=None)
-    p.add_argument("--row_groups_per_item", type=int, default=64)
+    p.add_argument("--row_groups_per_item", type=int, default=16)
     p.add_argument("--fast_dev_run", action="store_true")
     prepare(**vars(p.parse_args()))
