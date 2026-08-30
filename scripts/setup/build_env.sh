@@ -41,7 +41,10 @@ if ! python -c "import flash_attn" 2>/dev/null; then
     # 源码编译：节点无系统 nvcc，用 conda cuda-toolkit（版本对齐 pip 的 cu12.8 运行时）
     if ! command -v nvcc >/dev/null; then
       echo "[3/4] 安装 cuda-toolkit 12.8（nvidia channel）"
-      conda install -y -c nvidia cuda-toolkit=12.8
+      # 串行提取：共享节点疑似有 /dev/shm 清理任务，并行提取的进程池
+      # 信号量可能被误删（BrokenProcessPool），串行规避
+      CONDA_EXTRACT_THREADS=1 CONDA_VERIFY_THREADS=1 \
+        conda install -y -c nvidia cuda-toolkit=12.8
     fi
     export CUDA_HOME="$CONDA_PREFIX"
     export MAX_JOBS=8
