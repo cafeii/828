@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from litdata.processing.data_processor import DataChunkRecipe, DataProcessor
+from litdata.streaming.item_loader import TokensLoader
 
 
 def _default_num_workers() -> int:
@@ -97,6 +98,10 @@ def prepare(
         fast_dev_run=fast_dev_run,
         num_workers=num_workers or _default_num_workers(),
         num_downloaders=1,
+        # TokensLoader写侧：token平铺连续存储，index记dim（token数），chunk_size语义
+        # 变为每chunk的token数；缺它则落回PyTree格式，训练侧TokensLoader读不了
+        # （chunk["dim"]=None，见28657失败）。
+        item_loader=TokensLoader(),
         # 共享节点会清/dev/shm（见9c0c857前科）：spawn子进程按名重建SemLock会
         # FileNotFoundError秒死且litdata误报完成；fork继承已打开对象，免疫清理。
         start_method="fork",
