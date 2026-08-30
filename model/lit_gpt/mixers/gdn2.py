@@ -67,15 +67,18 @@ class GatedDeltaNet2(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__()
-        if num_v_heads is not None and num_v_heads != 1:
-            raise NotImplementedError("GQA+增加v_head 方案语义待定，暂未实现（见计划遗留问题）。")
-
         self.mode = mode
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_groups = num_groups if num_groups is not None else num_heads
         assert num_heads % self.num_groups == 0, "num_groups必须整除num_heads"
         self.heads_per_group = num_heads // self.num_groups
+        # 方案「GQA+增加v_head」：k/遗忘门/擦除门保持组级G份，v/w头数增至num_v_heads
+        # （状态数=num_v_heads份，对照LSA的G份潜状态）。None→组级；与LSA互斥。
+        self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_groups
+        assert not (use_lsa and self.num_v_heads != self.num_groups), "LSA的潜v是组级，与num_v_heads互斥"
+        assert self.num_v_heads % self.num_groups == 0 and num_heads % self.num_v_heads == 0, \
+            "需满足整除链 num_groups | num_v_heads | num_heads"
         self.use_lsa = use_lsa
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
@@ -90,7 +93,7 @@ class GatedDeltaNet2(nn.Module):
 
         self.key_dim = self.num_heads * self.head_k_dim  # q逐头
         self.gk_dim = self.num_groups * self.head_k_dim  # k/b/g组级
-        self.gv_dim = self.num_groups * self.latent_dim  # v/w组级
+        self.gv_dim = self.num_v_heads * self.latent_dim  # v/w按v头数（组级或增头）
         self.value_dim = self.num_heads * self.head_v_dim  # 输出侧逐头
 
         self.q_proj = nn.Linear(hidden_size, self.key_dim, bias=False)
@@ -193,11 +196,11 @@ class GatedDeltaNet2(nn.Module):
         k, g, b = (rearrange(x, "... (g d) -> ... g d", d=self.head_k_dim) for x in (k, g, b))
         v, w = (rearrange(x, "... (g d) -> ... g d", d=self.latent_dim) for x in (v, w))
 
-        # 策略2：组级张量repeat到H份进kernel（组内头共享，头g*I..(g+1)*I-1属于组g）
-        if self.heads_per_group > 1:
-            k, g, b, v, w = (
-                repeat(x, "... g d -> ... (g i) d", i=self.heads_per_group) for x in (k, g, b, v, w)
-            )
+        # 策略2：组级/低头数张量repeat到H份进kernel（连续块划分，头g*I..(g+1)*I-1属于组g）
+        if self.num_groups < self.num_heads:
+            k, g, b = (repeat(x, "... g d -> ... (g i) d", i=self.heads_per_group) for x in (k, g, b))
+        if self.num_v_heads < self.num_heads:
+            v, w = (repeat(x, "... j d -> ... (j r) d", r=self.num_heads // self.num_v_heads) for x in (v, w))
 
         if self.allow_neg_eigval:
             b = b * 2.0

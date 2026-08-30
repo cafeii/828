@@ -46,7 +46,7 @@ def parse_args():
     p.add_argument("--beta1", type=float, default=0.9)
     p.add_argument("--beta2", type=float, default=0.95)
     p.add_argument("--grad_clip", type=float, default=1.0)
-    p.add_argument("--warmup_tokens", type=int, default=int(0.5e9))
+    p.add_argument("--warmup_tokens", type=int, default=None, help="默认max_tokens的1%%（对齐GDN/GDN2原版）")
     # 日志与保存
     p.add_argument("--log_iter_interval", type=int, default=10)
     p.add_argument("--save_step_interval", type=int, default=500)
@@ -93,6 +93,8 @@ def main():
     args = parse_args()
     out_dir = os.path.join(args.out_root, args.exp_name)
     args.gradient_accumulation_steps = args.global_batch_size // (args.micro_batch_size * args.devices * args.nodes)
+    if args.warmup_tokens is None:
+        args.warmup_tokens = int(args.max_tokens * 0.01)  # 对齐GDN/GDN2原版：warmup=总量1%
     assert args.gradient_accumulation_steps > 0
 
     loggers = [CSVLogger(out_dir, name="csv")]

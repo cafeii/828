@@ -48,7 +48,7 @@ class Config:
     num_groups: Optional[int] = None  # RNN组数G；None→n_head（MHA形态）
     head_dim: Optional[int] = None  # RNN头维d_k；None→n_embd//n_head
     expand_v: float = 1.0  # value头维扩展（方案：GQA+expand v_dim）
-    num_v_heads: Optional[int] = None  # 组内多v头（方案：GQA+增加v_head，语义待定暂未实现）
+    num_v_heads: Optional[int] = None  # v头总数（方案：GQA+增加v_head，状态数=v头数）；None→等同组数
     use_lsa: bool = False  # LSA开关：组级潜状态 + 静态P还原
     lsa_latent_dim: Optional[int] = None  # 潜维d_c；None→head_v_dim
     use_short_conv: bool = True
@@ -151,6 +151,7 @@ configs = [
     # ---- ~340M 主实验方案（G=4）----
     dict(_gdn2_340M_base, name="gdn2_mha_340M"),  # num_groups=None → G=H，MHA形态
     dict(_gdn2_340M_base, name="gdn2_gqa_340M", num_groups=4),
+    dict(_gdn2_340M_base, name="gdn2_gqa_vheads_340M", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="gdn2_gqa_expandv_340M", num_groups=4, expand_v=2.0),
     dict(_gdn2_340M_base, name="gdn2_lsa_340M", num_groups=4, use_lsa=True),
     # ---- ~1.3B ----
