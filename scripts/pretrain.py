@@ -55,6 +55,8 @@ def parse_args():
     p.add_argument("--wandb", action="store_true")
     p.add_argument("--seed", type=int, default=3407)
     p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--strategy", choices=["ddp", "fsdp_zero2", "fsdp"], default="ddp",
+                   help="多卡策略：显存够用ddp最快；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
     return p.parse_args()
 
 
@@ -104,7 +106,16 @@ def main():
         loggers.append(WandbLogger(project="rnn-lsa", name=args.exp_name, id=args.exp_name, save_dir=out_dir))
 
     if args.devices * args.nodes > 1:
-        strategy = FSDPStrategy(auto_wrap_policy={Block}, state_dict_type="full")
+        # 显存够时 ddp 最快（无参数收集通信）；OOM 再逐级升分片：
+        # ddp（仅梯度allreduce）< fsdp_zero2（+参数不分片、梯度/优化器分片）< fsdp（全分片≈ZeRO3）
+        if args.strategy == "ddp":
+            strategy = "ddp"
+        elif args.strategy == "fsdp_zero2":
+            strategy = FSDPStrategy(
+                auto_wrap_policy={Block}, state_dict_type="full", sharding_strategy="SHARD_GRAD_OP"
+            )
+        else:
+            strategy = FSDPStrategy(auto_wrap_policy={Block}, state_dict_type="full")
     else:
         strategy = "auto"
     fabric = L.Fabric(
