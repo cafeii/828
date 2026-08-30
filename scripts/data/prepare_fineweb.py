@@ -63,6 +63,8 @@ class FineWebDataRecipe(DataChunkRecipe):
         import pyarrow.parquet as pq
 
         filepath, rg_start, rg_end = item
+        # litdata队列传输会把tuple变list、int字符串化，int()做幂等兼容
+        rg_start, rg_end = int(rg_start), int(rg_end)
         eos = self.tokenizer.eos_token_id
         parquet = pq.ParquetFile(filepath)
         # 逐 row group 读，避免单个 2GB 文件解压后撑爆内存
