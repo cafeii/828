@@ -132,3 +132,57 @@ def test_initial_state_equivalence():
     )
     assert torch.allclose(o_latent, o_expanded, atol=1e-10)
     assert torch.allclose(S_final, expand_initial_state(T_final, P), atol=1e-10)
+
+
+# ---- GDN / KDA 骨架形态（β 为组级标量；GDN 为标量 decay，KDA 为 channel-wise decay）----
+# GDN: S_t = α(I - βkk^T)S_{t-1} + βkv^T ≡ GDN2 取 b=β·1(k维)、w=β·1(v维)、g 标量广播到 k 维。
+# KDA: channel-wise decay ≡ GDN2 同取 b=β·1、w=β·1，g 直接对应。
+# 两骨架无独立写门，LSA 写入为 β k c^T，P 可提出性依然严格成立。
+
+
+def make_scalar_beta_inputs(backbone, dtype=torch.float64, seed=0):
+    """GDN/KDA 形态输入：标量门广播成 GDN2 的 b/w/g 后可直接走 naive_gdn2_recurrence。"""
+    gen = torch.Generator().manual_seed(seed)
+
+    def rand(*shape):
+        return torch.randn(*shape, generator=gen, dtype=dtype)
+
+    q = rand(B, T, H, DK)
+    k = rand(B, T, G, DK)
+    c = rand(B, T, G, DC)
+    if backbone == "gdn":  # per-head 标量 log-decay，广播到 k 维
+        g = (-F.softplus(rand(B, T, G))).unsqueeze(-1).expand(B, T, G, DK)
+    else:  # kda: channel-wise log-decay
+        g = -F.softplus(rand(B, T, G, DK))
+    beta = rand(B, T, G).sigmoid()
+    b = beta.unsqueeze(-1).expand(B, T, G, DK)
+    w = beta.unsqueeze(-1).expand(B, T, G, DC)
+    P = rand(H, DV, DC) / DC**0.5
+    return q, k, c, g, b, w, P
+
+
+@pytest.mark.parametrize("backbone", ["gdn", "kda"])
+def test_backbone_p_factorization(backbone):
+    """GDN/KDA 形态下策略1（入口展开v=Pc）与策略2（出口乘P）严格等价。"""
+    q, k, c, g, b, w, P = make_scalar_beta_inputs(backbone)
+    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    assert torch.allclose(o_latent, o_expanded, atol=1e-10)
+
+    # fp32 下容差放宽
+    q, k, c, g, b, w, P = make_scalar_beta_inputs(backbone, torch.float32, seed=1)
+    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    assert torch.allclose(o_latent, o_expanded, atol=1e-5)
+
+
+@pytest.mark.parametrize("backbone", ["gdn", "kda"])
+def test_backbone_identity_p_reduces_to_gqa(backbone):
+    """GDN/KDA 形态下 dc=dv 且 P=I 时，LSA 退化为 GQA（组级 v 直读）。"""
+    q, k, c, g, b, w, _ = make_scalar_beta_inputs(backbone)
+    P = torch.eye(DV, dtype=torch.float64).expand(H, DV, DC).contiguous()
+    o_lsa, _ = naive_lsa_forward(q, k, c, g, b, w, P)
+
+    rep = lambda x: x.repeat_interleave(I, dim=2)
+    o_gqa, _ = naive_gdn2_recurrence(q, rep(k), rep(c), rep(g), rep(b), rep(w))
+    assert torch.allclose(o_lsa, o_gqa, atol=1e-12)

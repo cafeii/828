@@ -94,3 +94,113 @@ def test_mixer_layer_forward_backward():
     for name, p in layer.named_parameters():
         assert p.grad is not None and p.grad.isfinite().all(), f"梯度异常: {name}"
     assert layer.p_mat.grad.abs().sum() > 0, "P矩阵没有收到梯度"
+
+
+# ---- GDN / KDA 骨架（β 为 per-head 标量；GDN 标量 decay g:[B,T,H]，KDA channel-wise g:[B,T,H,K]）----
+# 两骨架 ≡ GDN2 取 b=β·1(k维)、w=β·1(v维)（GDN 另需 g 标量广播到 k 维），naive 对照据此广播。
+# 无独立写门：策略1 为 v=Pc、β 照传（kernel 写入 β k (Pc)^T = k (P(βc))^T）。
+
+
+def make_scalar_beta_inputs(backbone, seed=0, dtype=torch.bfloat16, device="cuda"):
+    torch.manual_seed(seed)
+    q = torch.randn(B, T, H, DK, dtype=dtype, device=device)
+    k = torch.randn(B, T, G, DK, dtype=dtype, device=device)
+    c = torch.randn(B, T, G, DC, dtype=dtype, device=device)
+    if backbone == "gdn":  # per-head 标量 log-decay（fp32）
+        g = -torch.nn.functional.softplus(torch.randn(B, T, G, device=device))
+    else:  # kda: channel-wise log-decay（fp32）
+        g = -torch.nn.functional.softplus(torch.randn(B, T, G, DK, device=device))
+    beta = torch.rand(B, T, G, dtype=dtype, device=device)
+    P = torch.randn(H, DV, DC, dtype=dtype, device=device) / DC**0.5
+    return q, k, c, g, beta, P
+
+
+def bcast(x, d):
+    """标量门 [..,H] -> [..,H,d]（GDN/KDA ≡ GDN2 的广播对照）"""
+    return x.unsqueeze(-1).expand(*x.shape, d)
+
+
+@requires_cuda
+def test_gdn_chunk_vs_naive():
+    """chunk_gated_delta_rule kernel vs naive广播对照（GQA repeat路径）"""
+    from lit_gpt.kernels import get_chunk_gated_delta_rule
+
+    q, k, c, g, beta, _ = make_scalar_beta_inputs("gdn")
+    o_kernel, s_kernel = get_chunk_gated_delta_rule()(
+        q=q, k=rep(k), v=rep(c), g=rep(g), beta=rep(beta),
+        output_final_state=True, use_qk_l2norm_in_kernel=True,
+    )
+    o_naive, s_naive = naive_gdn2_recurrence(
+        q.float(), rep(k).float(), rep(c).float(),
+        bcast(rep(g), DK).float(), bcast(rep(beta), DK).float(), bcast(rep(beta), DC).float(),
+    )
+    assert torch.allclose(o_kernel.float(), o_naive, atol=5e-2, rtol=5e-2), \
+        f"max diff: {(o_kernel.float() - o_naive).abs().max()}"
+    assert torch.allclose(s_kernel.float(), s_naive, atol=5e-2, rtol=5e-2)
+
+
+@requires_cuda
+def test_kda_chunk_vs_naive():
+    """chunk_kda kernel vs naive广播对照（GQA repeat路径）"""
+    from lit_gpt.kernels import get_chunk_kda
+
+    q, k, c, g, beta, _ = make_scalar_beta_inputs("kda")
+    o_kernel, s_kernel = get_chunk_kda()(
+        q=q, k=rep(k), v=rep(c), g=rep(g), beta=rep(beta),
+        output_final_state=True, use_qk_l2norm_in_kernel=True, use_gate_in_kernel=False,
+    )
+    o_naive, s_naive = naive_gdn2_recurrence(
+        q.float(), rep(k).float(), rep(c).float(),
+        rep(g).float(), bcast(rep(beta), DK).float(), bcast(rep(beta), DC).float(),
+    )
+    assert torch.allclose(o_kernel.float(), o_naive, atol=5e-2, rtol=5e-2), \
+        f"max diff: {(o_kernel.float() - o_naive).abs().max()}"
+    assert torch.allclose(s_kernel.float(), s_naive, atol=5e-2, rtol=5e-2)
+
+
+@requires_cuda
+def test_gdn_lsa_strategy_parity():
+    """GDN：策略1（入口展开v=Pc，β照传）vs 策略2（出口乘P）在真实kernel上等价"""
+    from lit_gpt.kernels import get_chunk_gated_delta_rule
+
+    kern = get_chunk_gated_delta_rule()
+    q, k, c, g, beta, P = make_scalar_beta_inputs("gdn")
+
+    # 策略2：潜空间递归，出口乘P
+    o2_latent, _ = kern(
+        q=q, k=rep(k), v=rep(c), g=rep(g), beta=rep(beta), use_qk_l2norm_in_kernel=True,
+    )
+    o2 = torch.einsum("bthc,hvc->bthv", o2_latent, P)
+
+    # 策略1：入口展开成per-head真实v（β留在kernel门里，写入 β k (Pc)^T）
+    Pg = P.view(G, I, DV, DC)
+    v_expanded = torch.einsum("btgc,givc->btgiv", c, Pg).reshape(B, T, H, DV)
+    o1, _ = kern(
+        q=q, k=rep(k), v=v_expanded, g=rep(g), beta=rep(beta), use_qk_l2norm_in_kernel=True,
+    )
+    assert torch.allclose(o1.float(), o2.float(), atol=5e-2, rtol=5e-2), \
+        f"max diff: {(o1.float() - o2.float()).abs().max()}"
+
+
+@requires_cuda
+def test_kda_lsa_strategy_parity():
+    """KDA：策略1（入口展开v=Pc，β照传）vs 策略2（出口乘P）在真实kernel上等价"""
+    from lit_gpt.kernels import get_chunk_kda
+
+    kern = get_chunk_kda()
+    q, k, c, g, beta, P = make_scalar_beta_inputs("kda")
+
+    o2_latent, _ = kern(
+        q=q, k=rep(k), v=rep(c), g=rep(g), beta=rep(beta),
+        use_qk_l2norm_in_kernel=True, use_gate_in_kernel=False,
+    )
+    o2 = torch.einsum("bthc,hvc->bthv", o2_latent, P)
+
+    Pg = P.view(G, I, DV, DC)
+    v_expanded = torch.einsum("btgc,givc->btgiv", c, Pg).reshape(B, T, H, DV)
+    o1, _ = kern(
+        q=q, k=rep(k), v=v_expanded, g=rep(g), beta=rep(beta),
+        use_qk_l2norm_in_kernel=True, use_gate_in_kernel=False,
+    )
+    assert torch.allclose(o1.float(), o2.float(), atol=5e-2, rtol=5e-2), \
+        f"max diff: {(o1.float() - o2.float()).abs().max()}"

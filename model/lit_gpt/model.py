@@ -218,25 +218,28 @@ class Block(nn.Module):
         )
         if self.use_rnn:
             if config.mixer == "gdn2":
-                from .mixers.gdn2 import GatedDeltaNet2
-
-                self.attn = GatedDeltaNet2(
-                    hidden_size=config.n_embd,
-                    num_heads=config.n_head,
-                    num_groups=config.num_groups,
-                    head_dim=config.head_dim if config.head_dim is not None else config.n_embd // config.n_head,
-                    expand_v=config.expand_v,
-                    num_v_heads=config.num_v_heads,
-                    use_lsa=config.use_lsa,
-                    lsa_latent_dim=config.lsa_latent_dim,
-                    use_short_conv=config.use_short_conv,
-                    conv_size=config.conv_size,
-                    allow_neg_eigval=config.allow_neg_eigval,
-                    norm_eps=config.norm_eps,
-                    layer_idx=layer_idx,
-                )
+                from .mixers.gdn2 import GatedDeltaNet2 as rnn_cls
+            elif config.mixer == "gdn":
+                from .mixers.gdn import GatedDeltaNet as rnn_cls
+            elif config.mixer == "kda":
+                from .mixers.kda import KimiDeltaAttention as rnn_cls
             else:
                 raise ValueError(f"未知的mixer: {config.mixer!r}")
+            self.attn = rnn_cls(
+                hidden_size=config.n_embd,
+                num_heads=config.n_head,
+                num_groups=config.num_groups,
+                head_dim=config.head_dim if config.head_dim is not None else config.n_embd // config.n_head,
+                expand_v=config.expand_v,
+                num_v_heads=config.num_v_heads,
+                use_lsa=config.use_lsa,
+                lsa_latent_dim=config.lsa_latent_dim,
+                use_short_conv=config.use_short_conv,
+                conv_size=config.conv_size,
+                allow_neg_eigval=config.allow_neg_eigval,
+                norm_eps=config.norm_eps,
+                layer_idx=layer_idx,
+            )
         else:
             self.attn = CausalSelfAttention(config, n_embd=config.n_embd, layer_idx=layer_idx)
         if not config.shared_attention_norm and config.mlp and not config.parallel_residual:

@@ -29,6 +29,13 @@ CASES = {
     "gqa_expandv": dict(num_groups=2, expand_v=2.0),
     "lsa": dict(num_groups=2, use_lsa=True),
     "lsa_dc32": dict(num_groups=2, use_lsa=True, lsa_latent_dim=32),
+    # GDN/KDA 骨架（同形态覆盖）
+    "gdn_mha": dict(mixer="gdn"),
+    "gdn_gqa": dict(mixer="gdn", num_groups=2),
+    "gdn_lsa": dict(mixer="gdn", num_groups=2, use_lsa=True),
+    "kda_mha": dict(mixer="kda"),
+    "kda_gqa": dict(mixer="kda", num_groups=2),
+    "kda_lsa": dict(mixer="kda", num_groups=2, use_lsa=True),
 }
 
 

@@ -43,7 +43,7 @@ class Config:
     condense_ratio: int = 1
 
     # ---- RNN mixer（GDN2/LSA）相关 ----
-    mixer: str = "attn"  # "attn" | "gdn2"（gdn/kda 骨架后续加入）
+    mixer: str = "attn"  # "attn" | "gdn2" | "gdn" | "kda"
     mixer_per_layer: int = 1  # 1=全RNN层；N>1=每N层1个RNN其余attn；<=0=纯attn
     num_groups: Optional[int] = None  # RNN组数G；None→n_head（MHA形态）
     head_dim: Optional[int] = None  # RNN头维d_k；None→n_embd//n_head
@@ -154,6 +154,13 @@ configs = [
     dict(_gdn2_340M_base, name="gdn2_gqa_vheads_340M", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="gdn2_gqa_expandv_340M", num_groups=4, expand_v=2.0),
     dict(_gdn2_340M_base, name="gdn2_lsa_340M", num_groups=4, use_lsa=True),
+    # ---- ~340M GDN/KDA 骨架对照（沿用gdn2骨架超参，只换mixer）----
+    dict(_gdn2_340M_base, name="gdn_mha_340M", mixer="gdn"),
+    dict(_gdn2_340M_base, name="gdn_gqa_340M", mixer="gdn", num_groups=4),
+    dict(_gdn2_340M_base, name="gdn_lsa_340M", mixer="gdn", num_groups=4, use_lsa=True),
+    dict(_gdn2_340M_base, name="kda_mha_340M", mixer="kda"),
+    dict(_gdn2_340M_base, name="kda_gqa_340M", mixer="kda", num_groups=4),
+    dict(_gdn2_340M_base, name="kda_lsa_340M", mixer="kda", num_groups=4, use_lsa=True),
     # ---- ~1.3B ----
     dict(_gdn2_1p3B_base, name="gdn2_gqa_1.3B", num_groups=4),
     dict(_gdn2_1p3B_base, name="gdn2_lsa_1.3B", num_groups=4, use_lsa=True),

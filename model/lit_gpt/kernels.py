@@ -27,7 +27,19 @@ def get_chunk_kda():
     return chunk_kda
 
 
+def get_fused_recurrent_kda():
+    from fla.ops.kda import fused_recurrent_kda
+
+    return fused_recurrent_kda
+
+
 def get_chunk_gated_delta_rule():
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 
     return chunk_gated_delta_rule
+
+
+def get_fused_recurrent_gated_delta_rule():
+    from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
+
+    return fused_recurrent_gated_delta_rule
