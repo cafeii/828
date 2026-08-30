@@ -83,6 +83,11 @@
 
 ## 待定问题（实验启动前再定，不阻塞本期）
 
-- "GQA+增加v_head"的确切语义（组内多v头即GQA×GVA混合？）与参数量对齐方式。
-- LSA在GDN（scalar beta）骨架下的门形态映射（w门是否保留）。
-- 100B正式训练的超参（LR、batch、warmup沿用GDN2论文脚本值）。
+- ~~"GQA+增加v_head"的确切语义~~ 已实现（2026-08-30）：k/遗忘/擦除门组级G份、v/w头数=num_v_heads
+  （状态数=v头数，与LSA的G份潜状态正对照），待用户核对语义。
+- ~~LSA在GDN（scalar beta）骨架下的门形态映射~~ 已解决：GDN/KDA无w门，β标量必须组级，
+  P提出性严格成立（GPU parity 7/7验证，含两骨架的策略1v2等价）。
+- **expand_v的q头数口径（待用户拍板）**：q=G（读出侧不膨胀，参数恒定，状态容量=MHA）
+  vs q=16（读出侧 H×(H/G)dv 膨胀，G=1时o_proj/g_proj爆至1.14B non-emb）。
+- ~~100B正式训练超参~~ 已对齐（2026-08-30）：LR 4e-4、warmup=1%、wd 0.1、betas(0.9,0.95)、
+  clip 1.0、cosine→LR/10，与GDN/GDN2原版一致；训练量暂定FineWeb-10B（用户依时长预估终定）。
