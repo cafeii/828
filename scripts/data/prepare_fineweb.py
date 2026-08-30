@@ -95,6 +95,9 @@ def prepare(
         fast_dev_run=fast_dev_run,
         num_workers=num_workers or _default_num_workers(),
         num_downloaders=1,
+        # 共享节点会清/dev/shm（见9c0c857前科）：spawn子进程按名重建SemLock会
+        # FileNotFoundError秒死且litdata误报完成；fork继承已打开对象，免疫清理。
+        start_method="fork",
     )
 
     start_time = time.time()
