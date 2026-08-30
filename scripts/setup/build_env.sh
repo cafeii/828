@@ -26,19 +26,29 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 # 3. flash-attn 2.8.3：优先 GitHub 预编译 wheel（经 clash 代理），失败回退源码编译
 echo "[3/4] 安装 flash-attn"
 export HTTPS_PROXY="$PROXY" HTTP_PROXY="$PROXY" https_proxy="$PROXY" http_proxy="$PROXY"
-ABI=$(python -c "import torch; print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
-for abi in "$ABI" "$([ "$ABI" = TRUE ] && echo FALSE || echo TRUE)"; do
-  WHEEL="flash_attn-2.8.3+cu12torch2.9cxx11abi${abi}-cp311-cp311-linux_x86_64.whl"
-  URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/$WHEEL"
-  if pip install --no-cache-dir "$URL"; then
-    break
-  fi
-  echo "[warn] $WHEEL 不可用"
-  if [ "$abi" != "$ABI" ]; then
-    echo "[warn] 预编译 wheel 均不可用，回退源码编译（约 1 小时）"
+if ! python -c "import flash_attn" 2>/dev/null; then
+  ABI=$(python -c "import torch; print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
+  ok=0
+  for abi in "$ABI" "$([ "$ABI" = TRUE ] && echo FALSE || echo TRUE)"; do
+    WHEEL="flash_attn-2.8.3+cu12torch2.9cxx11abi${abi}-cp311-cp311-linux_x86_64.whl"
+    URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/$WHEEL"
+    if pip install --no-cache-dir "$URL"; then
+      ok=1; break
+    fi
+    echo "[warn] $WHEEL 不可用"
+  done
+  if [ "$ok" = 0 ]; then
+    # 源码编译：节点无系统 nvcc，用 conda cuda-toolkit（版本对齐 pip 的 cu12.8 运行时）
+    if ! command -v nvcc >/dev/null; then
+      echo "[3/4] 安装 cuda-toolkit 12.8（nvidia channel）"
+      conda install -y -c nvidia cuda-toolkit=12.8
+    fi
+    export CUDA_HOME="$CONDA_PREFIX"
+    export MAX_JOBS=8
+    echo "[warn] 回退源码编译 flash-attn（约 1 小时）"
     pip install --no-cache-dir "flash-attn==2.8.3" --no-build-isolation
   fi
-done
+fi
 unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy
 
 # 4. fla（vendored 路径 editable 安装）
