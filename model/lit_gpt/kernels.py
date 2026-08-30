@@ -17,9 +17,20 @@ _GDN2_OPS_DIR = (
 _cache = {}
 
 
+def _ensure_fla_compat():
+    """gdn2_ops 针对更新版 fla 编写；对旧版 fla（0.6.0）缺失的符号做运行时注入兜底。"""
+    import os
+
+    import fla.utils
+
+    if not hasattr(fla.utils, "USE_CUDA_GRAPH"):
+        fla.utils.USE_CUDA_GRAPH = os.getenv("FLA_USE_CUDA_GRAPH", "0") == "1"
+
+
 def _load(module_name: str, attr: str):
     key = (module_name, attr)
     if key not in _cache:
+        _ensure_fla_compat()
         if "gdn2_ops" not in sys.modules:
             spec = importlib.machinery.ModuleSpec("gdn2_ops", None, is_package=True)
             spec.submodule_search_locations = [str(_GDN2_OPS_DIR)]
