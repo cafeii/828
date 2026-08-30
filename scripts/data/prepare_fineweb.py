@@ -73,6 +73,13 @@ def prepare(
 
 
 if __name__ == "__main__":
-    from jsonargparse import CLI
+    import argparse
 
-    CLI(prepare)
+    p = argparse.ArgumentParser()
+    p.add_argument("--input_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/10BT"))
+    p.add_argument("--output_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/10BT/train"))
+    p.add_argument("--tokenizer_path", type=Path, default=Path("checkpoints/Llama-2-7b-hf"))
+    p.add_argument("--chunk_size", type=int, default=2049 * 16384)
+    p.add_argument("--num_workers", type=int, default=None)
+    p.add_argument("--fast_dev_run", action="store_true")
+    prepare(**vars(p.parse_args()))
