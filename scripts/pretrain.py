@@ -73,6 +73,11 @@ def create_dataloader(data_dir, block_size, batch_size, seed, num_workers, shuff
     )
 
 
+def _streaming_dataloader(dl):
+    """fabric.setup_dataloaders 的 _FabricDataLoader 包装不透传 state_dict，取底层。"""
+    return getattr(dl, "_dataloader", dl)
+
+
 def get_lr(args, it, warmup_iters, max_iters):
     min_lr = args.learning_rate * args.min_lr_ratio
     if it < warmup_iters:
@@ -155,7 +160,7 @@ def main():
         fabric.load(ckpt, state)
         dl_state = os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth")
         if os.path.exists(dl_state):
-            train_dataloader.load_state_dict(torch.load(dl_state, weights_only=False))
+            _streaming_dataloader(train_dataloader).load_state_dict(torch.load(dl_state, weights_only=False))
 
     train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monitor)
     if fabric.device.type == "cuda" and fabric.global_rank == 0:
@@ -183,7 +188,7 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
         fabric.save(path, state)
         if not final:
             torch.save(
-                train_dataloader.state_dict(),
+                _streaming_dataloader(train_dataloader).state_dict(),
                 os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth"),
             )
 
