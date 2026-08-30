@@ -9,10 +9,16 @@ PROXY=http://10.144.2.126:8080
 
 source "$CONDA/etc/profile.d/conda.sh"
 
-# 1. conda 环境（不存在才创建）
+# 1. conda 环境（python 3.12；已存在但版本不符则重建）
+if conda env list | grep -q "^$ENV_NAME "; then
+  if ! conda run -n "$ENV_NAME" python --version 2>/dev/null | grep -q "3\.12"; then
+    echo "[1/4] $ENV_NAME python 版本不符，重建"
+    conda remove -y -n "$ENV_NAME" --all
+  fi
+fi
 if ! conda env list | grep -q "^$ENV_NAME "; then
-  echo "[1/4] 创建 conda 环境 $ENV_NAME (python 3.11)"
-  conda create -y -n "$ENV_NAME" python=3.11
+  echo "[1/4] 创建 conda 环境 $ENV_NAME (python 3.12)"
+  conda create -y -n "$ENV_NAME" python=3.12
 else
   echo "[1/4] $ENV_NAME 已存在，跳过创建"
 fi
@@ -30,7 +36,7 @@ if ! python -c "import flash_attn" 2>/dev/null; then
   ABI=$(python -c "import torch; print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
   ok=0
   for abi in "$ABI" "$([ "$ABI" = TRUE ] && echo FALSE || echo TRUE)"; do
-    WHEEL="flash_attn-2.8.3+cu12torch2.9cxx11abi${abi}-cp311-cp311-linux_x86_64.whl"
+    WHEEL="flash_attn-2.8.3+cu12torch2.9cxx11abi${abi}-cp312-cp312-linux_x86_64.whl"
     URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/$WHEEL"
     if pip install --no-cache-dir "$URL"; then
       ok=1; break
