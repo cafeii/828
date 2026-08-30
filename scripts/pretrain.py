@@ -192,8 +192,8 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
             break
         iter_t0 = time.perf_counter()
 
-        input_ids = train_data[:, 0 : model.config.block_size].contiguous()
-        targets = train_data[:, 1 : model.config.block_size + 1].contiguous()
+        input_ids = train_data[:, 0 : model.config.block_size].long().contiguous()
+        targets = train_data[:, 1 : model.config.block_size + 1].long().contiguous()
 
         lr = get_lr(args, state["iter_num"], warmup_iters, max_iters)
         for group in optimizer.param_groups:
@@ -256,8 +256,8 @@ def validate(args, fabric, model, val_dataloader):
     for k, val_data in enumerate(val_dataloader):
         if k >= args.eval_iters:
             break
-        input_ids = val_data[:, 0 : model.config.block_size].contiguous()
-        targets = val_data[:, 1 : model.config.block_size + 1].contiguous()
+        input_ids = val_data[:, 0 : model.config.block_size].long().contiguous()
+        targets = val_data[:, 1 : model.config.block_size + 1].long().contiguous()
         logits = model(input_ids)
         losses += chunked_cross_entropy(logits, targets, chunk_size=0).item()
     model.train()
