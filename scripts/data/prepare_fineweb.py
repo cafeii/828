@@ -15,9 +15,10 @@ from litdata.processing.data_processor import DataChunkRecipe, DataProcessor
 class FineWebDataRecipe(DataChunkRecipe):
     is_generator = True
 
-    def __init__(self, tokenizer_path: str, chunk_size: int):
+    def __init__(self, tokenizer_path: str, chunk_size: int, row_groups_per_item: int = 64):
         super().__init__(chunk_size)
         self.tokenizer_path = tokenizer_path
+        self.row_groups_per_item = row_groups_per_item
         self._tokenizer = None  # 每个worker进程内惰性构造
 
     @property
@@ -29,18 +30,28 @@ class FineWebDataRecipe(DataChunkRecipe):
         return self._tokenizer
 
     def prepare_structure(self, input_dir):
-        files = sorted(Path(input_dir).rglob("*.parquet"))
-        assert files, f"{input_dir} 下没有parquet文件"
-        return [str(file) for file in files]
-
-    def prepare_item(self, filepath):
         import pyarrow.parquet as pq
 
+        files = sorted(Path(input_dir).rglob("*.parquet"))
+        assert files, f"{input_dir} 下没有parquet文件"
+        # item粒度取 (文件, row_group区间) 而非整文件：10BT只有15个2GB文件，
+        # 按文件分发时并行度被文件数卡死（40 worker只有15个在干活）。
+        items = []
+        for file in files:
+            num_rg = pq.ParquetFile(file).num_row_groups
+            for start in range(0, num_rg, self.row_groups_per_item):
+                items.append((str(file), start, min(start + self.row_groups_per_item, num_rg)))
+        return items
+
+    def prepare_item(self, item):
+        import pyarrow.parquet as pq
+
+        filepath, rg_start, rg_end = item
         eos = self.tokenizer.eos_token_id
         parquet = pq.ParquetFile(filepath)
-        # 按 row group 分批读，避免单个 2GB 文件解压后撑爆内存
-        for batch in parquet.iter_batches(batch_size=1024, columns=["text"]):
-            texts = batch.column("text").to_pylist()
+        # 逐 row group 读，避免单个 2GB 文件解压后撑爆内存
+        for rg in range(rg_start, rg_end):
+            texts = parquet.read_row_group(rg, columns=["text"]).column("text").to_pylist()
             for ids in self.tokenizer(texts, add_special_tokens=False)["input_ids"]:
                 yield np.asarray(ids + [eos], dtype=np.uint16)  # bos=False, eos=True
 
@@ -51,6 +62,7 @@ def prepare(
     tokenizer_path: Path = Path("checkpoints/Llama-2-7b-hf"),
     chunk_size: int = (2049 * 16384),
     num_workers: int = None,
+    row_groups_per_item: int = 64,
     fast_dev_run: bool = False,
 ) -> None:
     """把 FineWeb parquet 转成 litdata 预分块格式（供 scripts/pretrain.py 使用）。
@@ -58,7 +70,9 @@ def prepare(
     注意：FineWeb 无官方 validation/test。如需 validation，
     请先把个别 parquet 文件复制到单独目录，再对其跑一次本脚本。
     """
-    data_recipe = FineWebDataRecipe(tokenizer_path=str(tokenizer_path), chunk_size=chunk_size)
+    data_recipe = FineWebDataRecipe(
+        tokenizer_path=str(tokenizer_path), chunk_size=chunk_size, row_groups_per_item=row_groups_per_item
+    )
     data_processor = DataProcessor(
         input_dir=str(input_dir),
         output_dir=str(output_dir),
@@ -75,11 +89,15 @@ def prepare(
 if __name__ == "__main__":
     import argparse
 
+    # worker进程内tokenizer各自串行，rust侧并行会与进程池争CPU并触发fork警告
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
     p = argparse.ArgumentParser()
     p.add_argument("--input_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/10BT"))
     p.add_argument("--output_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/10BT/train"))
     p.add_argument("--tokenizer_path", type=Path, default=Path("checkpoints/Llama-2-7b-hf"))
     p.add_argument("--chunk_size", type=int, default=2049 * 16384)
     p.add_argument("--num_workers", type=int, default=None)
+    p.add_argument("--row_groups_per_item", type=int, default=64)
     p.add_argument("--fast_dev_run", action="store_true")
     prepare(**vars(p.parse_args()))
