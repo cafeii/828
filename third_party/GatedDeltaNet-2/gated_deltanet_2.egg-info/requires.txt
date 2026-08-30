@@ -1,0 +1,10 @@
+torch==2.9.0
+numpy
+einops
+transformers
+datasets==2.20.0
+lightning==2.1.2
+wandb
+sentencepiece
+tokenizers
+typing_extensions

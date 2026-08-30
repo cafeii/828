@@ -1,7 +1,7 @@
 # FineWeb 下载与加载
 
 数据源：ModelScope `swift/fineweb`（HF `HuggingFaceFW/fineweb` 镜像）。
-下载子集：`sample/10BT`（15 文件 / 30.7GB，用于 1B 模型）与 `sample/100BT`（150 文件 / 303.2GB，用于 300M 模型）。
+下载子集：`sample/10BT`（15 文件 / 30.7GB，用于 300M 模型）与 `sample/100BT`（150 文件 / 303.2GB，用于 1B 模型）。
 
 ## 流程
 
