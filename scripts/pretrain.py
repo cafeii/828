@@ -232,6 +232,7 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
             fabric.print(
                 f"iter {state['iter_num']} step {state['step_count']}: loss {loss.item():.4f}, lr {lr:.2e},"
                 f" iter time {(t1 - iter_t0) * 1000:.2f}ms, trained {tokens_B:.3f}B tokens, ETA {eta_h:.2f}h"
+                + (f", peak mem {torch.cuda.max_memory_allocated() / 1e9:.1f}GB" if torch.cuda.is_available() else "")
             )
         monitor.on_train_batch_end(
             state["iter_num"] * args.micro_batch_size,
