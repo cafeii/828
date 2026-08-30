@@ -156,11 +156,18 @@ def main():
 
     if resume:
         ckpt = os.path.join(out_dir, "latest-model-ckpt.pth")
-        fabric.print(f"Resuming from {ckpt}")
-        fabric.load(ckpt, state)
-        dl_state = os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth")
-        if os.path.exists(dl_state):
-            _streaming_dataloader(train_dataloader).load_state_dict(torch.load(dl_state, weights_only=False))
+        # resume是best-effort：ckpt可能被挪走/损坏，或Lustre元数据缓存给出stale的
+        # exists()（28741：mv后15秒内启动的作业误判resume）。失败则从头训练。
+        try:
+            fabric.print(f"Resuming from {ckpt}")
+            fabric.load(ckpt, state)
+            dl_state = os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth")
+            if os.path.exists(dl_state):
+                _streaming_dataloader(train_dataloader).load_state_dict(torch.load(dl_state, weights_only=False))
+        except Exception as e:
+            fabric.print(f"Failed to resume ({type(e).__name__}: {e}), training from scratch")
+            state["iter_num"] = 0
+            state["step_count"] = 0
 
     train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monitor)
     if fabric.device.type == "cuda" and fabric.global_rank == 0:
