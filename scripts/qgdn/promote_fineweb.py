@@ -28,6 +28,8 @@ READY_AUDIT_SHA = 'bd58aaf2ab81c299e976e882824db95ed92701b81db435662bb25598dd7db
 READY_REPAIR_SHA = 'e20fd96d3823b56caad888eb48c4c3eac5964226c5d7df654ca5b3401d8a625f'
 AUTHORIZATION = 'repair-original-100BT-and-remove-private-overlay'
 INTERRUPTED_JOURNAL = PERSONAL / 'experiments/20260831-201300-fineweb-inplace-100bt-46b57e/outputs/promotion/promotion.json'
+AUDITED_CLEANUP_JOURNAL = PERSONAL / 'experiments/20260831-212101-fineweb-inplace-final-65dd0f/outputs/promotion/promotion.json'
+COMPLETED_AUDIT_SHA = '599c453313fafd2656153ca5e164dd00dcbfa3e5132a5b9cbdb83b28adf9ab68'
 
 
 def now():
@@ -124,7 +126,7 @@ def private_inventory(root, target, expected, repaired):
         snapshot(root / name)
 
 
-def clean_private(root, target, expected, repaired, source_stats, audit):
+def clean_private(root, target, expected, repaired, source_stats, audit, *, private_lock=None):
     if audit['status'] != 'passed' or audit['subsets']['100BT']['status'] != 'passed':
         raise ValueError('Canonical full audit must pass before private cleanup')
     private_inventory(root, target, expected, repaired)
@@ -149,8 +151,13 @@ def clean_private(root, target, expected, repaired, source_stats, audit):
         (root / 'sample/100BT' / name).unlink()
     (root / 'sample/100BT').rmdir()
     (root / 'sample').rmdir()
-    for name in ('.repair.lock', '.repair-plan.json', 'READY.json'):
+    for name in ('.repair-plan.json', 'READY.json'):
         (root / name).unlink()
+    # NFS renames unlinked open files to .nfs* until their last descriptor closes.
+    # All corpus entries are gone now: close before unlinking the lock and rmdir.
+    if private_lock is not None:
+        private_lock.close()
+    (root / '.repair.lock').unlink()
     root.rmdir()
 
 
@@ -177,6 +184,71 @@ def prior_cleanup_inventory(target, journal, source_stats):
             unchanged(renamed, source_stats[name])
             cleanup.append((renamed, source_stats[name]))
     return backup, cleanup
+
+
+def finish_metadata_cleanup(args):
+    """Finish only the known NFS empty-directory failure; reuse the completed audit."""
+    output = args.output.absolute()
+    if output.resolve() != output or not output.is_relative_to(PERSONAL / 'experiments'):
+        raise ValueError('Output outside personal experiments')
+    previous = json.loads(AUDITED_CLEANUP_JOURNAL.read_text())
+    target = ORIGINAL / 'sample/100BT'
+    if target.resolve(strict=True) != target or previous['target'] != str(target):
+        raise ValueError('Unexpected canonical target')
+    if previous['status'] != 'failed' or previous.get('error') != f"OSError: [Errno 39] Directory not empty: '{PRIVATE}'":
+        raise ValueError('This continuation is restricted to the known empty-directory failure')
+    audit_path = Path(previous['audit_report'])
+    if sha256(audit_path) != COMPLETED_AUDIT_SHA or sha256(UPSTREAM) != UPSTREAM_SHA:
+        raise ValueError('Pinned successful audit or manifest changed')
+    audit = json.loads(audit_path.read_text())
+    if audit['status'] != 'passed' or audit['upstream_manifest_sha256'] != UPSTREAM_SHA:
+        raise ValueError('The completed canonical audit must pass')
+    checked = {Path(f['path']).name: f for f in audit['subsets']['100BT']['files']}
+    if len(checked) != 150 or {p.name for p in target.glob('*.parquet')} != set(checked):
+        raise ValueError('Canonical inventory changed after the full audit')
+    canonical_stats = {}
+    for name, record in checked.items():
+        current = snapshot(target / name)
+        if record['status'] != 'passed' or not record['sha256_match']:
+            raise ValueError('Canonical audit contains a failed shard')
+        if (current['bytes'], current['mtime_ns']) != (record['bytes'], record['mtime_ns']):
+            raise ValueError('Canonical bytes or modification time changed since the completed audit')
+        canonical_stats[name] = current
+    if PRIVATE.resolve() != PRIVATE or not PRIVATE.is_dir() or list(PRIVATE.iterdir()):
+        raise ValueError('Private directory must already contain no data or metadata')
+    interrupted = json.loads(INTERRUPTED_JOURNAL.read_text())
+    prior_backup, cleanup = prior_cleanup_inventory(target, interrupted, previous['source_stats'])
+    empty_backup = Path(previous['backup_directory'])
+    if empty_backup.parent != target or empty_backup.resolve(strict=True) != empty_backup or list(empty_backup.iterdir()):
+        raise ValueError('Expected only the known empty final backup directory')
+    output.mkdir(parents=True, exist_ok=False)
+    report = dict(previous, status='finishing_metadata_cleanup', started_at=now(),
+                  source_commit=os.environ.get('QGDN_EXPECTED_COMMIT'),
+                  continued_from=str(AUDITED_CLEANUP_JOURNAL),
+                  continued_from_sha256=sha256(AUDITED_CLEANUP_JOURNAL),
+                  audit_source_job='32237', canonical_stats=canonical_stats)
+    report.pop('error', None)
+    report.pop('recovery_note', None)
+    write_json(output / 'promotion.json', report)
+    (output / 'audit').mkdir()
+    (output / 'audit/audit.json').write_bytes(audit_path.read_bytes())
+    report['audit_report'] = str(output / 'audit/audit.json')
+    PRIVATE.rmdir()
+    empty_backup.rmdir()
+    for path, before in cleanup:
+        unchanged(path, before)
+        path.unlink()
+    prior_backup.rmdir()
+    for name, before in canonical_stats.items():
+        unchanged(target / name, before)
+    report.update(status='passed', private_removed=True, backups_removed=True,
+                  prior_backups_removed=True, initial_repaired_files=32,
+                  additional_replacements_after_concurrent_download=0, verified_files=150,
+                  bytes=audit['subsets']['100BT']['bytes'], documents=audit['subsets']['100BT']['rows'],
+                  row_groups=audit['subsets']['100BT']['row_groups'], finished_at=now())
+    sync_directory(target)
+    write_json(output / 'promotion.json', report)
+    print(json.dumps(dict(status=report['status'], private_removed=True, backups_removed=True, verified_files=150)), flush=True)
 
 
 def run(args):
@@ -275,7 +347,7 @@ def run(args):
             write_json(output / 'promotion.json', report)
             for path, before in prior_cleanup:
                 unchanged(path, before)
-            clean_private(PRIVATE, target, expected, repaired, source_stats, audit)
+            clean_private(PRIVATE, target, expected, repaired, source_stats, audit, private_lock=private_lock)
             report['private_removed'] = not PRIVATE.exists()
             write_json(output / 'promotion.json', report)
             # Delete only our own known-bad temporary backup links after success.
@@ -315,12 +387,17 @@ def main():
     p.add_argument('--workers', type=int, default=8)
     p.add_argument('--after-concurrent-download', action='store_true',
                    help='Resume the exact interrupted repair after the redundant external writer has ended')
+    p.add_argument('--finish-metadata-cleanup', action='store_true',
+                   help='Finish only the pinned successful-audit / empty-private-directory NFS case')
     args = p.parse_args()
     if not os.environ.get('SLURM_JOB_ID'):
         p.error('Run this data operation through Slurm, not on the login node')
     if not 1 <= args.workers <= int(os.environ['SLURM_CPUS_PER_TASK']):
         p.error('Workers must fit the Slurm CPU allocation')
-    run(args)
+    if args.finish_metadata_cleanup:
+        finish_metadata_cleanup(args)
+    else:
+        run(args)
 
 
 if __name__ == '__main__':

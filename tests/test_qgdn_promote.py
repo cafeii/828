@@ -107,7 +107,7 @@ def test_pinned_good_source_can_repair_a_newly_observed_corrupt_download(tmp_pat
     assert (backup / (target.name + '.bad')).read_bytes() == b'another-corrupt-download'
 
 
-def test_cleanup_requires_passed_audit_and_does_not_follow_symlinks(tmp_path):
+def test_cleanup_requires_passed_audit_and_does_not_follow_symlinks(tmp_path, monkeypatch):
     shared = tmp_path / 'shared'
     shared.mkdir()
     private = tmp_path / 'private'
@@ -133,7 +133,16 @@ def test_cleanup_requires_passed_audit_and_does_not_follow_symlinks(tmp_path):
         m.clean_private(private, shared, names, {'repaired.parquet'}, stats, audit)
     assert (subset / 'repaired.parquet').exists()
     unexpected.unlink()
-    m.clean_private(private, shared, names, {'repaired.parquet'}, stats, audit)
+    # Model the NFS constraint: unlinking a still-open lock leaves a .nfs file
+    # that prevents rmdir. The lock must close before it is unlinked.
+    handle = (private / '.repair.lock').open('r+')
+    unlink = Path.unlink
+    def require_closed_lock(path, *args, **kwargs):
+        if path == private / '.repair.lock':
+            assert handle.closed
+        return unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'unlink', require_closed_lock)
+    m.clean_private(private, shared, names, {'repaired.parquet'}, stats, audit, private_lock=handle)
     assert not private.exists()
     assert (shared / 'intact.parquet').read_bytes() == b'unchanged'
     assert (shared / 'repaired.parquet').read_bytes() == b'fixed'
