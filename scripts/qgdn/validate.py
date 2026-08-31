@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from runtime import configure_device_from_cli
+from runtime import configure_device_from_cli, configure_numerics
 
 if __name__ == "__main__":
     configure_device_from_cli()
@@ -30,10 +30,12 @@ def main():
         p.error("--full-model requires an allocated GPU, not --cpu")
     if not args.cpu and not torch.cuda.is_available():
         raise RuntimeError("GPU validation requires visible, allocated CUDA devices")
+    numerics = configure_numerics(cpu=args.cpu)
     args.output.mkdir(parents=True, exist_ok=False)
     report = dict(status="running", cuda=torch.cuda.is_available(), gpu_count=torch.cuda.device_count(), commands=[],
                   gpu_parity_verified=False, ddp_verified=False, full_model_verified=False,
-                  scope="cuda" if torch.cuda.is_available() else "cpu-reference-and-tiny-training")
+                  scope="cuda" if torch.cuda.is_available() else "cpu-reference-and-tiny-training",
+                  numerics=numerics)
     report["code_revision"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
     def run(command, env=None):
@@ -76,13 +78,18 @@ def main():
     # Continuous versus interrupted/resumed runs use the same full schedule and data positions.
     paired = base + ["--model", "qgdn_recall_tiny", "--task", "mqar"]
     run(paired + ["--output", args.output / "continuous"])
+    run(paired + ["--output", args.output / "repeated"])
     run(paired + ["--output", args.output / "resumed", "--stop-after-step", "1"])
     run(paired + ["--output", args.output / "resumed", "--resume", args.output / "resumed/checkpoint.pt"])
     a = torch.load(args.output / "continuous/checkpoint.pt", map_location="cpu", weights_only=False)
-    b = torch.load(args.output / "resumed/checkpoint.pt", map_location="cpu", weights_only=False)
-    assert a["step"] == b["step"] == 3
-    for name in a["model"]:
-        torch.testing.assert_close(a["model"][name], b["model"][name], atol=3e-7, rtol=3e-6)
+    for variant in ("repeated", "resumed"):
+        b = torch.load(args.output / variant / "checkpoint.pt", map_location="cpu", weights_only=False)
+        assert a["step"] == b["step"] == 3
+        assert a["identity"] == b["identity"]
+        # Preserve the original tolerance, and also verify the optimizer moments.
+        for section in ("model", "optimizer"):
+            torch.testing.assert_close(a[section], b[section], atol=3e-7, rtol=3e-6)
+    report["repeat_matches_continuous"] = True
     report["resume_matches_continuous"] = True
     # A changed seed must not silently restart or partly load a checkpoint.
     mismatch = subprocess.run([str(x) for x in paired + ["--output", args.output / "resumed", "--resume",

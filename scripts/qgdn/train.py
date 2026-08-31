@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from runtime import configure_device_from_cli
+from runtime import configure_device_from_cli, configure_numerics
 
 if __name__ == "__main__":
     configure_device_from_cli()
@@ -135,12 +135,12 @@ def main():
     device = torch.device("cpu" if args.cpu else f"cuda:{local_rank}")
     if device.type == "cuda":
         torch.cuda.set_device(device)
+    numerics = configure_numerics(cpu=args.cpu)
     if world > 1:
         dist.init_process_group("gloo" if args.cpu else "nccl")
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
-    torch.set_float32_matmul_precision("high")
     amp = lambda: contextlib.nullcontext() if args.cpu else torch.autocast("cuda", dtype=torch.bfloat16)
     config = Config.from_name(args.model, block_size=args.sequence_length)
     if args.cpu:
@@ -181,7 +181,7 @@ def main():
                recall_parameters=extra_parameters, shared_initialization_sha256=initial_shared_hash,
                planned_tokens=args.max_steps * args.global_batch_size * args.sequence_length,
                validation_seed=172903, precision="fp32" if args.cpu else "bf16-mixed",
-               checkpointing=model.gradient_checkpointing)
+               checkpointing=model.gradient_checkpointing, numerics=numerics)
     identity = json_hash({k: v for k, v in run.items() if k != "shared_initialization_sha256"})
     step, train_seconds, wall_seconds = 0, 0.0, 0.0
     initial_validation = None

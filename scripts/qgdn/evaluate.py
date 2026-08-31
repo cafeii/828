@@ -5,7 +5,7 @@ import math
 import sys
 from pathlib import Path
 
-from runtime import configure_device_from_cli
+from runtime import configure_device_from_cli, configure_numerics
 
 if __name__ == "__main__":
     configure_device_from_cli()
@@ -40,6 +40,9 @@ def main():
     if args.cpu and not config.name.endswith("_tiny"):
         p.error("CPU evaluation is only for tiny integration tests")
     device = torch.device("cpu" if args.cpu else "cuda")
+    numerics = configure_numerics(cpu=args.cpu)
+    if run.get("numerics") is not None and run["numerics"] != numerics:
+        raise ValueError("Evaluation numerical policy differs from the checkpoint's training policy")
     model = GPT(config).to(device).eval()
     model.load_state_dict(saved["model"], strict=True)
     if args.cpu:
@@ -89,6 +92,7 @@ def main():
                             position_bin_loss=[s / n if n else None for s, n in zip(bin_loss, bin_count)]))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.output, dict(checkpoint=str(args.checkpoint.resolve()), task=task, results=results,
+                                 numerics=numerics, checkpoint_numerics_recorded="numerics" in run,
                                  note="Use matched checkpoints and budgets. Context extrapolation is not evidence of improvement by itself."))
 
 

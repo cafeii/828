@@ -9,7 +9,8 @@ def pairing_key(run):
     args = {k: v for k, v in run["args"].items() if k != "model"}
     config = {k: v for k, v in run["config"].items() if k not in {"name", "mixer"} and not k.startswith("recall_")}
     return dict(args=args, config=config, data=run["data_sha256"], code=run["code_revision"],
-                world=run["world_size"], initialization=run["shared_initialization_sha256"], precision=run["precision"])
+                world=run["world_size"], initialization=run["shared_initialization_sha256"], precision=run["precision"],
+                numerics=run.get("numerics"))
 
 
 def summarize(paths):

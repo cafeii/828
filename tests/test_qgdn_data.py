@@ -9,21 +9,28 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "qgdn"))
 from data import TokenCorpus, file_sha256, load_manifest, mqar_batch
 from summarize import pairing_key
-from runtime import configure_device_from_cli
+from runtime import configure_device_from_cli, CUDA_NUMERICS
 from gate import check_gate
 
 
 def test_gpu_gate_rejects_missing_validation_wrong_topology_and_wrong_code():
     report = dict(status="passed", gpu_parity_verified=True, ddp_verified=True, full_model_verified=True,
-                  full_model_world_size=8, ddp_world_size=8, code_revision="fixed")
+                  full_model_world_size=8, ddp_world_size=8, code_revision="fixed", numerics=dict(CUDA_NUMERICS),
+                  repeat_matches_continuous=True, resume_matches_continuous=True, mismatched_resume_rejected=True)
     check_gate(report, revision="fixed", world_size=8)
-    for key in ("gpu_parity_verified", "ddp_verified", "full_model_verified"):
+    for key in ("gpu_parity_verified", "ddp_verified", "full_model_verified", "repeat_matches_continuous",
+                "resume_matches_continuous", "mismatched_resume_rejected"):
         with pytest.raises(ValueError, match="must all pass"):
             check_gate({**report, key: False}, revision="fixed", world_size=8)
     with pytest.raises(ValueError, match="topology"):
         check_gate(report, revision="fixed", world_size=2)
     with pytest.raises(ValueError, match="code"):
         check_gate(report, revision="changed", world_size=8)
+    with pytest.raises(ValueError, match="numerical policy"):
+        check_gate({**report, "numerics": None}, revision="fixed", world_size=8)
+    with pytest.raises(ValueError, match="numerical policy"):
+        check_gate({**report, "numerics": {**CUDA_NUMERICS, "fused_rmsnorm_num_warps": 8}},
+                   revision="fixed", world_size=8)
 
 
 def test_cpu_mode_masks_scheduler_visibility_and_gpu_mode_requires_allocation():
@@ -36,6 +43,7 @@ def test_cpu_mode_masks_scheduler_visibility_and_gpu_mode_requires_allocation():
         configure_device_from_cli([], {})
     gpu_env = {"SLURM_JOB_ID": "123", "SLURM_JOB_GPUS": "0", "QGDN_REQUESTED_GPUS": "1"}
     configure_device_from_cli([], gpu_env)
+    assert gpu_env["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
 
 
 def test_global_stream_is_independent_of_rank_partition_and_resume(tmp_path):
@@ -96,10 +104,13 @@ def test_pairing_rejects_data_and_hyperparameter_changes():
     run = dict(args=dict(model="gdn_control_340M", seed=1, learning_rate=4e-4),
                config=dict(name="gdn_control_340M", mixer="gdn", n_layer=20),
                data_sha256="data", code_revision="code", world_size=2,
-               shared_initialization_sha256="shared", precision="bf16-mixed")
+               shared_initialization_sha256="shared", precision="bf16-mixed", numerics=dict(CUDA_NUMERICS))
     other = json.loads(json.dumps(run))
     other["args"]["model"] = "qgdn_340M"
     other["config"].update(name="qgdn_340M", mixer="qgdn", recall_mode="query")
     assert pairing_key(run) == pairing_key(other)
     other["args"]["learning_rate"] = 8e-4
+    assert pairing_key(run) != pairing_key(other)
+    other["args"]["learning_rate"] = run["args"]["learning_rate"]
+    other["numerics"]["fused_rmsnorm_num_warps"] = 8
     assert pairing_key(run) != pairing_key(other)

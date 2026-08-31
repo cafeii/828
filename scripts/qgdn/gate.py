@@ -6,12 +6,16 @@ from pathlib import Path
 import subprocess
 
 from summarize import pairing_key
+from runtime import CUDA_NUMERICS
 
 
 def check_gate(validation, pilot_dirs=(), *, revision, world_size, max_hours=168):
     if validation.get("status") != "passed" or not all(validation.get(key) for key in
-            ("gpu_parity_verified", "ddp_verified", "full_model_verified")):
-        raise ValueError("GPU numerical, DDP and full-model validation must all pass")
+            ("gpu_parity_verified", "ddp_verified", "full_model_verified", "repeat_matches_continuous",
+             "resume_matches_continuous", "mismatched_resume_rejected")):
+        raise ValueError("GPU numerical, reproducibility, DDP and full-model validation must all pass")
+    if validation.get("numerics") != CUDA_NUMERICS:
+        raise ValueError("Validation numerical policy differs from planned training")
     if validation.get("full_model_world_size") != world_size or validation.get("ddp_world_size") != world_size:
         raise ValueError("Validation topology differs from planned training")
     if validation.get("code_revision") != revision:
@@ -23,6 +27,8 @@ def check_gate(validation, pilot_dirs=(), *, revision, world_size, max_hours=168
         summary = json.loads((directory / "summary.json").read_text())
         if run["code_revision"] != revision or run["world_size"] != world_size:
             raise ValueError("Pilot code/topology differs from planned training")
+        if run.get("numerics") != CUDA_NUMERICS:
+            raise ValueError("Pilot numerical policy differs from planned training")
         if summary["status"] != "completed" or summary["step"] != 512 or run["args"]["max_steps"] != 512:
             raise ValueError("Pilot has not completed its fixed 512-step budget")
         if summary["trained_tokens"] != 512 * 128 * 4096 or run["args"]["task"] != "lm":
