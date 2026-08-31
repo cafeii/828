@@ -10,6 +10,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "qgdn")
 from data import TokenCorpus, file_sha256, load_manifest, mqar_batch
 from summarize import pairing_key
 from runtime import configure_device_from_cli
+from gate import check_gate
+
+
+def test_gpu_gate_rejects_missing_validation_wrong_topology_and_wrong_code():
+    report = dict(status="passed", gpu_parity_verified=True, ddp_verified=True, full_model_verified=True,
+                  full_model_world_size=8, ddp_world_size=8, code_revision="fixed")
+    check_gate(report, revision="fixed", world_size=8)
+    for key in ("gpu_parity_verified", "ddp_verified", "full_model_verified"):
+        with pytest.raises(ValueError, match="must all pass"):
+            check_gate({**report, key: False}, revision="fixed", world_size=8)
+    with pytest.raises(ValueError, match="topology"):
+        check_gate(report, revision="fixed", world_size=2)
+    with pytest.raises(ValueError, match="code"):
+        check_gate(report, revision="changed", world_size=8)
 
 
 def test_cpu_mode_masks_scheduler_visibility_and_gpu_mode_requires_allocation():

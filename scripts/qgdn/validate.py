@@ -23,15 +23,18 @@ from data import file_sha256
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--full-model", action="store_true", help="Also run one 4096-token optimizer step of each ~340M model")
+    p.add_argument("--full-model", action="store_true", help="Run two 4096-token optimizer steps of each ~340M model on all allocated GPUs")
     p.add_argument("--cpu", action="store_true", help="Mask CUDA before imports and run only CPU/tiny checks")
     args = p.parse_args()
     if args.cpu and args.full_model:
         p.error("--full-model requires an allocated GPU, not --cpu")
+    if not args.cpu and not torch.cuda.is_available():
+        raise RuntimeError("GPU validation requires visible, allocated CUDA devices")
     args.output.mkdir(parents=True, exist_ok=False)
     report = dict(status="running", cuda=torch.cuda.is_available(), gpu_count=torch.cuda.device_count(), commands=[],
                   gpu_parity_verified=False, ddp_verified=False, full_model_verified=False,
                   scope="cuda" if torch.cuda.is_available() else "cpu-reference-and-tiny-training")
+    report["code_revision"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
     def run(command, env=None):
         command = [str(x) for x in command]
@@ -39,7 +42,7 @@ def main():
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         report["commands"].append(command)
 
-    run([sys.executable, "-m", "pytest", "tests/test_qgdn.py", "tests/test_qgdn_data.py", "-q",
+    run([sys.executable, "-m", "pytest", "tests/test_qgdn.py", "tests/test_qgdn_data.py", "tests/test_qgdn_prepare_data.py", "-q",
          f"--junitxml={args.output / 'tests.xml'}"])
     report["gpu_parity_verified"] = torch.cuda.is_available()
     counts = {}
@@ -90,17 +93,24 @@ def main():
          "--lengths", "128", "256", "--mqar-sequences", "4", "--output", args.output / "delay-eval.json"]
         + ([] if torch.cuda.is_available() else ["--cpu"]))
     if torch.cuda.device_count() >= 2:
-        run([sys.executable, "-m", "torch.distributed.run", "--standalone", "--nnodes=1", "--nproc-per-node=2",
+        devices = torch.cuda.device_count()
+        run([sys.executable, "-m", "torch.distributed.run", "--standalone", "--nnodes=1", f"--nproc-per-node={devices}",
              "scripts/qgdn/train.py", "--model", "qgdn_recall_tiny", "--task", "mqar", "--sequence-length", "128",
-             "--max-steps", "2", "--global-batch-size", "4", "--eval-sequences", "4", "--output", args.output / "ddp"])
+             "--max-steps", "2", "--global-batch-size", str(devices * 2), "--eval-sequences", str(devices),
+             "--output", args.output / "ddp"])
         report["ddp_verified"] = True
+        report["ddp_world_size"] = devices
     if args.full_model:
         if not torch.cuda.is_available():
             raise RuntimeError("Full-model smoke requires CUDA")
         for name in ("gdn_control_340M", "qgdn_340M"):
-            run([sys.executable, "scripts/qgdn/train.py", "--model", name, "--task", "mqar", "--sequence-length", "4096",
-                 "--max-steps", "1", "--global-batch-size", "1", "--eval-sequences", "1", "--output", args.output / name])
+            devices = torch.cuda.device_count()
+            run([sys.executable, "-m", "torch.distributed.run", "--standalone", "--nnodes=1",
+                 f"--nproc-per-node={devices}", "scripts/qgdn/train.py", "--model", name, "--task", "mqar",
+                 "--sequence-length", "4096", "--max-steps", "2", "--global-batch-size", str(devices * 2),
+                 "--eval-sequences", str(devices), "--output", args.output / name])
         report["full_model_verified"] = True
+        report["full_model_world_size"] = torch.cuda.device_count()
     report["status"] = "passed"
     (args.output / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
 

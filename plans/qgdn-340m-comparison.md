@@ -89,7 +89,7 @@ python scripts/qgdn/prepare_data.py \
   --input-dir /absolute/path/to/fineweb/parquet \
   --tokenizer /absolute/path/to/llama2-32k-tokenizer \
   --output-dir /absolute/path/to/new/qgdn-data \
-  --val-files 1
+  --val-files 1 --workers 16
 ```
 
 按排序后 parquet 文件的尾部划出 validation，训练和验证分别 token 化；每篇文档追加 EOS、无 BOS。
@@ -171,6 +171,28 @@ python scripts/qgdn/validate.py --output /absolute/path/to/experiment/outputs/va
 
 该入口必须在已分配的短 Slurm 作业内运行：稠密公式/梯度、GDN退化、读出插值、状态携带、
 BF16 chunk 输出/状态/梯度、数据顺序与污染防护、tiny LM/MQAR训练、严格恢复、长距离评测，
-两卡可见时验证DDP；`--full-model` 额外对两个约340M模型各跑一个4096长度的优化器步。
+多卡可见时在全部获配GPU上验证DDP；`--full-model` 对两个约340M模型各跑两个4096长度的优化器步，包含梯度累积。
 测试通过只表示实现/训练链路通过指定检查，**不表示 QGDN 已获得效果提升**。
 实际验证 commit、作业号与结果另见回收的 validation.json / 日志，不能仅凭测试源码宣称全部已通过。
+
+## 2026-08-31 首批排队方案
+
+用户已授权提交 QGDN 分支、推送 GitHub 及提交主要实验。首批为 GPU 完整验证、
+GDN/QGDN 的512步 pilot（seed3407），以及各自的三种子10B token主实验。
+所有 GPU 作业按 `afterok` 串行，最多同时使用一台8卡H800节点；每个作业32CPU、
+256GiB内存。验证限时2小时，pilot限时24小时，主实验限时7天；上限不代表预计耗时。
+主实验同时需要两种pilot完成、loss相对初始化下降、代码/数据/公共初始化匹配，
+并且根据pilot总耗时估计能在时限90%以内结束。**不以QGDN胜过GDN作为放行条件**。
+验证或pilot失败时，下游作业不会占卡训练；保留错误以供修复后重新提交。
+
+数据使用已有 `/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/10BT` 中
+严格匹配 `*.parquet` 的15个源文件，尾部 `014_00000.parquet` 独立留作验证；
+`*.parquet.corrupt-rg560` 不会被纳入。32k tokenizer复制到王正仁自己的只读输入目录。
+CPU预处理使用16个worker，每文件独立分词，按源文件顺序合并，结果与单进程逐字节一致；
+所有源文件/hash、tokenizer/hash及最终token/hash写入manifest。源语料名称10BT不等于
+本tokenizer下恰好10B训练token；训练预算固定，必要时按确定顺序进入下一epoch并记录。
+
+Hopper兼容性采用本仓库FLA自带的TileLang后端，专用环境新增TileLang 0.1.13及
+CUDA nvcc 12.8.93；保留Torch2.9.0/Triton3.5.0，不禁用兼容性保护。环境安装的CPU
+导入/编译检查与获配GPU上的数值验证分别记录，前者不能替代后者。
+具体快照、作业号、数据路径、依赖和日志由提交清单及每个实验manifest记录。
