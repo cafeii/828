@@ -1,4 +1,5 @@
 import hashlib
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -79,6 +80,19 @@ def test_existing_unverified_data_is_preserved_and_symlink_downloads_are_refused
     with pytest.raises(ValueError, match='symlink'):
         download_verified('unused', destination, 8, expected)
     assert source.read_bytes() == b'original'
+
+
+def test_explicit_proxy_routes_unresolvable_host_without_changing_environment(tmp_path, server, monkeypatch):
+    state, proxy = server
+    state['responses'] = [(200, b'complete', {'Content-Length': '8'})]
+    monkeypatch.delenv('no_proxy', raising=False)
+    monkeypatch.delenv('NO_PROXY', raising=False)
+    before = dict(os.environ)
+    final = tmp_path / 'shard.parquet'
+    result = download_verified('http://requires-proxy.invalid/shard', final, 8,
+                               hashlib.sha256(b'complete').hexdigest(), proxy=proxy, attempts=1)
+    assert result['status'] == 'passed' and state['requests'] == 1
+    assert final.read_bytes() == b'complete' and dict(os.environ) == before
 
 
 def test_read_only_reference_and_output_scope(tmp_path):

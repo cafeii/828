@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import uuid
 
 
@@ -36,7 +37,7 @@ def checked_directory(path, allowed_root):
     return path
 
 
-def download_verified(url, final, expected_size, expected_sha256, *, attempts=3, timeout=60, backoff=2):
+def download_verified(url, final, expected_size, expected_sha256, *, attempts=3, timeout=60, backoff=2, proxy=None):
     """A fresh whole-file response per attempt; publish only verified bytes, never overwrite."""
     final = Path(final)
     if final.is_symlink():
@@ -45,6 +46,9 @@ def download_verified(url, final, expected_size, expected_sha256, *, attempts=3,
         if final.stat().st_size != expected_size or sha256(final) != expected_sha256:
             raise ValueError(f'Existing private shard is not verified; preserving it: {final}')
         return dict(status='passed', mode='reused_download', bytes=expected_size, sha256=expected_sha256)
+    # Proxy use is explicit and restricted to these downloads, not global env or the audit.
+    handler = urllib.request.ProxyHandler({'http': proxy, 'https': proxy} if proxy else {})
+    opener = urllib.request.build_opener(handler)
     failures = []
     for attempt in range(1, attempts + 1):
         partial = final.with_name('.' + final.name + '.' + uuid.uuid4().hex + '.download')
@@ -54,7 +58,7 @@ def download_verified(url, final, expected_size, expected_sha256, *, attempts=3,
                 'User-Agent': 'wangzr-qgdn-integrity-repair/1.0',
                 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache'})
             digest, received = hashlib.sha256(), 0
-            with urllib.request.urlopen(request, timeout=timeout) as response, partial.open('xb') as stream:
+            with opener.open(request, timeout=timeout) as response, partial.open('xb') as stream:
                 # No Range or append-based resume: reject unexpected cached partial responses.
                 if response.status != 200 or response.headers.get('Content-Range'):
                     raise ValueError(f'Expected a complete HTTP 200 response, got {response.status}')
@@ -159,7 +163,7 @@ def repair(args):
                 else:
                     url = f'https://huggingface.co/datasets/{upstream["repo_id"]}/resolve/{upstream["revision"]}/{official["path"]}?download=true'
                     futures[pool.submit(download_verified, url, subset / name, official['size'],
-                                        official['lfs']['oid'], attempts=args.attempts)] = name
+                                        official['lfs']['oid'], attempts=args.attempts, proxy=args.proxy)] = name
             for future in as_completed(futures):
                 name = futures[future]
                 try:
@@ -208,10 +212,13 @@ def main():
     p.add_argument('--download-workers', type=int, default=4)
     p.add_argument('--audit-workers', type=int, default=8)
     p.add_argument('--attempts', type=int, default=3)
+    p.add_argument('--proxy', help='Explicit HTTP(S) proxy for downloads only; never exported to the environment')
     args = p.parse_args()
     cpus = int(os.environ.get('SLURM_CPUS_PER_TASK', 8))
     if min(args.download_workers, args.audit_workers, args.attempts) < 1 or max(args.download_workers, args.audit_workers) > cpus:
         p.error('Positive worker counts must stay within allocated CPUs')
+    if args.proxy and urllib.parse.urlsplit(args.proxy).scheme not in ('http', 'https'):
+        p.error('Download proxy must be an HTTP(S) URL')
     raise SystemExit(0 if repair(args) else 1)
 
 
