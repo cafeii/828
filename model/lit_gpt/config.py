@@ -131,7 +131,7 @@ _gdn2_340M_base = dict(
 _gdn2_1p3B_base = dict(
     _gdn2_340M_base,
     n_layer=24,
-    n_head=16,
+    n_head=32,  # 实验设计：1B档head=32（head_dim=64与300M一致）
     n_embd=2048,
     intermediate_size=5504,
 )
@@ -148,21 +148,24 @@ configs = [
         num_groups=2,
         use_lsa=True,
     ),
-    # ---- ~340M 主实验方案（G=4）----
+    # ---- ~340M 主实验方案（docs/experiment.md：MHA / GQA / GVA / LSA，G=4）----
     dict(_gdn2_340M_base, name="gdn2_mha_340M"),  # num_groups=None → G=H，MHA形态
     dict(_gdn2_340M_base, name="gdn2_gqa_340M", num_groups=4),
-    dict(_gdn2_340M_base, name="gdn2_gqa_vheads_340M", num_groups=4, num_v_heads=16),
-    dict(_gdn2_340M_base, name="gdn2_gqa_expandv_340M", num_groups=4, expand_v=2.0),
+    dict(_gdn2_340M_base, name="gdn2_gva_340M", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="gdn2_lsa_340M", num_groups=4, use_lsa=True),
     # ---- ~340M GDN/KDA 骨架对照（沿用gdn2骨架超参，只换mixer）----
     dict(_gdn2_340M_base, name="gdn_mha_340M", mixer="gdn"),
     dict(_gdn2_340M_base, name="gdn_gqa_340M", mixer="gdn", num_groups=4),
+    dict(_gdn2_340M_base, name="gdn_gva_340M", mixer="gdn", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="gdn_lsa_340M", mixer="gdn", num_groups=4, use_lsa=True),
     dict(_gdn2_340M_base, name="kda_mha_340M", mixer="kda"),
     dict(_gdn2_340M_base, name="kda_gqa_340M", mixer="kda", num_groups=4),
+    dict(_gdn2_340M_base, name="kda_gva_340M", mixer="kda", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="kda_lsa_340M", mixer="kda", num_groups=4, use_lsa=True),
-    # ---- ~1.3B ----
+    # ---- ~1.3B（head=32，G=4）----
+    dict(_gdn2_1p3B_base, name="gdn2_mha_1.3B"),
     dict(_gdn2_1p3B_base, name="gdn2_gqa_1.3B", num_groups=4),
+    dict(_gdn2_1p3B_base, name="gdn2_gva_1.3B", num_groups=4, num_v_heads=32),
     dict(_gdn2_1p3B_base, name="gdn2_lsa_1.3B", num_groups=4, use_lsa=True),
 ]
 

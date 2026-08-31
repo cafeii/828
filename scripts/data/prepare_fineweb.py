@@ -30,10 +30,13 @@ def _default_num_workers() -> int:
 class FineWebDataRecipe(DataChunkRecipe):
     is_generator = True
 
-    def __init__(self, tokenizer_path: str, chunk_size: int, row_groups_per_item: int = 16):
+    def __init__(self, tokenizer_path: str, chunk_size: int, row_groups_per_item: int = 16,
+                 split: str = "all", num_val_files: int = 0):
         super().__init__(chunk_size)
         self.tokenizer_path = tokenizer_path
         self.row_groups_per_item = row_groups_per_item
+        self.split = split  # all | train | val：按排序后文件列表的尾部num_val_files个切分
+        self.num_val_files = num_val_files
         self._tokenizer = None  # 每个worker进程内惰性构造
 
     @property
@@ -49,6 +52,10 @@ class FineWebDataRecipe(DataChunkRecipe):
 
         files = sorted(Path(input_dir).rglob("*.parquet"))
         assert files, f"{input_dir} 下没有parquet文件"
+        if self.split == "train":
+            files = files[: -self.num_val_files]
+        elif self.split == "val":
+            files = files[-self.num_val_files :]
         # item粒度取 (文件, row_group区间) 而非整文件：10BT只有15个2GB文件，
         # 按文件分发时并行度被文件数卡死（40 worker只有15个在干活）。
         # 10BT共14874个row group，per_item=16 → 937个item，对64 worker约15个/worker，
@@ -76,40 +83,46 @@ class FineWebDataRecipe(DataChunkRecipe):
 
 
 def prepare(
-    input_dir: Path = Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/10BT"),
-    output_dir: Path = Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/10BT/train"),
+    input_dir: Path = Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/100BT"),
+    output_dir: Path = Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT"),
     tokenizer_path: Path = Path("checkpoints/Llama-2-7b-hf"),
     chunk_size: int = (2049 * 16384),
     num_workers: int = None,
-    row_groups_per_item: int = 64,
+    row_groups_per_item: int = 16,
+    num_val_files: int = 0,
     fast_dev_run: bool = False,
 ) -> None:
     """把 FineWeb parquet 转成 litdata 预分块格式（供 scripts/pretrain.py 使用）。
 
-    注意：FineWeb 无官方 validation/test。如需 validation，
-    请先把个别 parquet 文件复制到单独目录，再对其跑一次本脚本。
+    num_val_files>0 时：排序后尾部N个文件切为held-out（FineWeb-test ppl评估用），
+    产出 output_dir/train 与 output_dir/val 两份；=0 时全量进 output_dir/train。
     """
-    data_recipe = FineWebDataRecipe(
-        tokenizer_path=str(tokenizer_path), chunk_size=chunk_size, row_groups_per_item=row_groups_per_item
-    )
-    data_processor = DataProcessor(
-        input_dir=str(input_dir),
-        output_dir=str(output_dir),
-        fast_dev_run=fast_dev_run,
-        num_workers=num_workers or _default_num_workers(),
-        num_downloaders=1,
-        # TokensLoader写侧：token平铺连续存储，index记dim（token数），chunk_size语义
-        # 变为每chunk的token数；缺它则落回PyTree格式，训练侧TokensLoader读不了
-        # （chunk["dim"]=None，见28657失败）。
-        item_loader=TokensLoader(),
-        # 共享节点会清/dev/shm（见9c0c857前科）：spawn子进程按名重建SemLock会
-        # FileNotFoundError秒死且litdata误报完成；fork继承已打开对象，免疫清理。
-        start_method="fork",
-    )
+    splits = [("train", "all" if num_val_files == 0 else "train")]
+    if num_val_files > 0:
+        splits.append(("val", "val"))
 
-    start_time = time.time()
-    data_processor.run(data_recipe)
-    print(f"Time taken: {time.time() - start_time:.2f} seconds")
+    for sub, split in splits:
+        data_recipe = FineWebDataRecipe(
+            tokenizer_path=str(tokenizer_path), chunk_size=chunk_size,
+            row_groups_per_item=row_groups_per_item, split=split, num_val_files=num_val_files,
+        )
+        data_processor = DataProcessor(
+            input_dir=str(input_dir),
+            output_dir=str(output_dir / sub),
+            fast_dev_run=fast_dev_run,
+            num_workers=num_workers or _default_num_workers(),
+            num_downloaders=1,
+            # TokensLoader写侧：token平铺连续存储，index记dim（token数），chunk_size语义
+            # 变为每chunk的token数；缺它则落回PyTree格式，训练侧TokensLoader读不了
+            # （chunk["dim"]=None，见28657失败）。
+            item_loader=TokensLoader(),
+            # 共享节点会清/dev/shm（见9c0c857前科）：spawn子进程按名重建SemLock会
+            # FileNotFoundError秒死且litdata误报完成；fork继承已打开对象，免疫清理。
+            start_method="fork",
+        )
+        start_time = time.time()
+        data_processor.run(data_recipe)
+        print(f"[{sub}] Time taken: {time.time() - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
@@ -119,11 +132,12 @@ if __name__ == "__main__":
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     p = argparse.ArgumentParser()
-    p.add_argument("--input_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/10BT"))
-    p.add_argument("--output_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/10BT/train"))
+    p.add_argument("--input_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb/sample/100BT"))
+    p.add_argument("--output_dir", type=Path, default=Path("/work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT"))
     p.add_argument("--tokenizer_path", type=Path, default=Path("checkpoints/Llama-2-7b-hf"))
     p.add_argument("--chunk_size", type=int, default=2049 * 16384)
     p.add_argument("--num_workers", type=int, default=None)
     p.add_argument("--row_groups_per_item", type=int, default=16)
+    p.add_argument("--num_val_files", type=int, default=0)
     p.add_argument("--fast_dev_run", action="store_true")
     prepare(**vars(p.parse_args()))
