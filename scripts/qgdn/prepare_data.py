@@ -26,7 +26,7 @@ def tokenize_source(job):
     count = documents = 0
     print(f"tokenizing: {path}", flush=True)
     with shard.open("xb") as stream:
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size, columns=["text"]):
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size, columns=["text"], use_threads=False):
             for ids in tokenizer(batch.column(0).to_pylist(), add_special_tokens=False)["input_ids"]:
                 ids.append(tokenizer.eos_token_id)
                 if min(ids) < 0 or max(ids) >= 32000:
