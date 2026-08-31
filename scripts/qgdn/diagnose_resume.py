@@ -24,7 +24,7 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def child(trace, deterministic, train_args):
+def child(trace, deterministic, train_args, fixed_norm_warps=None, native_norms=False):
     import torch
     import train
 
@@ -34,6 +34,15 @@ def child(trace, deterministic, train_args):
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
+    if fixed_norm_warps is not None:
+        from lit_gpt import rmsnorm
+        for name in ("_layer_norm_fwd_1pass_kernel", "_layer_norm_bwd_kernel"):
+            tuner = getattr(rmsnorm, name)
+            candidates = [c for c in tuner.configs if c.num_warps == fixed_norm_warps]
+            if len(candidates) != 1:
+                raise RuntimeError(f"Expected one supported RMSNorm config: {name}, {fixed_norm_warps}")
+            tuner.configs = candidates
+            tuner.cache.clear()
     trace.mkdir(parents=True, exist_ok=False)
     sys.argv = ["train.py", *train_args]
     args = train.parse_args()
@@ -60,6 +69,8 @@ def child(trace, deterministic, train_args):
     original_init = torch.optim.AdamW.__init__
 
     def model_factory(*a, **kw):
+        if native_norms:
+            a[0]._norm_class = "RMSNorm"
         model = make_model(*a, **kw)
         tracked["model"] = model
         return model
@@ -101,7 +112,21 @@ def child(trace, deterministic, train_args):
     try:
         train.main()
     finally:
+        from triton.runtime.autotuner import Autotuner
+        tuners, seen = {}, set()
+        for module_name, module in list(sys.modules.items()):
+            if module is None or not module_name.startswith(("lit_gpt.", "fla.")):
+                continue
+            for name, value in list(vars(module).items()):
+                if not isinstance(value, Autotuner) or id(value) in seen:
+                    continue
+                seen.add(id(value))
+                if value.cache or module_name == "lit_gpt.rmsnorm":
+                    tuners[f"{module_name}.{name}"] = dict(
+                        candidates=[str(c) for c in value.configs],
+                        cache={str(k): str(v) for k, v in value.cache.items()})
         write_json(trace / "trace.json", dict(deterministic_requested=deterministic,
+                   fixed_norm_warps=fixed_norm_warps, native_norms=native_norms, autotuners=tuners,
                    torch_version=torch.__version__, cuda_version=torch.version.cuda,
                    device=torch.cuda.get_device_name(0), completed_steps=tracked.get("completed", 0),
                    starting_step=offset, batches=batches,
@@ -145,7 +170,7 @@ def compare(a, b):
                                              for r in rows), differences=rows)
 
 
-def orchestrate(output):
+def orchestrate(output, modes):
     import torch
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("Request exactly one GPU for this diagnostic")
@@ -163,18 +188,22 @@ def orchestrate(output):
         name = f"{mode}-{tag}"
         trace = output / name
         cmd = [sys.executable, str(Path(__file__).resolve()), "--child-trace", str(trace)]
-        if mode == "deterministic":
+        if mode != "default":
             cmd.append("--deterministic")
+        if mode == "fixed-norm":
+            cmd += ["--fixed-norm-warps", "4"]
+        if mode == "native-norm":
+            cmd.append("--native-norms")
         cmd += ["--", *base, "--output", str(run_dir), *map(str, extra)]
         env = os.environ.copy()
-        if mode == "deterministic":
+        if mode != "default":
             env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         log_path = output / f"{name}.log"
         print("RUN", name, flush=True)
         with log_path.open("w") as log:
             try:
                 code = subprocess.run(cmd, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                      timeout=600).returncode
+                                      timeout=240).returncode
             except subprocess.TimeoutExpired:
                 code = 124
         report["cases"][name] = dict(returncode=code, trace=str(trace), log=str(log_path), command=cmd)
@@ -184,7 +213,7 @@ def orchestrate(output):
     def load(path):
         return torch.load(path, map_location="cpu", weights_only=False)
 
-    for mode in ("default", "deterministic"):
+    for mode in modes:
         a, b, split = (output / f"{mode}-{x}-run" for x in ("full-a", "full-b", "split"))
         ok_a = run(mode, "full-a", a)
         ok_b = run(mode, "full-b", b)
@@ -232,12 +261,18 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--child-trace", type=Path)
     parser.add_argument("--deterministic", action="store_true")
+    parser.add_argument("--fixed-norm-warps", type=int, choices=[1, 2, 4, 8, 16, 32])
+    parser.add_argument("--native-norms", action="store_true")
+    parser.add_argument("--modes", nargs="+", choices=["default", "deterministic", "fixed-norm", "native-norm"],
+                        default=["default", "deterministic"])
     parser.add_argument("trainer_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.child_trace:
-        child(args.child_trace, args.deterministic, args.trainer_args[1:] if args.trainer_args[:1] == ["--"] else args.trainer_args)
+        child(args.child_trace, args.deterministic,
+              args.trainer_args[1:] if args.trainer_args[:1] == ["--"] else args.trainer_args,
+              args.fixed_norm_warps, args.native_norms)
     elif args.output:
-        orchestrate(args.output)
+        orchestrate(args.output, args.modes)
     else:
         parser.error("Provide --output, or the internal --child-trace option")
 
