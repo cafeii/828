@@ -48,6 +48,7 @@ class GPT(nn.Module):
         self.kv_caches: List[Optional[KVCache]] = []
         self.max_len = self.config.block_size
         self.mamba_init = config.mamba_init
+        self.gradient_checkpointing = False
 
     def _init_weights(self, module: nn.Module, n_layer) -> None:
         """Meant to be used with `gpt.apply(gpt._init_weights)`."""
@@ -137,7 +138,13 @@ class GPT(nn.Module):
 
         if not use_kv_cache:
             for block in self.transformer.h:
-                x, *_ = block(x, rope, max_seq_length)
+                if self.training and self.gradient_checkpointing:
+                    from torch.utils.checkpoint import checkpoint
+
+                    x = checkpoint(lambda states, layer=block: layer(states, rope, max_seq_length)[0],
+                                   x, use_reentrant=False)
+                else:
+                    x, *_ = block(x, rope, max_seq_length)
         else:
             start_pos = int(input_pos[0].item())
             if start_pos == 0:
@@ -221,6 +228,8 @@ class Block(nn.Module):
                 from .mixers.gdn2 import GatedDeltaNet2 as rnn_cls
             elif config.mixer == "gdn":
                 from .mixers.gdn import GatedDeltaNet as rnn_cls
+            elif config.mixer == "qgdn":
+                from .mixers.qgdn import QueryGuidedDeltaNet as rnn_cls
             elif config.mixer == "kda":
                 from .mixers.kda import KimiDeltaAttention as rnn_cls
             else:
@@ -239,6 +248,9 @@ class Block(nn.Module):
                 allow_neg_eigval=config.allow_neg_eigval,
                 norm_eps=config.norm_eps,
                 layer_idx=layer_idx,
+                recall_mode=config.recall_mode,
+                recall_gate=config.recall_gate,
+                recall_init=config.recall_init,
             )
         else:
             self.attn = CausalSelfAttention(config, n_embd=config.n_embd, layer_idx=layer_idx)

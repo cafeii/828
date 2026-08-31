@@ -66,6 +66,7 @@ class GatedDeltaNet(nn.Module):
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
+        self.recall_mode = "none"  # QGDN subclass opts into the Recall rule.
 
         self.head_k_dim = head_dim
         self.head_v_dim = int(head_dim * expand_v)
@@ -178,7 +179,16 @@ class GatedDeltaNet(nn.Module):
             b = b * 2.0
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
-        if mode == "chunk":
+        if self.recall_mode != "none":
+            from .qgdn_rule import qgdn_rule
+
+            o, recurrent_state = qgdn_rule(
+                q, k, v, g, b, self.recall_gamma(hidden_states),
+                recall_mode=self.recall_mode, mode=mode,
+                initial_state=recurrent_state, output_final_state=use_cache,
+                cu_seqlens=kwargs.get("cu_seqlens"),
+            )
+        elif mode == "chunk":
             from ..kernels import get_chunk_gated_delta_rule
 
             o, recurrent_state = get_chunk_gated_delta_rule()(
@@ -228,6 +238,12 @@ class GatedDeltaNet(nn.Module):
         if self.use_lsa:
             o = torch.einsum("bthc,hvc->bthv", o, self.p_mat.to(o.dtype))
 
-        o = self.o_norm(o, rearrange(self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim))
+        output_gate = rearrange(self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim)
+        if o.device.type == "cpu":
+            # FLA may be installed even when running the CPU reference tests.
+            normalized = o.float() * torch.rsqrt(o.float().square().mean(-1, keepdim=True) + self.o_norm.eps)
+            o = self.o_norm.weight * normalized.to(o.dtype) * F.silu(output_gate)
+        else:
+            o = self.o_norm(o, output_gate)
         o = rearrange(o, "b t h d -> b t (h d)")
         return self.o_proj(o), None, past_key_values

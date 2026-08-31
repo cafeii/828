@@ -54,6 +54,9 @@ class Config:
     use_short_conv: bool = True
     conv_size: int = 4
     allow_neg_eigval: bool = False
+    recall_mode: str = "query"  # query | key | isotropic (QGDN only)
+    recall_gate: str = "token"  # token | head | fixed
+    recall_init: float = 0.1
 
     def __post_init__(self):
         # error checking
@@ -168,5 +171,25 @@ configs = [
     dict(_gdn2_1p3B_base, name="gdn2_gva_1.3B", num_groups=4, num_v_heads=32),
     dict(_gdn2_1p3B_base, name="gdn2_lsa_1.3B", num_groups=4, use_lsa=True),
 ]
+
+# Dedicated Recall study: identical MHA backbone, no GQA/LSA confound.
+# Twenty layers retain the inherited FFN/head widths and give ~344M including
+# BOTH the untied input embedding and the output head. Legacy names are unchanged.
+_recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
+configs += [
+    dict(_recall_base, name="gdn_control_340M"),
+    dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
+    dict(_recall_base, name="qgdn_key_340M", mixer="qgdn", recall_mode="key"),
+    dict(_recall_base, name="qgdn_isotropic_340M", mixer="qgdn", recall_mode="isotropic"),
+    dict(_recall_base, name="qgdn_fixed_340M", mixer="qgdn", recall_gate="fixed"),
+    dict(_recall_base, name="qgdn_head_340M", mixer="qgdn", recall_gate="head"),
+    dict(_recall_base, name="qgdn_zero_340M", mixer="qgdn", recall_gate="fixed", recall_init=0.0),
+]
+for _mixer in ("gdn", "qgdn"):
+    configs.append(dict(
+        _recall_base, name=f"{_mixer}_recall_tiny", mixer=_mixer,
+        n_layer=2, n_embd=128, n_head=2, head_dim=64,
+        intermediate_size=352, vocab_size=256, block_size=128,
+    ))
 
 name_to_config = {config["name"]: config for config in configs}
