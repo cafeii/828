@@ -6,6 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts/qgdn'))
 import promote_fineweb as m
+from restore_fineweb_paths import restore_missing
 
 
 def fixture_files(tmp_path):
@@ -67,6 +68,15 @@ def test_symlink_input_is_rejected(tmp_path):
     with pytest.raises(ValueError, match='symlink'):
         m.promote_one(source, target, backup, good, old, digest)
     assert source.read_bytes() == b'new-data'
+
+
+def test_recovery_never_overwrites_a_concurrent_writers_canonical_file(tmp_path):
+    target, source, backup, good, old, digest = fixture_files(tmp_path)
+    assert restore_missing(source, target, good)['mode'] == 'existing_path_preserved'
+    assert target.read_bytes() == b'bad-data'
+    target.unlink()
+    assert restore_missing(source, target, good)['mode'] == 'restored_missing_path'
+    assert target.read_bytes() == b'new-data'
 
 
 def test_cleanup_requires_passed_audit_and_does_not_follow_symlinks(tmp_path):
