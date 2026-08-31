@@ -8,7 +8,8 @@ from .gdn import GatedDeltaNet
 
 
 class QueryGuidedDeltaNet(GatedDeltaNet):
-    def __init__(self, *args, recall_mode="query", recall_gate="token", recall_init=0.1, **kwargs):
+    def __init__(self, *args, recall_mode="query", recall_gate="token", recall_init=0.1,
+                 recall_weight_init="zero", **kwargs):
         super().__init__(*args, **kwargs)
         if self.num_groups != self.num_heads or self.use_lsa:
             raise ValueError("The Recall study requires independent MHA states; GQA/LSA is not supported.")
@@ -18,14 +19,22 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             raise ValueError(f"Unknown recall_mode: {recall_mode}")
         if recall_gate not in {"token", "head", "fixed"}:
             raise ValueError(f"Unknown recall_gate: {recall_gate}")
+        if recall_weight_init not in {"zero", "beta"}:
+            raise ValueError(f"Unknown recall_weight_init: {recall_weight_init}")
+        if recall_weight_init == "beta" and recall_gate != "token":
+            raise ValueError("beta weight initialization requires a token-dependent projection")
         if not 0 <= recall_init <= 1 or (recall_gate != "fixed" and not 0 < recall_init < 1):
             raise ValueError("Learned gates require 0 < recall_init < 1; fixed gates allow endpoints.")
         self.recall_mode, self.recall_gate, self.recall_init = recall_mode, recall_gate, recall_init
+        self.recall_weight_init = recall_weight_init
         if recall_gate == "token":
             # Do not change the RNG stream used to initialize shared backbone weights.
             with torch.random.fork_rng(devices=[]):
                 self.recall_proj = nn.Linear(self.hidden_size, self.num_heads, bias=True)
-            nn.init.zeros_(self.recall_proj.weight)
+                if recall_weight_init == "beta":
+                    nn.init.xavier_uniform_(self.recall_proj.weight, gain=2**-2.5)
+                else:
+                    nn.init.zeros_(self.recall_proj.weight)
             nn.init.constant_(self.recall_proj.bias, math.log(recall_init / (1 - recall_init)))
             self.recall_proj.bias._no_reinit = True
         elif recall_gate == "head":

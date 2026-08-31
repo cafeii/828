@@ -35,6 +35,7 @@ bias 初始化为 logit(0.1)。beta∈[0,1]；不允许 `allow_neg_eigval`。
 |---|---|---|
 | gdn | gdn_control_340M | 原始标准 GDN |
 | qgdn | qgdn_340M | 当前 query 方向上的 Recall，主方法 |
+| beta_init | qgdn_beta_init_340M | gamma 使用与当前 GDN beta 相同的 Xavier 初始化和零偏置，初值约0.5 |
 | key | qgdn_key_340M | 相同门参数、相同两步后端，改用 key 方向 |
 | isotropic | qgdn_isotropic_340M | 相同门参数，将所有方向保持率都提高为 alpha+gamma(1-alpha) |
 | fixed | qgdn_fixed_340M | gamma=0.1，无新增参数，分离 Recall 与动态门 |
@@ -44,6 +45,19 @@ bias 初始化为 logit(0.1)。beta∈[0,1]；不允许 `allow_neg_eigval`。
 至少先跑 gdn/qgdn；效果有信号后补 key、isotropic、fixed。
 isotropic 不保持秩一修正量的迹与 QGDN 相同：它是“全局少遗忘”对照，不是所有意义上的等量干预。
 单独训练各变体；不要把测试时突然关闭 Recall 的性能下降当作充分的因果证据。
+
+### 对照 GDN 的 beta 参数化
+
+当前 GDN 的 beta 与动态 gamma 都是 `Linear(1024,16,bias=True) → FP32 sigmoid`，
+各自拥有独立权重和偏置，不共享门值；每层各有16,400个参数。这与仓库中的原版
+`third_party/GatedDeltaNet/lit_gpt/gated_delta_net.py` 的 beta 投影结构及 FP32 sigmoid 一致。
+`g_proj` 是 GDN 原有的输出门，不能与 beta 投影或 gamma 投影混淆。
+当前主配置 gamma 为零权重 + logit(0.1) 偏置；`beta_init` 用当前 GDN beta 的
+Xavier uniform（gain=2**-2.5）和零偏置，使用同一初始化规则但独立随机权重，初值不固定为0.5。
+两种初始化都保留，参数总数相同；默认0.1是可检验的实验选择，不是理论规定。
+如需拆开“初始均值”与“随机权重”的影响，可分别设置 `recall_init` 与 `recall_weight_init`。
+增加两层 MLP 不是 Recall 公式的要求；只要输出仍为每头 sigmoid 标量，理论形式仍成立，
+但当前主对照先使用与 beta 同阶的简单参数化，以减少额外网络容量带来的混淆。
 
 ## 预注册训练设置
 

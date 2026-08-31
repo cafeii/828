@@ -8,6 +8,7 @@ from pathlib import Path
 VARIANTS = {
     "gdn": "gdn_control_340M",
     "qgdn": "qgdn_340M",
+    "beta_init": "qgdn_beta_init_340M",
     "key": "qgdn_key_340M",
     "isotropic": "qgdn_isotropic_340M",
     "fixed": "qgdn_fixed_340M",

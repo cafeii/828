@@ -164,7 +164,8 @@ class GatedDeltaNet(nn.Module):
 
         # 组级标量log遗忘门，fp32保证下游cumsum数值稳定
         g = -self.A_log.float().exp() * F.softplus(self.gk_proj(hidden_states).float() + self.dt_bias)
-        b = self.b_proj(hidden_states).sigmoid()
+        # Match the vendored original GDN: evaluate the scalar sigmoid in FP32.
+        b = self.b_proj(hidden_states).float().sigmoid()
 
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (g d) -> ... g d", d=self.head_k_dim)

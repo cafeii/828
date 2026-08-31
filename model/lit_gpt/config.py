@@ -57,6 +57,7 @@ class Config:
     recall_mode: str = "query"  # query | key | isotropic (QGDN only)
     recall_gate: str = "token"  # token | head | fixed
     recall_init: float = 0.1
+    recall_weight_init: str = "zero"  # zero | beta (same Xavier gain as the GDN beta projection)
 
     def __post_init__(self):
         # error checking
@@ -179,6 +180,7 @@ _recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
 configs += [
     dict(_recall_base, name="gdn_control_340M"),
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
+    dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn", recall_weight_init="beta", recall_init=0.5),
     dict(_recall_base, name="qgdn_key_340M", mixer="qgdn", recall_mode="key"),
     dict(_recall_base, name="qgdn_isotropic_340M", mixer="qgdn", recall_mode="isotropic"),
     dict(_recall_base, name="qgdn_fixed_340M", mixer="qgdn", recall_gate="fixed"),

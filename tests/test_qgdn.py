@@ -107,11 +107,13 @@ def test_state_carry_and_causality():
     torch.testing.assert_close(final, carried)
 
 
-def test_backbone_initialization_and_gate_gradient():
+@pytest.mark.parametrize("recall_weight_init,recall_init", [("zero", 0.1), ("beta", 0.5)])
+def test_backbone_initialization_and_gate_gradient(recall_weight_init, recall_init):
     models = []
     for mixer in ("gdn", "qgdn"):
         torch.manual_seed(3407)
-        cfg = Config.from_name(f"{mixer}_recall_tiny", use_short_conv=False, _norm_class="RMSNorm")
+        cfg = Config.from_name(f"{mixer}_recall_tiny", use_short_conv=False, _norm_class="RMSNorm",
+                               recall_weight_init=recall_weight_init, recall_init=recall_init)
         model = GPT(cfg)
         model.apply(lambda m: model._init_weights(m, n_layer=cfg.n_layer))
         for block in model.transformer.h:
@@ -128,7 +130,10 @@ def test_backbone_initialization_and_gate_gradient():
     for block in model.transformer.h:
         grad = block.attn.recall_proj.weight.grad
         assert grad is not None and grad.isfinite().all() and grad.abs().sum() > 0
-        assert torch.allclose(block.attn.recall_proj.bias.sigmoid(), torch.full((2,), 0.1))
+        assert torch.allclose(block.attn.recall_proj.bias.sigmoid(), torch.full((2,), recall_init))
+        if recall_weight_init == "beta":
+            assert block.attn.recall_proj.weight.abs().sum() > 0
+            assert not torch.equal(block.attn.recall_proj.weight, block.attn.b_proj.weight)
 
 
 @pytest.mark.parametrize("T", [17, 65, 257, 4096])
