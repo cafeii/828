@@ -27,6 +27,7 @@ RAW_SHA = '299392c2c47205f02a4e4d2b3c00c03acfb9b9ec3d707549476391218029f46d'
 READY_AUDIT_SHA = 'bd58aaf2ab81c299e976e882824db95ed92701b81db435662bb25598dd7dbc91'
 READY_REPAIR_SHA = 'e20fd96d3823b56caad888eb48c4c3eac5964226c5d7df654ca5b3401d8a625f'
 AUTHORIZATION = 'repair-original-100BT-and-remove-private-overlay'
+INTERRUPTED_JOURNAL = PERSONAL / 'experiments/20260831-201300-fineweb-inplace-100bt-46b57e/outputs/promotion/promotion.json'
 
 
 def now():
@@ -48,15 +49,21 @@ def unchanged(path, before):
         raise ValueError(f'File changed; preserving it: {path}')
 
 
-def verified(path, size, digests):
+def observed(path):
     before = snapshot(path)
-    if before['bytes'] != size:
-        raise ValueError(f'Unexpected size; preserving it: {path}')
     digest = sha256(path)
     unchanged(path, before)
+    return dict(**before, sha256=digest)
+
+
+def verified(path, size, digests):
+    before = observed(path)
+    if before['bytes'] != size:
+        raise ValueError(f'Unexpected size; preserving it: {path}')
+    digest = before['sha256']
     if digest not in digests:
         raise ValueError(f'Unexpected contents; preserving it: {path}')
-    return dict(**before, sha256=digest)
+    return before
 
 
 def sync_directory(directory):
@@ -147,6 +154,31 @@ def clean_private(root, target, expected, repaired, source_stats, audit):
     root.rmdir()
 
 
+def prior_cleanup_inventory(target, journal, source_stats):
+    """Only collect known original backups and renamed references to our good inodes."""
+    backup = Path(journal['backup_directory'])
+    if backup.parent != target or not backup.name.startswith('.qgdn-repair-backup-'):
+        raise ValueError('Previous backup is outside the exact shared dataset directory')
+    if backup.resolve(strict=True) != backup:
+        raise ValueError('Previous backup directory redirects')
+    expected = {name + '.bad' for name in journal['files']}
+    if {p.name for p in backup.iterdir()} != expected:
+        raise ValueError('Unexpected prior backup files; preserve them')
+    cleanup = []
+    for name in sorted(journal['files']):
+        path = backup / (name + '.bad')
+        before = journal['target_stats'][name]
+        unchanged(path, before)
+        cleanup.append((path, before))
+        renamed = target / (name + '.corrupt')
+        if renamed.exists() or renamed.is_symlink():
+            # These are the very same verified repaired inodes that were renamed
+            # by the competing task. Never remove an unrelated historical file.
+            unchanged(renamed, source_stats[name])
+            cleanup.append((renamed, source_stats[name]))
+    return backup, cleanup
+
+
 def run(args):
     if args.authorization != AUTHORIZATION:
         raise ValueError('This one-time shared-directory exception must be explicit')
@@ -176,11 +208,19 @@ def run(args):
     private_inventory(PRIVATE, target, expected, repaired)
     if {p.name for p in target.glob('*.parquet')} != set(expected):
         raise ValueError('Canonical inventory changed')
+    interrupted = None
+    if args.after_concurrent_download:
+        interrupted = json.loads(INTERRUPTED_JOURNAL.read_text())
+        if interrupted['target'] != str(target) or set(interrupted['files']) != repaired:
+            raise ValueError('Interrupted repair journal has a different target or inventory')
+        if any(f['mode'] != 'replaced' for f in interrupted['files'].values()):
+            raise ValueError('Interrupted repair did not publish all known 32 files')
     output.mkdir(parents=True, exist_ok=False)
     report = dict(status='preflight', started_at=now(), target=str(target),
                   private_root=str(PRIVATE), revision=REVISION, source_commit=os.environ.get('QGDN_EXPECTED_COMMIT'),
                   user_authorization='直接修复原目录，不要把语料存在我的目录下面',
                   upstream_sha256=UPSTREAM_SHA, original_audit_sha256=RAW_SHA,
+                  after_concurrent_download=args.after_concurrent_download,
                   files={}, private_removed=False, backups_removed=False)
     write_json(output / 'promotion.json', report)
     write_json(output / 'prior-private-READY.json', ready)
@@ -196,15 +236,25 @@ def run(args):
             def check(name):
                 f = expected[name]
                 good = verified(PRIVATE / 'sample/100BT' / name, f['size'], {f['lfs']['oid']})
-                old = verified(target / name, f['size'], {prior[name]['sha256'], f['lfs']['oid']})
-                print(json.dumps(dict(event='preflight_verified', file=name)), flush=True)
+                if interrupted:
+                    unchanged(PRIVATE / 'sample/100BT' / name, interrupted['source_stats'][name])
+                    # User authorized finishing the repair after the redundant
+                    # writer ended. Preserve and journal its newly observed bytes
+                    # before any replacement; still refuse subsequent changes.
+                    old = observed(target / name)
+                else:
+                    old = verified(target / name, f['size'], {prior[name]['sha256'], f['lfs']['oid']})
+                print(json.dumps(dict(event='preflight_verified', file=name,
+                                      canonical_sha256_match=old['sha256'] == f['lfs']['oid'])), flush=True)
                 return name, good, old
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
                 checks = list(pool.map(check, sorted(repaired)))
             source_stats = {name: good for name, good, old in checks}
             target_stats = {name: old for name, good, old in checks}
+            prior_backup, prior_cleanup = prior_cleanup_inventory(target, interrupted, source_stats) if interrupted else (None, [])
             report.update(status='publishing', source_stats=source_stats, target_stats=target_stats,
-                          backup_directory=str(backup))
+                          backup_directory=str(backup),
+                          prior_cleanup=[dict(path=str(path), before=before) for path, before in prior_cleanup])
             write_json(output / 'promotion.json', report)
             backup.mkdir(exist_ok=False)
             for name, good, old in checks:
@@ -223,6 +273,8 @@ def run(args):
             report.update(status='cleaning_verified_private_copy', audit_report=str(audit_path),
                           audit_report_sha256=sha256(audit_path))
             write_json(output / 'promotion.json', report)
+            for path, before in prior_cleanup:
+                unchanged(path, before)
             clean_private(PRIVATE, target, expected, repaired, source_stats, audit)
             report['private_removed'] = not PRIVATE.exists()
             write_json(output / 'promotion.json', report)
@@ -234,7 +286,15 @@ def run(args):
                 if item['mode'] == 'replaced':
                     (backup / (name + '.bad')).unlink()
             backup.rmdir()
+            for path, before in prior_cleanup:
+                unchanged(path, before)
+                path.unlink()
+            if prior_backup:
+                prior_backup.rmdir()
             report.update(status='passed', backups_removed=True, finished_at=now(),
+                          prior_backups_removed=bool(interrupted),
+                          initial_repaired_files=32,
+                          additional_replacements_after_concurrent_download=sum(f['mode'] == 'replaced' for f in report['files'].values()) if interrupted else 0,
                           bytes=audit['subsets']['100BT']['bytes'], documents=audit['subsets']['100BT']['rows'],
                           row_groups=audit['subsets']['100BT']['row_groups'], verified_files=len(expected))
             sync_directory(target)
@@ -253,6 +313,8 @@ def main():
     p.add_argument('--authorization', required=True, choices=[AUTHORIZATION])
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--workers', type=int, default=8)
+    p.add_argument('--after-concurrent-download', action='store_true',
+                   help='Resume the exact interrupted repair after the redundant external writer has ended')
     args = p.parse_args()
     if not os.environ.get('SLURM_JOB_ID'):
         p.error('Run this data operation through Slurm, not on the login node')

@@ -79,6 +79,34 @@ def test_recovery_never_overwrites_a_concurrent_writers_canonical_file(tmp_path)
     assert target.read_bytes() == b'new-data'
 
 
+def test_prior_cleanup_only_accepts_known_backups_and_our_renamed_inodes(tmp_path):
+    target, source, backup, good, old, digest = fixture_files(tmp_path)
+    recovery_backup = tmp_path / '.qgdn-repair-backup-test'
+    recovery_backup.mkdir()
+    m.os.link(target, recovery_backup / (target.name + '.bad'))
+    renamed = tmp_path / (target.name + '.corrupt')
+    m.os.link(source, renamed)
+    journal = dict(backup_directory=str(recovery_backup), files={target.name: {}},
+                   target_stats={target.name: old})
+    directory, inventory = m.prior_cleanup_inventory(tmp_path, journal, {target.name: good})
+    assert directory == recovery_backup and len(inventory) == 2
+    assert target.exists() and source.exists() and renamed.exists()
+    renamed.unlink()
+    renamed.write_bytes(b'other-file')
+    with pytest.raises(ValueError, match='preserving'):
+        m.prior_cleanup_inventory(tmp_path, journal, {target.name: good})
+    assert renamed.read_bytes() == b'other-file'
+
+
+def test_pinned_good_source_can_repair_a_newly_observed_corrupt_download(tmp_path):
+    target, source, backup, good, old, digest = fixture_files(tmp_path)
+    target.write_bytes(b'another-corrupt-download')
+    observed = m.observed(target)
+    result = m.promote_one(source, target, backup, good, observed, digest)
+    assert result['mode'] == 'replaced' and target.read_bytes() == b'new-data'
+    assert (backup / (target.name + '.bad')).read_bytes() == b'another-corrupt-download'
+
+
 def test_cleanup_requires_passed_audit_and_does_not_follow_symlinks(tmp_path):
     shared = tmp_path / 'shared'
     shared.mkdir()
