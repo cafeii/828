@@ -5,6 +5,11 @@ import math
 import sys
 from pathlib import Path
 
+from runtime import configure_device_from_cli
+
+if __name__ == "__main__":
+    configure_device_from_cli()
+
 import torch
 import torch.nn.functional as F
 

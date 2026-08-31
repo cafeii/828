@@ -163,6 +163,12 @@ python scripts/qgdn/evaluate.py --checkpoint /absolute/path/to/run/model_final.p
 python scripts/qgdn/validate.py --output /absolute/path/to/experiment/outputs/validation --full-model
 ```
 
+仅CPU验证必须显式传 `--cpu` 并省略 `--full-model`；入口在导入Torch/FLA之前屏蔽CUDA，
+所有GPU训练/评测入口要求Slurm GPU分配。个人Skill的CPU模板还在srun步骤内重复屏蔽GPU，
+避免Slurm覆盖外层环境变量。31839作业曾因外层屏蔽被覆盖而误触发CUDA测试，已终止并修复，
+不计作正式GPU验证。该次发现FLA的Hopper/Triton版本保护错误，正式GPU训练前须解决环境兼容性，
+保留保护机制，不能绕过错误继续训练。
+
 该入口必须在已分配的短 Slurm 作业内运行：稠密公式/梯度、GDN退化、读出插值、状态携带、
 BF16 chunk 输出/状态/梯度、数据顺序与污染防护、tiny LM/MQAR训练、严格恢复、长距离评测，
 两卡可见时验证DDP；`--full-model` 额外对两个约340M模型各跑一个4096长度的优化器步。

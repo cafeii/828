@@ -16,6 +16,11 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from runtime import configure_device_from_cli
+
+if __name__ == "__main__":
+    configure_device_from_cli()
+
 import numpy as np
 import torch
 import torch.distributed as dist

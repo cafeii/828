@@ -5,6 +5,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from runtime import configure_device_from_cli
+
+if __name__ == "__main__":
+    configure_device_from_cli()
+
 import numpy as np
 import torch
 
@@ -19,7 +24,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--full-model", action="store_true", help="Also run one 4096-token optimizer step of each ~340M model")
+    p.add_argument("--cpu", action="store_true", help="Mask CUDA before imports and run only CPU/tiny checks")
     args = p.parse_args()
+    if args.cpu and args.full_model:
+        p.error("--full-model requires an allocated GPU, not --cpu")
     args.output.mkdir(parents=True, exist_ok=False)
     report = dict(status="running", cuda=torch.cuda.is_available(), gpu_count=torch.cuda.device_count(), commands=[],
                   gpu_parity_verified=False, ddp_verified=False, full_model_verified=False,

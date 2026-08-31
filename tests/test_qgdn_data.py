@@ -9,6 +9,19 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "qgdn"))
 from data import TokenCorpus, file_sha256, load_manifest, mqar_batch
 from summarize import pairing_key
+from runtime import configure_device_from_cli
+
+
+def test_cpu_mode_masks_scheduler_visibility_and_gpu_mode_requires_allocation():
+    env = {"CUDA_VISIBLE_DEVICES": "0,1", "SLURM_JOB_ID": "123", "QGDN_REQUESTED_GPUS": "0"}
+    configure_device_from_cli(["--cpu"], env)
+    assert env["CUDA_VISIBLE_DEVICES"] == ""
+    with pytest.raises(RuntimeError, match="zero GPUs"):
+        configure_device_from_cli([], env)
+    with pytest.raises(RuntimeError, match="Slurm GPU allocation"):
+        configure_device_from_cli([], {})
+    gpu_env = {"SLURM_JOB_ID": "123", "SLURM_JOB_GPUS": "0", "QGDN_REQUESTED_GPUS": "1"}
+    configure_device_from_cli([], gpu_env)
 
 
 def test_global_stream_is_independent_of_rank_partition_and_resume(tmp_path):
