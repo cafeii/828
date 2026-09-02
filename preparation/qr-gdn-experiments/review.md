@@ -73,3 +73,12 @@
 - H800 结果：9 passed；FP32 与 BF16 存储/FP32 累积、带/不带初态、可选终态均与 PyTorch oracle 相符。
 - 结构约束：真实物理时间步；没有 `2T` 虚拟序列，也没有稠密 $2K\times2K$ 转移。
 - 状态传播 GPU 门槛通过。正式训练仍受阻于 chunk 内输出与反向 kernel，以及后续稳定性、恢复、8 卡 DDP 和吞吐/显存门槛。
+
+## Chunk 内输出前向实现候选
+
+- Commit：`dc9742ca8760a256a6d95368f8cd616c652815bb`。
+- 新增 Triton chunk-local 输出 kernel：不同真实 chunk 与 value tile 并行；每个 kernel program 只在固定 chunk 内执行有限 token 递推。没有逐 token Python 循环、`2T` 虚拟序列或稠密 $2K\times2K$ 转移。
+- 因果读出保持固定：KV 读取更新后状态，QR 残差读取更新前状态，因此当前 token 无 QR 自回显。
+- 新增 FP32/BF16、零/非零初态的 token oracle 对照测试，并把它加入 GPU 审查入口。
+- 开发节点验证：Python 编译通过；16 passed、7 GPU-skipped。GPU 编译与数值对照尚待下一次心跳提交诊断，本轮 `sbatch` 配额已用完。
+- 反向 kernel 尚未实现，模型 `chunk` 正式路径仍保持失败关闭，正式训练继续阻止。

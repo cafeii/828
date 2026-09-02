@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "chunk_internal_output_and_backward",
+  "current_stage": "chunk_internal_output_gpu_validation_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -73,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "state_propagation_gpu_passed_output_backward_pending",
+      "status": "state_gpu_passed_chunk_output_implemented_gpu_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -81,8 +81,13 @@
       "cpu_scan_tests": 6,
       "combined_cpu_regression": 33,
       "state_propagation_kernel": "gpu_passed",
-      "chunk_internal_outputs": "pending",
-      "backward_kernel": "pending"
+      "chunk_internal_outputs": "implemented_gpu_pending",
+      "backward_kernel": "pending",
+      "chunk_output_design": "parallel across physical chunks; fixed-size token loop inside Triton chunk kernel",
+      "chunk_output_cpu_static_regression": {
+        "passed": 16,
+        "gpu_skipped": 7
+      }
     },
     "gpu": {
       "status": "state_propagation_passed",
@@ -134,6 +139,10 @@
     {
       "stage": "bf16_oracle_dtype_fix",
       "commit": "a9af58aaea48bc9149ce7cbc11c44dd882f13cf7"
+    },
+    {
+      "stage": "chunk_local_output_forward_candidate",
+      "commit": "dc9742ca8760a256a6d95368f8cd616c652815bb"
     }
   ],
   "last_heartbeat": "2026-09-02T18:00:39.999Z"
