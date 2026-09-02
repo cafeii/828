@@ -11,6 +11,17 @@ from pathlib import Path
 _WORKSPACE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_WORKSPACE / "scripts" / "eval"))
 
+# transformers 5.x 兼容 shim（lzc-rnn 为 transformers 5.16）：
+# 1) lm_eval 0.4.9 的 models/__init__ 在 import 期引用已被 5.x 删除的 AutoModelForVision2Seq；
+#    本评估只做文本，用 CausalLM 占位使 import 通过。
+# 2) 必须先 import evaluate：其导入会把 sys.modules["transformers"] 替换为新 _LazyModule 对象
+#    （实测 lzc-rnn），shim 打在旧对象上会被丢弃。
+import evaluate  # noqa: F401
+import transformers
+
+if not hasattr(transformers, "AutoModelForVision2Seq"):
+    transformers.AutoModelForVision2Seq = transformers.AutoModelForCausalLM
+
 from lm_eval.api.registry import register_model  # noqa: E402
 from lm_eval.models.huggingface import HFLM  # noqa: E402
 

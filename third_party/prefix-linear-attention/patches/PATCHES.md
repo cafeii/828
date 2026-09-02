@@ -9,13 +9,14 @@
 - **model_args**：`model_name, ckpt_path, tokenizer_path, max_length=4096, device=cuda, dtype=bfloat16`。
 - **约束**：本模型 packed 定长训练、不支持 padding mask，生成类任务须 `--batch_size 1`。
 
-## 2. 修改 `lm-eval-harness/lm_eval/models/__init__.py`（1 行）
+## 2. 修改 `lm-eval-harness/lm_eval/models/__init__.py`（最小 diff）
 
 - **目的**：让上面的模型类在 import `lm_eval.models` 时完成注册（该 fork 的模型注册依赖此处显式 import）。
-- **diff**：文件末尾 `from . import jrt_lm` 之后新增一行
-  ```python
-  from . import litgpt_lm  # PATCH(rnn工作区): 自训lit_gpt模型接入，见 ../patches/PATCHES.md
-  ```
+- **diff**：
+  1. 末尾新增 `from . import litgpt_lm`（自训模型接入）。
+  2. `based_lm` / `jrt_lm` / `local_lm` 三个 import 移入 try/except ImportError 守卫——它们依赖
+     `based` / `train` / `hydra` 等本工作区不需要的包，在 lzc-rnn 环境会阻塞整个 models 包的
+     import（2026-09-02 服务器实测）。guard 后未注册基于这些依赖的模型，但不影响 litgpt/hf。
 - 未改动其他任何已有文件。
 
 ## 备注：任务可用性（非改动，排查结论）

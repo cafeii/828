@@ -59,7 +59,8 @@ cd "${HARNESS}"
 for task in "${TASKS[@]}"; do
   echo "[jrt] ${MODEL_NAME} / ${task}"
   # 逐任务独立进程：单任务 OOM/报错不影响其余任务，便于断点续跑
-  "${EVAL_PY}" -m lm_eval \
+  # fork 不安装、经 PYTHONPATH 引入（与上游 lm_eval 0.4.9 同模块名，避免冲突）
+  PYTHONPATH="${HARNESS}" "${EVAL_PY}" "${WORKSPACE}/scripts/eval/run_jrt.py" \
     --model litgpt \
     --model_args "model_name=${MODEL_NAME},ckpt_path=${CKPT_PATH},tokenizer_path=${TOKENIZER_PATH},max_length=4096" \
     --tasks "${task}" \
