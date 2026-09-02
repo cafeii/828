@@ -249,6 +249,7 @@ def block_wy_rank2_vector_decay(log_decay, left, right, write, v, *, chunk_size:
     if v.shape[:-1] != log_decay.shape[:-1]:
         raise ValueError("v must have shape [B,T,H,V]")
 
+    v = v.to(left.dtype)
     B, T, H, rank, D = left.shape
     channels = log_decay.shape[-1]
     if D % channels:
