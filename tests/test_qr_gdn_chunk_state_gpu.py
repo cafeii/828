@@ -39,7 +39,8 @@ def torch_propagate(compact, initial_state):
     starts = []
     for index in range(chunks):
         starts.append(state.to(compact[3].dtype))
-        state = apply_vector_decay_chunk(tuple(x[:, index] for x in compact), state)
+        transform = tuple(x[:, index].float() for x in compact)
+        state = apply_vector_decay_chunk(transform, state)
     return torch.stack(starts, dim=1), state.float()
 
 
