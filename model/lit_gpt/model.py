@@ -230,6 +230,10 @@ class Block(nn.Module):
                 from .mixers.gdn import GatedDeltaNet as rnn_cls
             elif config.mixer == "qgdn":
                 from .mixers.qgdn import QueryGuidedDeltaNet as rnn_cls
+            elif config.mixer == "dt_gdn":
+                from .mixers.dt_jqc import DualTargetGatedDeltaNet as rnn_cls
+            elif config.mixer == "jqc_gdn":
+                from .mixers.dt_jqc import JointQueryConsolidationGatedDeltaNet as rnn_cls
             elif config.mixer == "kda":
                 from .mixers.kda import KimiDeltaAttention as rnn_cls
             else:

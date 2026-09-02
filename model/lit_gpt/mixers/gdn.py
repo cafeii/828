@@ -213,7 +213,18 @@ class GatedDeltaNet(nn.Module):
                 forgetting_margin=(-g.expm1()) * (1 - gamma),
             )
         self._accumulate_gate_stats(**gates)
-        if self.recall_mode != "none":
+        if self.recall_mode in {"dt", "jqc"}:
+            if kwargs.get("cu_seqlens") is not None:
+                raise NotImplementedError("DT/JQC reference mode takes equal-length batches")
+            if mode != "naive":
+                raise NotImplementedError("The true rank-two DT/JQC parallel kernel has not passed validation")
+            from .dt_jqc_rule import dt_gdn_reference, jqc_gdn_reference
+
+            rule = dt_gdn_reference if self.recall_mode == "dt" else jqc_gdn_reference
+            o, recurrent_state = rule(q, k, v, g, b, gamma, initial_state=recurrent_state)
+            if not use_cache:
+                recurrent_state = None
+        elif self.recall_mode != "none":
             from .qgdn_rule import qgdn_rule
 
             o, recurrent_state = qgdn_rule(

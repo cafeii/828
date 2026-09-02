@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "IMPLEMENTING_REFERENCE",
-  "current_stage": "reference_recurrences",
+  "status": "IMPLEMENTING_PARALLEL_KERNEL",
+  "current_stage": "rank2_parallel_kernel",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -48,12 +48,28 @@
     "throughput_gate": {
       "status": "pending",
       "minimum_ratio_to_gdn": 0.8
+    },
+    "model_integration": {
+      "status": "passed",
+      "tests": 8,
+      "coverage": [
+        "DT/JQC registered configs and trainer acceptance",
+        "shared GDN initialization preserved exactly",
+        "DT/JQC parameter-count parity",
+        "CPU forward/backward and alpha/beta/gamma moments",
+        "unvalidated chunk path fails closed"
+      ]
+    },
+    "environment_findings": {
+      "login_gpu_use": "disabled after CUDA was unexpectedly visible",
+      "existing_fla_hopper_guard": "Triton >=3.4,<3.7.1 rejects gated chunk backward; formal GPU jobs must use the previously validated numerical backend or TileLang",
+      "impact_on_new_cpu_tests": "none; all targeted tests passed with CUDA disabled"
     }
   },
   "cluster_snapshot": {
-    "whole_idle_nodes": 0,
+    "whole_idle_nodes": 1,
     "action": "no_submission",
-    "reason": "No whole idle H800 node; implementation validation is not yet complete"
+    "reason": "Parallel kernel validation is incomplete; formal training remains blocked"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",

@@ -171,8 +171,8 @@ def main():
     config = Config.from_name(args.model, block_size=args.sequence_length)
     if args.cpu:
         config.use_short_conv, config._norm_class = False, "RMSNorm"
-    if config.mixer not in {"gdn", "qgdn"} or (config.num_groups or config.n_head) != config.n_head or config.use_lsa:
-        raise ValueError("The paired trainer requires standard MHA GDN or QGDN")
+    if config.mixer not in {"gdn", "qgdn", "dt_gdn", "jqc_gdn"} or (config.num_groups or config.n_head) != config.n_head or config.use_lsa:
+        raise ValueError("The paired trainer requires a supported standard-MHA GDN-family model")
 
     manifest, corpus = None, {}
     if args.task == "lm":

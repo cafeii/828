@@ -43,7 +43,7 @@ class Config:
     condense_ratio: int = 1
 
     # ---- RNN mixer（GDN2/LSA）相关 ----
-    mixer: str = "attn"  # "attn" | "gdn2" | "gdn" | "kda"
+    mixer: str = "attn"  # attn | gdn2 | gdn | qgdn | dt_gdn | jqc_gdn | kda
     mixer_per_layer: int = 1  # 1=全RNN层；N>1=每N层1个RNN其余attn；<=0=纯attn
     num_groups: Optional[int] = None  # RNN组数G；None→n_head（MHA形态）
     head_dim: Optional[int] = None  # RNN头维d_k；None→n_embd//n_head
@@ -180,6 +180,8 @@ _recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
 configs += [
     dict(_recall_base, name="gdn_control_340M"),
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
+    dict(_recall_base, name="dt_gdn_340M", mixer="dt_gdn"),
+    dict(_recall_base, name="jqc_gdn_340M", mixer="jqc_gdn"),
     dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn", recall_weight_init="beta", recall_init=0.5),
     dict(_recall_base, name="qgdn_key_340M", mixer="qgdn", recall_mode="key"),
     dict(_recall_base, name="qgdn_isotropic_340M", mixer="qgdn", recall_mode="isotropic"),
@@ -187,7 +189,7 @@ configs += [
     dict(_recall_base, name="qgdn_head_340M", mixer="qgdn", recall_gate="head"),
     dict(_recall_base, name="qgdn_zero_340M", mixer="qgdn", recall_gate="fixed", recall_init=0.0),
 ]
-for _mixer in ("gdn", "qgdn"):
+for _mixer in ("gdn", "qgdn", "dt_gdn", "jqc_gdn"):
     configs.append(dict(
         _recall_base, name=f"{_mixer}_recall_tiny", mixer=_mixer,
         n_layer=2, n_embd=128, n_head=2, head_dim=64,
