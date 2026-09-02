@@ -95,9 +95,17 @@ class GPT(nn.Module):
         idx: torch.Tensor,
         max_seq_length: Optional[int] = None,
         input_pos: Optional[torch.Tensor] = None,
+        past_key_values=None,
     ) -> torch.Tensor:
         B, T = idx.size()
         use_kv_cache = input_pos is not None
+
+        # RNN推理状态缓存（SimpleCache/fla Cache，原地更新）：纯RNN模型的增量解码路径，
+        # 与attention的input_pos/kv cache机制互斥
+        if past_key_values is not None:
+            assert input_pos is None, "past_key_values与input_pos不混用"
+            assert self.config.nope, "RNN缓存路径未实现rope偏移，仅支持nope模型"
+            assert all(b.use_rnn for b in self.transformer.h), "past_key_values仅支持纯RNN模型"
 
         block_size = self.config.block_size
         if max_seq_length is None:
@@ -137,7 +145,7 @@ class GPT(nn.Module):
 
         if not use_kv_cache:
             for block in self.transformer.h:
-                x, *_ = block(x, rope, max_seq_length)
+                x, *_ = block(x, rope, max_seq_length, past_key_values=past_key_values)
         else:
             start_pos = int(input_pos[0].item())
             if start_pos == 0:
@@ -256,10 +264,15 @@ class Block(nn.Module):
         mask: Optional[torch.Tensor] = None,
         input_pos: Optional[torch.Tensor] = None,
         kv_cache: Optional[KVCache] = None,
+        past_key_values=None,
     ) -> Tuple[torch.Tensor, Optional[KVCache]]:
         n_1 = self.norm_1(x)
         if self.use_rnn:
-            h, _, new_kv_cache = self.attn(n_1, attention_mask=None)
+            h, _, _ = self.attn(
+                n_1, attention_mask=None,
+                past_key_values=past_key_values, use_cache=past_key_values is not None,
+            )
+            new_kv_cache = None
         else:
             h, new_kv_cache = self.attn(n_1, rope, max_seq_length, mask, input_pos, kv_cache)
 

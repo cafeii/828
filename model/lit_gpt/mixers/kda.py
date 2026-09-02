@@ -157,7 +157,7 @@ class KimiDeltaAttention(nn.Module):
 
         last_state = None
         if past_key_values is not None:
-            from fla.layers.utils import get_layer_cache
+            from .cache import get_layer_cache
 
             last_state = get_layer_cache(self, past_key_values)
 
@@ -228,7 +228,7 @@ class KimiDeltaAttention(nn.Module):
             raise NotImplementedError(f"Not supported mode `{mode}`.")
 
         if past_key_values is not None:
-            from fla.layers.utils import update_layer_cache
+            from .cache import update_layer_cache
 
             update_layer_cache(
                 self,
