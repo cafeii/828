@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "parallel_autograd_gpu_diagnostic",
+  "current_stage": "parallel_model_wiring",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,18 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "diagnostic",
-      "purpose": "parallel forward/backward/final-state parity on H800",
-      "exp_id": "20260903-033439-qr-gdn-parallel-backward-gpu-599d2d",
-      "job_id": "34860",
-      "job_name": "王正仁-Metis-20260903-033439-qr-gdn-parallel-backward-gpu-599d2d",
-      "commit": "0d2623790f2efd569fb5109a80fdc01364d93f97",
-      "slurm_state": "RUNNING",
-      "node": "tko-b3-nv-dgx04"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -84,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "parallel_autograd_gpu_running",
+      "status": "forward_backward_gpu_passed_model_wiring_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -93,7 +82,7 @@
       "combined_cpu_regression": 33,
       "state_propagation_kernel": "gpu_passed",
       "chunk_internal_outputs": "gpu_passed",
-      "backward_kernel": "production_gdn_custom_backward_three_call_prototype_gpu_running",
+      "backward_kernel": "production_gdn_custom_backward_three_call_prototype_gpu_passed",
       "chunk_output_design": "parallel across physical chunks; fixed-size token loop inside Triton chunk kernel",
       "chunk_output_cpu_static_regression": {
         "passed": 16,
@@ -115,11 +104,20 @@
         "python_token_loop": false,
         "development_checks": "fp32_and_bf16_forward_passed; fp32_backward_passed_with_activated_compiler_environment",
         "slurm_job_id": "34860",
-        "throughput_risk": "three full chunk calls; must benchmark against 80 percent gate before formal training"
+        "throughput_risk": "three full chunk calls; must benchmark against 80 percent gate before formal training",
+        "slurm_state": "COMPLETED",
+        "exit_code": 0,
+        "elapsed": "00:03:31",
+        "tests_passed": 17,
+        "gpu_forward": "passed_fp32_bf16",
+        "gpu_backward": "passed_fp32",
+        "initial_and_final_state": "passed",
+        "native_gdn_zero_read_parity": "bitwise",
+        "result": "experiments/20260903-033439-qr-gdn-parallel-backward-gpu-599d2d/outputs/result.json"
       }
     },
     "gpu": {
-      "status": "state_propagation_passed",
+      "status": "parallel_forward_backward_passed",
       "job_id": "34791",
       "slurm_state": "COMPLETED",
       "exit_code": 0,
@@ -136,7 +134,8 @@
       "virtual_2t": false,
       "dense_2k_transition": false,
       "result": "experiments/20260903-020132-qr-gdn-state-gpu-retry-a4c2b3/outputs/result.json",
-      "chunk_output": "passed_job_34840"
+      "chunk_output": "passed_job_34840",
+      "parallel_autograd": "passed_job_34860"
     },
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"

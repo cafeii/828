@@ -108,3 +108,10 @@
 - 实验：`20260903-033439-qr-gdn-parallel-backward-gpu-599d2d`，Slurm job `34860`，快照 commit 同上。资源为碎片节点 `tko-b3-nv-dgx04`（提交时 5/8 GPU 已占用）的 1 GPU、4 CPU、16G、20 分钟。
 - 提交前核对开发树干净、完整唯一任务名无重复、manifest/job-id/lock 为空；已原子加锁并登记 job-id。本轮只执行此一次 `sbatch`。
 - 当前候选需要三次完整 chunk 调用，吞吐可能低于 80% 门槛；即使数值诊断通过，也必须先接入模型并基准吞吐/显存，未达标则融合优化，不提交正式训练。
+
+## 并行自动微分 GPU 诊断终态审查（job 34860）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:03:31`；`run.exitcode=0`。
+- `run.json`、完整日志与 `outputs/result.json` 均已核对并回收。首次回收时 required-output 元数据误写成 `outputs/result.json`，检查器因而在实际文件已存在时报告缺失；将 manifest 纠正为相对 outputs 目录的 `result.json` 后，状态与回收检查均正式通过，未重提作业。
+- H800 共 17 passed：既有状态传播、chunk 输出与 rank-2 扫描继续通过；新增三调用并行候选的 FP32/BF16 前向、双终态、FP32 全输入反向，以及 QR 读出关闭时的原生 GDN 逐位一致性均通过。
+- 结论：生产 FLA 自定义反向可以承载当前块下三角分解，数值和自动微分门槛通过。正式训练仍未开始；下一步接入模型 `chunk` 路径，再做稳定性/恢复、8 卡 DDP 和 340M 吞吐/峰值显存基准。三次完整 chunk 调用的性能风险仍需实测，未达到 GDN 80% 时必须融合优化。
