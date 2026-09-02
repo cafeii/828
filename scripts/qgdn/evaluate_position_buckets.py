@@ -81,8 +81,9 @@ def self_test():
 
 
 def markdown(report):
+    label = report["model"]
     lines = [
-        "# GDN seed 3407 position-bucket validation",
+        f"# {label} seed {report['seed']} position-bucket validation",
         "",
         f"Checkpoint step: {report['checkpoint_step']}; validation sequences: {report['validation_sequences']}.",
         "",
@@ -97,7 +98,7 @@ def markdown(report):
         f"Formal-style aggregate loss: {report['aggregate']['formal_style_loss']:.12f}.",
         f"Training summary loss: {report['aggregate']['training_summary_loss']:.12f}.",
         "",
-        "This is a read-only GDN result. QGDN-GDN bucket differences wait for the matched QGDN final checkpoint.",
+        f"This is a read-only {label} endpoint result.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -138,8 +139,8 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
     config = Config.from_name(run["args"]["model"], block_size=sequence_length)
-    if config.mixer != "gdn":
-        raise ValueError("This first diagnostic is restricted to the completed GDN checkpoint")
+    if config.mixer not in {"gdn", "qgdn"}:
+        raise ValueError(f"Unsupported mixer for position-bucket evaluation: {config.mixer}")
     manifest, paths = load_manifest(args.data_manifest, verify_hashes=False)
     if json_hash(manifest) != run["data_sha256"]:
         raise ValueError("Data manifest identity mismatch")
@@ -223,7 +224,7 @@ def main():
             "formal_minus_summary_loss": formal_loss - summary_loss,
             "perplexity": math.exp(bucket_loss),
         },
-        "interpretation": "GDN-only read-only endpoint profile; matched QGDN differences are pending.",
+        "interpretation": f"Read-only {run['args']['model']} endpoint profile.",
     }
     write_text_atomic(args.output_json, json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
     write_text_atomic(args.output_markdown, markdown(report))
