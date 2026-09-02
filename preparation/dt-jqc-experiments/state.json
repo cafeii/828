@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "status": "GPU_FORWARD_RETRY2_PENDING",
+  "status": "VALIDATING_GPU_FORWARD",
   "current_stage": "rank2_gpu_state_forward",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
@@ -23,7 +23,32 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "job_id": "34295",
+      "exp_id": "20260902-192250-dtjqc-rank2-state-gpu-retry2-8075ac",
+      "kind": "gpu_diagnostic_retry",
+      "scope": "rank2 chunk state forward BF16/FP32",
+      "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
+      "job_name": "王正仁-Metis-20260902-192250-dtjqc-rank2-state-gpu-retry2-8075ac",
+      "node": "tko-b3-nv-dgx23",
+      "resources": {
+        "gpus": 1,
+        "cpus": 4,
+        "mem": "32G",
+        "time": "00:20:00"
+      },
+      "slurm_state": "PENDING",
+      "retry_of": "34263",
+      "retry_number_for_import_path": 2,
+      "python_paths": [
+        ".",
+        "model",
+        "third_party/flash-linear-attention"
+      ],
+      "submitted_at": "2026-09-02T19:24:00+08:00"
+    }
+  ],
   "submission_count_this_wake": 1,
   "validation": {
     "reference_tests": {
@@ -69,18 +94,11 @@
       }
     },
     "gpu": {
-      "status": "failed_import_path_before_kernel",
-      "job_id": "34263",
-      "slurm_state": "FAILED",
-      "sacct_exit": "1:0",
-      "run_exitcode": "1",
-      "formal_review": "failed",
-      "first_error": "ModuleNotFoundError: No module named lit_gpt",
-      "root_cause": "experiment PYTHONPATH included source root but omitted source/model",
-      "kernel_exercised": false,
-      "entrypoint_exit_propagation": "passed; pytest failure correctly reached Slurm",
-      "remediation": "personal run-remote-experiment config now includes model; exact snapshot import verified with CUDA masked",
-      "retry": "second and final import-path retry pending next heartbeat; one-sbatch wake limit reached"
+      "status": "queued_retry2",
+      "job_id": "34295",
+      "retry_of": "34263",
+      "scope": "rank2 chunk state forward BF16/FP32",
+      "pythonpath_fix_verified": true
     },
     "ddp_8gpu": {
       "status": "pending"
@@ -126,11 +144,10 @@
   },
   "cluster_snapshot": {
     "whole_idle_nodes": 0,
-    "selected_fragment_node": "tko-b3-nv-dgx29",
+    "selected_fragment_node": "tko-b3-nv-dgx23",
     "selected_fragment_gpu_usage": "7/8 before submission",
-    "action": "diagnostic_34263_reviewed_failed_no_second_submission",
-    "job_id": "34263",
-    "reason": "one-sbatch-per-heartbeat limit reached; retry2 deferred"
+    "action": "submitted_one_gpu_diagnostic_retry2",
+    "job_id": "34295"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",
@@ -170,5 +187,5 @@
       "tests": "static compile and 28 CPU FP64 regressions passed"
     }
   ],
-  "last_heartbeat": "2026-09-02T10:46:38.561Z"
+  "last_heartbeat": "2026-09-02T11:22:08.633Z"
 }
