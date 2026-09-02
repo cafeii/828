@@ -36,3 +36,10 @@
   `tokenizer(...)`（`__call__`）。`batch_encode_plus` 在 transformers 5.x 已移除
   （lzc-rnn 为 5.16.1，JRT 冒烟 2026-09-02 实测触发 AttributeError）。
 - 语义不变：单条文本、相同参数（return_tensors/pt/padding/truncation），输出同一 input_ids。
+
+## 4. 修改 `lm-eval-harness/lm_eval/__main__.py`（log_samples 文件名超长修复）
+
+- 原版把完整 `model_args`（含 ckpt 绝对路径）sanitize 后作为 samples 文件名，超过
+  NAME_MAX(255) 时 OSError（冒烟 34235 实测：评估跑完、写文件时崩）。
+- 修复：sanitize 后超 100 字符则截前 80 字符 + 8 位 md5 后缀（保持可区分性）。
+  仅影响 `--log_samples` 的样本文件名，不影响结果 json 与指标。

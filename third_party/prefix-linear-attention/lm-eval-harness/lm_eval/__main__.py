@@ -384,9 +384,13 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
 
             if args.log_samples:
                 for task_name, config in results["configs"].items():
-                    output_name = "{}_{}".format(
-                        re.sub("/|=", "__", args.model_args), task_name
-                    )
+                    # PATCH(rnn工作区): model_args 含 ckpt 绝对路径时文件名超 NAME_MAX(255)，
+                    # 超长时截断并加内容哈希保持可区分（见 ../patches/PATCHES.md）
+                    safe_args = re.sub("/|=", "__", args.model_args)
+                    if len(safe_args) > 100:
+                        import hashlib
+                        safe_args = safe_args[:80] + "-" + hashlib.md5(safe_args.encode()).hexdigest()[:8]
+                    output_name = "{}_{}".format(safe_args, task_name)
                     filename = path.joinpath(f"{output_name}.jsonl")
                     samples_dumped = json.dumps(
                         samples[task_name],
