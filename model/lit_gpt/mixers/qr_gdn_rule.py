@@ -152,3 +152,165 @@ def qr_gdn_affine_reference(
         outputs.append(scale * output)
 
     return torch.stack(outputs, dim=1), (kv, qr)
+
+
+def qr_gdn_rank2_factors(q, k, g_kv, beta_kv, g_qr, beta_qr):
+    """Factor the stacked 2K-state transition into two simultaneous updates.
+
+    For Z=[M^KV; M^QR], each physical token has a two-channel diagonal
+    decay plus exactly two low-rank corrections. The external value write is
+    confined to the KV half. No virtual timesteps are introduced.
+    """
+    qn, kn = _normalized(q), _normalized(k)
+    g_kv, beta_kv, g_qr, beta_qr = (
+        x.to(qn.dtype) for x in (g_kv, beta_kv, g_qr, beta_qr)
+    )
+    if qn.shape != kn.shape or any(
+        x.shape != qn.shape[:-1] for x in (g_kv, beta_kv, g_qr, beta_qr)
+    ):
+        raise ValueError("incompatible QR-GDN factor shapes")
+    alpha_kv, alpha_qr = g_kv.exp(), g_qr.exp()
+    zero = torch.zeros_like(qn)
+    left_kv = torch.cat((kn, zero), dim=-1)
+    right_kv = torch.cat((-(alpha_kv * beta_kv)[..., None] * kn, zero), dim=-1)
+    left_qr = torch.cat((zero, qn), dim=-1)
+    right_qr = torch.cat(
+        (
+            beta_qr[..., None] * qn,
+            -(alpha_qr * beta_qr)[..., None] * qn,
+        ),
+        dim=-1,
+    )
+    write = torch.cat((beta_kv[..., None] * kn, zero), dim=-1)
+    log_decay = torch.stack((g_kv, g_qr), dim=-1)
+    left = torch.stack((left_kv, left_qr), dim=-2)
+    right = torch.stack((right_kv, right_qr), dim=-2)
+    return qn, kn, log_decay, left, right, write
+
+
+def qr_gdn_rank2_reference(
+    q,
+    k,
+    v,
+    g_kv,
+    beta_kv,
+    g_qr,
+    beta_qr,
+    read_logit,
+    *,
+    scale=None,
+    initial_state: Optional[StatePair] = None,
+):
+    """Token-loop oracle using the stacked-state rank-two factors."""
+    qn, _, log_decay, left, right, write = qr_gdn_rank2_factors(
+        q, k, g_kv, beta_kv, g_qr, beta_qr
+    )
+    v, read_logit = v.to(qn.dtype), read_logit.to(qn.dtype)
+    B, T, H, K = qn.shape
+    expected = (B, H, K, v.shape[-1])
+    if initial_state is None:
+        state = qn.new_zeros((B, H, 2 * K, v.shape[-1]))
+    else:
+        if len(initial_state) != 2 or any(tuple(x.shape) != expected for x in initial_state):
+            raise ValueError(f"both states must have shape {expected}")
+        state = torch.cat(tuple(x.to(qn.dtype) for x in initial_state), dim=-2)
+    scale = K**-0.5 if scale is None else scale
+    outputs = []
+    for t in range(T):
+        old_qr = state[..., K:, :]
+        reads = torch.einsum("bhrd,bhdv->bhrv", right[:, t], state)
+        decay = log_decay[:, t].exp().repeat_interleave(K, dim=-1)
+        state = decay[..., None] * state
+        state = state + torch.einsum("bhrd,bhrv->bhdv", left[:, t], reads)
+        state = state + write[:, t, :, :, None] * v[:, t, :, None, :]
+        output = _read(qn[:, t], state[..., :K, :])
+        output = output + read_logit[:, t].tanh()[..., None] * _read(qn[:, t], old_qr)
+        outputs.append(scale * output)
+    return torch.stack(outputs, dim=1), (state[..., :K, :], state[..., K:, :])
+
+
+def block_wy_rank2_vector_decay(log_decay, left, right, write, v, *, chunk_size: int):
+    """Build exact compact chunk transforms for two scalar decay channels.
+
+    The returned (decay, U, Z, offset) represents
+      state_out = decay * state_in + U @ (Z^T @ state_in) + offset.
+    It keeps T physical tokens and a compact rank of 2C per chunk.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if left.shape != right.shape or left.ndim != 5 or left.shape[-2] != 2:
+        raise ValueError("left and right must have shape [B,T,H,2,2K]")
+    if log_decay.ndim != 4 or log_decay.shape[-1] != 2:
+        raise ValueError("log_decay must have shape [B,T,H,2]")
+    if log_decay.shape[:-1] != left.shape[:-2]:
+        raise ValueError("decay and rank-two factor dimensions must match")
+    if write.shape != left.shape[:-2] + left.shape[-1:]:
+        raise ValueError("write must have shape [B,T,H,2K]")
+    if v.shape[:-1] != log_decay.shape[:-1]:
+        raise ValueError("v must have shape [B,T,H,V]")
+
+    B, T, H, rank, D = left.shape
+    channels = log_decay.shape[-1]
+    if D % channels:
+        raise ValueError("stacked state dimension must divide evenly into decay channels")
+    if T % chunk_size:
+        raise ValueError("sequence length must be divisible by chunk_size")
+    K = D // channels
+    chunks, C, Vdim = T // chunk_size, chunk_size, v.shape[-1]
+
+    g = log_decay.reshape(B, chunks, C, H, channels).permute(0, 1, 3, 2, 4)
+    l = left.reshape(B, chunks, C, H, rank, channels, K).permute(0, 1, 3, 2, 4, 5, 6)
+    r = right.reshape(B, chunks, C, H, rank, channels, K).permute(0, 1, 3, 2, 4, 5, 6)
+    l = l.reshape(B, chunks, H, C * rank, channels, K)
+    r = r.reshape(B, chunks, H, C * rank, channels, K)
+    p = write.reshape(B, chunks, C, H, channels, K).permute(0, 1, 3, 2, 4, 5)
+    values = v.reshape(B, chunks, C, H, Vdim).permute(0, 1, 3, 2, 4)
+
+    prefix = g.cumsum(-2)
+    before = prefix - g
+    token = torch.arange(C, device=left.device).repeat_interleave(rank)
+    factor_prefix = prefix.index_select(-2, token)
+    factor_before = before.index_select(-2, token)
+
+    dot_by_channel = torch.einsum("bnhigk,bnhjgk->bnhijg", r, l)
+    factor_decay = (factor_before[..., :, None, :] - factor_prefix[..., None, :, :]).exp()
+    factor_mask = token[:, None] > token[None, :]
+    interactions = (dot_by_channel * factor_decay).sum(-1)
+    system = torch.eye(C * rank, dtype=interactions.dtype, device=interactions.device)
+    system = system - interactions * factor_mask
+
+    start_reads = r * factor_before.exp()[..., None]
+    start_reads = start_reads.reshape(B, chunks, H, C * rank, D)
+    effective_reads = torch.linalg.solve_triangular(
+        system, start_reads, upper=False, unitriangular=True
+    )
+
+    end_prefix = prefix[..., -1, :]
+    final_left = l * (end_prefix[..., None, :, None] - factor_prefix[..., :, :, None]).exp()
+    final_left = final_left.reshape(B, chunks, H, C * rank, D)
+
+    read_write_by_channel = torch.einsum("bnhigk,bnhcgk->bnhicg", r, p)
+    write_decay = (factor_before[..., :, None, :] - prefix[..., None, :, :]).exp()
+    write_mask = token[:, None] > torch.arange(C, device=left.device)[None, :]
+    read_write = (read_write_by_channel * write_decay).sum(-1) * write_mask
+    write_rhs = torch.einsum("bnhic,bnhcv->bnhiv", read_write, values)
+    solved_write = torch.linalg.solve_triangular(
+        system, write_rhs, upper=False, unitriangular=True
+    )
+
+    offset = torch.einsum("bnhid,bnhiv->bnhdv", final_left, solved_write)
+    direct_decay = (end_prefix[..., None, :] - prefix).exp()
+    direct_write = (p * direct_decay[..., None]).reshape(B, chunks, H, C, D)
+    offset = offset + torch.einsum("bnhcd,bnhcv->bnhdv", direct_write, values)
+
+    decay = end_prefix.exp().repeat_interleave(K, dim=-1)
+    u = final_left.transpose(-1, -2).contiguous()
+    z = effective_reads.transpose(-1, -2).contiguous()
+    return decay, u, z, offset
+
+
+def apply_vector_decay_chunk(compact, state):
+    """Apply one transform returned by ``block_wy_rank2_vector_decay``."""
+    decay, u, z, offset = compact
+    projected = torch.einsum("bhdm,bhdv->bhmv", z, state)
+    return decay[..., None] * state + torch.einsum("bhdm,bhmv->bhdv", u, projected) + offset
