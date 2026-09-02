@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "status": "IMPLEMENTING_REFERENCE",
+  "current_stage": "reference_recurrences",
+  "remote": {
+    "ssh": "H800_hk_Real_B3_01",
+    "hostname": "tko-b3-nv-dgx01",
+    "workspace": "/work/projects/memos-b3/code/wangzr/828",
+    "branch": "QGDN"
+  },
+  "baseline_commit": "f62322a5fd0cdbc1ed45a9753bdfa22a663143d4",
+  "baseline_results": {
+    "3407": {"loss": 2.694321140, "perplexity": 14.795471283},
+    "42": {"loss": 2.693908996, "perplexity": 14.789374677}
+  },
+  "formal_seeds": [3407, 42],
+  "active_jobs": [],
+  "submission_count_this_wake": 0,
+  "validation": {
+    "reference_tests": {
+      "status": "passed",
+      "tests": 4,
+      "coverage": [
+        "DT closed form versus direct normal equations",
+        "DT affine recurrence forward/state/gradient parity",
+        "JQC affine recurrence forward/state/gradient parity",
+        "JQC gamma=0 native GDN parity"
+      ]
+    },
+    "parallel_kernel": {"status": "pending"},
+    "gpu": {"status": "pending"},
+    "ddp_8gpu": {"status": "pending"},
+    "throughput_gate": {"status": "pending", "minimum_ratio_to_gdn": 0.8}
+  },
+  "cluster_snapshot": {
+    "whole_idle_nodes": 0,
+    "action": "no_submission",
+    "reason": "No whole idle H800 node; implementation validation is not yet complete"
+  },
+  "formal_runs": {
+    "dt_gdn_3407": "blocked_by_validation",
+    "jqc_gdn_3407": "blocked_by_validation",
+    "dt_gdn_42": "blocked_by_validation",
+    "jqc_gdn_42": "blocked_by_validation"
+  },
+  "commits": []
+}
