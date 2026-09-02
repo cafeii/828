@@ -12,7 +12,7 @@
     "mem": "32G",
     "time": "00:20:00"
   },
-  "slurm_state": "PENDING",
+  "slurm_state": "FAILED",
   "retry_of": "34263",
   "retry_number_for_import_path": 2,
   "python_paths": [
@@ -20,5 +20,19 @@
     "model",
     "third_party/flash-linear-attention"
   ],
-  "submitted_at": "2026-09-02T19:24:00+08:00"
+  "submitted_at": "2026-09-02T19:24:00+08:00",
+  "sacct_exit": "1:0",
+  "elapsed": "00:00:41",
+  "run_exitcode": 1,
+  "review_status": "failed",
+  "required_outputs": {
+    "pytest.xml": "present"
+  },
+  "pythonpath_fix_verified": true,
+  "kernel_exercised": true,
+  "first_error": "Triton CompilationError: Input shapes should have M >= 1, N >= 1 and K >= 16",
+  "root_cause": "compact rank M=8/4 in tests is smaller than Hopper tl.dot minimum inner dimension 16",
+  "remediation_commit": "e51ccdea2c85ec047a73d6c4d984d5e5ed060499",
+  "remediation_validation": "static compile and 28 CPU FP64 regressions passed",
+  "reviewed_at": "2026-09-02T19:29:35+08:00"
 }
