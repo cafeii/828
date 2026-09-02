@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "MODEL_INTEGRATION",
-  "current_stage": "parallel_rank2_vector_decay_design",
+  "current_stage": "gpu_parallel_kernel_implementation",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -72,7 +72,15 @@
       "qr_read_gradient": "nonzero_and_finite",
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
-    "parallel_kernel": "pending",
+    "parallel_kernel": {
+      "status": "algebra_passed_gpu_pending",
+      "physical_timesteps": true,
+      "virtual_2t": false,
+      "dense_2k_transition": false,
+      "rank_per_chunk": "2C",
+      "cpu_scan_tests": 6,
+      "combined_cpu_regression": 33
+    },
     "gpu": "pending",
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"
@@ -93,7 +101,11 @@
     {
       "stage": "model_integration",
       "commit": "193306906e29621507e27146c28142e4b1b879dd"
+    },
+    {
+      "stage": "parallel_rank2_vector_decay_algebra",
+      "commit": "e92d4579e5df29ad0dca09205b0fd56f5a2f3fdc"
     }
   ],
-  "last_heartbeat": "2026-09-02T15:48:37.447Z"
+  "last_heartbeat": "2026-09-02T16:33:39.735Z"
 }
