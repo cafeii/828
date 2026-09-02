@@ -145,3 +145,11 @@
 - 新增同卡 340M 训练步基准：GDN 与 QR-GDN 均使用序列 4096、micro batch 1、BF16 mixed、激活检查点、AdamW 和完整前向/交叉熵/反向/裁剪/更新；报告参数量、FP32 状态字节、逐步耗时、吞吐和峰值显存，并自动判断 QR/GDN 吞吐是否达到 80%。
 - Meta 参数检查：GDN 344,353,984；QR-GDN 345,338,304，新增 984,320。Python 编译、CPU 回归和配置构造通过。
 - 本轮已使用 job 34875 的唯一 `sbatch`，因此新工具留待下次心跳在 H800 上运行。正式训练继续阻止。
+
+## 稳定性与 340M 性能诊断提交
+
+- 实验：`20260903-045704-qr-gdn-stability-performance-39343a`；Slurm job `34888`；快照 commit `e58a27f76eb4b137ed762f71250a6698e1c500bc`。
+- 资源：碎片节点 `tko-b3-nv-dgx03`（提交时 6/8 GPU 已占用）的 1 GPU、8 CPU、64G、1 小时。
+- 验证先运行分段恢复、近极端门控和 BF16 模型反向，再在同一 H800 上顺序测量 GDN 340M 与 QR-GDN 340M：sequence length 4096、micro batch 1、BF16 mixed、激活检查点，1 个 warmup 和 3 个正式训练步。
+- 吞吐门槛固定为 QR-GDN/GDN ≥ 0.8，同时记录参数、两倍状态字节和峰值显存。低于门槛只记录为需优化，不启动完整训练。
+- 提交前开发树干净、完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 `sbatch`。
