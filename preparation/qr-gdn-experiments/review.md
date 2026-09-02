@@ -90,3 +90,11 @@
 - 提交前开发树干净，精确任务名无重复，manifest/job-id/lock 为空；已加锁并登记 job-id。
 - 验证范围：既有状态传播与 rank-2 扫描，加上 chunk 内输出的 FP32/BF16、零/非零初态四种组合。
 - 本轮只执行这一项 `sbatch`，不提交正式训练。
+
+## Chunk 内输出 GPU 诊断终态审查（job 34840）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:01:15`；`run.exitcode=0`。
+- `run.json`、日志、`outputs/result.json` 均完整并已回收。
+- H800：13 passed。新增 chunk 输出覆盖 FP32/BF16 以及零/非零初态，均与 FP32 逐 token oracle 相符；既有状态传播和 rank-2 扫描也通过。
+- 时间维保持真实 $T$，不同物理 chunk 并行；没有逐 token Python 训练循环、`2T` 展开或稠密 $2K\times2K$ 转移。
+- 并行前向门槛通过。正式训练仍受阻于反向 kernel，以及稳定性、恢复、8 卡 DDP 和吞吐/显存验证。

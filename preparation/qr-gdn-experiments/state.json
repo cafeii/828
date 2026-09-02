@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "GPU_VALIDATION",
-  "current_stage": "chunk_internal_output_gpu_diagnostic",
+  "status": "KERNEL_IMPLEMENTATION",
+  "current_stage": "parallel_backward_kernel",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,21 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "gpu_chunk_output_diagnostic",
-      "exp_id": "20260903-024229-qr-gdn-chunk-output-gpu-c9bd61",
-      "job_id": "34840",
-      "job_name": "王正仁-Metis-20260903-024229-qr-gdn-chunk-output-gpu-c9bd61",
-      "commit": "4b52c867fc1f210a9161c2cd1a023fbaffd50244",
-      "node": "tko-b3-nv-dgx07",
-      "slurm_state": "RUNNING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-02T18:39:40.139Z"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -87,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "state_gpu_passed_chunk_output_implemented_gpu_pending",
+      "status": "forward_gpu_passed_backward_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -95,12 +81,20 @@
       "cpu_scan_tests": 6,
       "combined_cpu_regression": 33,
       "state_propagation_kernel": "gpu_passed",
-      "chunk_internal_outputs": "gpu_job_34840_running",
+      "chunk_internal_outputs": "gpu_passed",
       "backward_kernel": "pending",
       "chunk_output_design": "parallel across physical chunks; fixed-size token loop inside Triton chunk kernel",
       "chunk_output_cpu_static_regression": {
         "passed": 16,
         "gpu_skipped": 7
+      },
+      "chunk_output_gpu": {
+        "job_id": "34840",
+        "tests_passed": 13,
+        "fp32": "passed",
+        "bf16": "passed",
+        "zero_initial": "passed",
+        "nonzero_initial": "passed"
       }
     },
     "gpu": {
@@ -120,7 +114,8 @@
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
-      "result": "experiments/20260903-020132-qr-gdn-state-gpu-retry-a4c2b3/outputs/result.json"
+      "result": "experiments/20260903-020132-qr-gdn-state-gpu-retry-a4c2b3/outputs/result.json",
+      "chunk_output": "passed_job_34840"
     },
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"
