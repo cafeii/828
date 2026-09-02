@@ -212,3 +212,11 @@
 - 工具 commit eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b；实验 20260903-070207-qr-gdn-fused-forward-profile-581312；Slurm job 34918。
 - 在 B1、T4096、H16、K64、V64、BF16、chunk 64 下，分别测量原生 GDN、当前两调用 QR、rank-2 变换构造加融合 kernel、预先构造后的融合 kernel 本体，并核对融合输出与当前路径误差。
 - 资源为 best-fit 碎片节点 tko-b3-nv-dgx04 的 1 GPU、4 CPU、32G、30 分钟；提交前开发树干净，唯一任务名、job-id 和 submission.lock 均无重复。本轮只执行这一项 sbatch。
+
+## Rank-2 融合前向可行性诊断终态审查（job 34918）
+
+- Slurm COMPLETED，exit code 0:0，elapsed 00:00:19；run.exitcode=0。run.json、日志和 result.json 完整并已回收。
+- B1/T4096/H16/K64/V64/BF16 下，原生 GDN、当前两调用 QR、rank-2 kernel-only、rank-2 完整前向平均耗时分别为 0.534、1.329、1.441、5.312 ms。
+- 通用 rank-2 kernel 本体速度仅为当前路径的 92.26%；加入 block-WY 因子构造后仅为 25.02%，峰值临时显存约 1.617 GB。输出误差 max 0.001953、mean 0.000164，在 BF16 预期范围内，但性能不合格。
+- 结论：rank-2 结构继续保留作理论与数值参考，不作为正式训练 kernel。生产优化改为保留原生 KV 前向和因果两调用分解，专门融合 KV 正常读出与更新前回忆的两路反向贡献，使 KV 状态梯度只扫描一次；这同时保留关闭 QR 读出时的原生 GDN 精确路径。
+- 本轮 sbatch 配额已由 job 34918 使用，不追加 GPU 作业；正式训练仍受 80% 吞吐和 8 卡 DDP 门槛阻止。

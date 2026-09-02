@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "PERFORMANCE_PROFILING",
-  "current_stage": "rank2_fused_forward_profile_running",
+  "status": "PERFORMANCE_OPTIMIZATION",
+  "current_stage": "specialized_dual_read_backward_design",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,29 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "rank2_fused_forward_profile",
-      "exp_id": "20260903-070207-qr-gdn-fused-forward-profile-581312",
-      "job_id": "34918",
-      "job_name": "王正仁-Metis-20260903-070207-qr-gdn-fused-forward-profile-581312",
-      "commit": "eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b",
-      "node": "tko-b3-nv-dgx04",
-      "slurm_state": "RUNNING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-02T22:58:11.107Z",
-      "review_status": "running",
-      "resource_request": {
-        "gpu": 1,
-        "cpu": 4,
-        "memory": "32G",
-        "time": "00:30:00"
-      },
-      "purpose": "separate rank2 transform-preparation cost from fused dual-state forward-kernel cost at B1 T4096 H16 K64 V64"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -95,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "stable_pre_read_candidate_gpu_pending",
+      "status": "gpu_correct_throughput_blocked",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -187,10 +165,35 @@
         "fused_rank2_profile": {
           "commit": "eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b",
           "job_id": "34918",
-          "slurm_state": "RUNNING",
+          "slurm_state": "COMPLETED",
           "node": "tko-b3-nv-dgx04",
           "shape": "B1 T4096 H16 K64 V64",
-          "question": "measure full rank2 preparation+kernel and kernel-only forward against current two-call QR"
+          "question": "measure full rank2 preparation+kernel and kernel-only forward against current two-call QR",
+          "exit_code": 0,
+          "elapsed": "00:00:19",
+          "run_exitcode": 0,
+          "required_output": "present",
+          "native_gdn_forward_seconds": 0.0005337812937796116,
+          "current_two_call_qr_forward_seconds": 0.0013293270952999593,
+          "rank2_kernel_only_seconds": 0.0014408618211746217,
+          "rank2_full_forward_seconds": 0.0053120872238650915,
+          "rank2_kernel_to_current_speed": 0.9225916571349383,
+          "rank2_full_to_current_speed": 0.2502457206138902,
+          "rank2_full_peak_memory_gb": 1.617060864,
+          "correctness": {
+            "max_abs": 0.001953125,
+            "mean_abs": 0.0001636055822018534
+          },
+          "decision": "rejected_for_production_performance",
+          "result": "experiments/20260903-070207-qr-gdn-fused-forward-profile-581312/outputs/result.json"
+        },
+        "next_candidate": {
+          "name": "specialized_dual_read_kv_backward",
+          "keep_native_kv_forward": true,
+          "keep_two_call_causal_decomposition": true,
+          "change": "merge native post-update output and shifted pre-update recall contributions before the KV state-gradient scan, avoiding the third full GDN backward",
+          "reason": "preserves exact native KV path and targets measured backward duplication instead of slower generic rank2 preparation",
+          "status": "design_pending"
         }
       }
     },
