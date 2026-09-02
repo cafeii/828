@@ -29,3 +29,10 @@
 
 工作区架构命名口径由 LSA 统一为 LSR（Latent State RNN），`litgpt_lm.py` 注释中的示例 model_name
 同步为 `gdn2_lsr_340M`。模型注册名 `litgpt` 不变。
+
+## 3. 修改 `lm-eval-harness/lm_eval/api/task.py`（transformers 5.x 兼容，2 处）
+
+- `truncate_context` 里的两处 `tokenizer.batch_encode_plus(...)` 改为等价的
+  `tokenizer(...)`（`__call__`）。`batch_encode_plus` 在 transformers 5.x 已移除
+  （lzc-rnn 为 5.16.1，JRT 冒烟 2026-09-02 实测触发 AttributeError）。
+- 语义不变：单条文本、相同参数（return_tensors/pt/padding/truncation），输出同一 input_ids。

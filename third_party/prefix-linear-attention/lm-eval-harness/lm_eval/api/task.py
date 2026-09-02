@@ -362,8 +362,8 @@ class Task(abc.ABC):
         context = doc[context_key]
         context = context.strip()
 
-        doc_tokens = tokenizer.batch_encode_plus([context], return_tensors="pt", padding=True, truncation=False)['input_ids'][0]
-        # doc_tokens = tokenizer.batch_encode_plus([context], return_tensors="pt", padding=True, truncation=True, max_length=sequence_length)['input_ids'][0]
+        # PATCH(rnn工作区): batch_encode_plus 在 transformers 5.x 已移除，__call__ 等价（见 ../patches/PATCHES.md）
+        doc_tokens = tokenizer([context], return_tensors="pt", padding=True, truncation=False)['input_ids'][0]
 
         # Find where the answer is in the document
         answer_pos = -1
@@ -390,7 +390,7 @@ class Task(abc.ABC):
 
         # Convert the answer_pos to a token value
         context_short = context[:answer_pos]
-        context_short_tokens = tokenizer.batch_encode_plus(
+        context_short_tokens = tokenizer(
             [context_short], return_tensors="pt",
         )['input_ids'][0]
         answer_tok_pos = len(context_short_tokens)
