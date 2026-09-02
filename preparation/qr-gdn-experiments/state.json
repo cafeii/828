@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "GPU_VALIDATION",
-  "current_stage": "gpu_vector_decay_state_diagnostic",
+  "current_stage": "gpu_vector_decay_state_retry_ready",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,21 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "gpu_diagnostic",
-      "exp_id": "20260903-012356-qr-gdn-state-gpu-f95c41",
-      "job_id": "34756",
-      "job_name": "王正仁-Metis-20260903-012356-qr-gdn-state-gpu-f95c41",
-      "commit": "b51e08f1ff31f0b5ffdfcddf5378118beb320863",
-      "node": "tko-b3-nv-dgx07",
-      "slurm_state": "PENDING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-02T17:20:39.761Z"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -98,7 +84,18 @@
       "chunk_internal_outputs": "pending",
       "backward_kernel": "pending"
     },
-    "gpu": "submitted_job_34756",
+    "gpu": {
+      "status": "diagnostic_failed_before_bf16_kernel_assertion",
+      "job_id": "34756",
+      "slurm_state": "FAILED",
+      "exit_code": 1,
+      "passed_before_failure": 8,
+      "failed": 1,
+      "first_substantive_error": "BF16 PyTorch oracle mixed BF16 compact factors with FP32 accumulator in einsum",
+      "kernel_fault_established": false,
+      "fix_commit": "a9af58aaea48bc9149ce7cbc11c44dd882f13cf7",
+      "retry": "next_heartbeat_due_to_one_sbatch_limit"
+    },
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"
   },
@@ -126,6 +123,10 @@
     {
       "stage": "gpu_vector_decay_state_forward",
       "commit": "b51e08f1ff31f0b5ffdfcddf5378118beb320863"
+    },
+    {
+      "stage": "bf16_oracle_dtype_fix",
+      "commit": "a9af58aaea48bc9149ce7cbc11c44dd882f13cf7"
     }
   ],
   "last_heartbeat": "2026-09-02T17:20:39.761Z"

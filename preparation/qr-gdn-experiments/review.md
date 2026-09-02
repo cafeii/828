@@ -49,3 +49,11 @@
 - 提交前复核：开发工作树干净、完整唯一任务名无重复、manifest job-id 为空、submission.lock 与 job-id 文件均不存在；已原子创建锁并立即登记 job-id。
 - 目的：验证紧凑向量遗忘 chunk 变换的 FP32/BF16 GPU 状态传播、初态和可选终态；不训练模型。
 - 正式训练仍受阻：chunk 内输出和反向 kernel 尚未完成。
+
+## GPU 状态传播诊断终态审查（job 34756）
+
+- Slurm：`FAILED`，exit code `1:0`，elapsed `00:01:13`；`run.exitcode=1`，`run.json` 存在，必需产物 `result.json` 缺失。日志已经回收，不能判为成功。
+- 测试进度：8 passed、1 failed。第一处实质错误发生在 BF16 测试的 PyTorch oracle：BF16 紧凑因子与 FP32 累积状态直接进入 `einsum`，在调用被测 kernel 的比较之前失败；因此该次结果没有建立 BF16 kernel 错误。
+- 修复：oracle 明确把已量化的紧凑变换转为 FP32 后累计，commit `a9af58aaea48bc9149ce7cbc11c44dd882f13cf7`；无 GPU 的开发节点回归为 16 passed、3 GPU-skipped。
+- 重试：本次心跳已使用一次 `sbatch`，遵守上限，不在本轮再次提交；下次心跳可用新快照重跑这一项诊断。
+- 正式训练仍受阻：状态传播 GPU 诊断尚未通过，且 chunk 内输出与反向 kernel 仍未完成。
