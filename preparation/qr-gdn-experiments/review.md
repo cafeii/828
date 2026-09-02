@@ -229,3 +229,12 @@
 - 实验 `20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7`；Slurm job `34925`；资源为 best-fit 碎片节点 `tko-b3-nv-dgx09`（提交时 4/8 GPU 已占用）的 1 GPU、8 CPU、64G、1 小时。
 - 作业先运行全部 H800 数值、BF16、极端门控、分段恢复和反向检查，再用相同 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点配置重测 GDN/QR-GDN 吞吐与峰值显存。
 - 提交前开发树和实验快照均干净，完整唯一任务名、job-id 与 `submission.lock` 无重复；已原子加锁并登记 job-id。本轮只执行这一项 `sbatch`。正式训练仍受 80% 吞吐与 8 卡 DDP 门槛阻止。
+
+
+## 专用双读反向诊断终态审查（job 34925）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:08:09`；`run.exitcode=0`。`run.json`、日志和必需的 `result.json` 完整并已回收。
+- H800 数值套件 8 passed：FP32/BF16、完整反向、初末状态、近极端门控和分段续算均通过；共享逆向状态扫描没有改变 QR-GDN 数值语义。
+- 同卡 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点：GDN 18,432.88 token/s，QR-GDN 12,664.14 token/s，比例 68.70%，仍低于 80% 门槛。
+- 与上一稳定两调用方案的 68.05% 相比仅提高约 0.65 个百分点，说明重复逆向状态扫描不是主要瓶颈。峰值显存 GDN/QR-GDN 为 6.6846/6.6855 GB，没有异常增长；递归状态仍严格为两倍。
+- 正式训练继续阻止。下一候选将合并两路读出的局部 `dv` 与 `dq/k/g` 梯度 kernel，去掉剩余辅助 kernel 和零 `dh` 中间量；如果仍无法达到 80%，需要重新评估双状态机制的计算结构，而不能放宽门槛。
