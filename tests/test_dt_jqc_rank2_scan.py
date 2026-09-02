@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from lit_gpt.mixers.dt_jqc_rule import (
     apply_compact_chunk_reference,
+    block_wy_rank2_chunks,
     compact_rank2_chunk_reference,
     compose_affine,
     dense_affine_elements,
@@ -129,3 +130,40 @@ def test_compact_rank2_chunk_matches_state_gradients(method):
     torch.testing.assert_close(actual_state, expected_state, rtol=3e-11, atol=3e-11)
     for actual, expected in zip(actual_grads, expected_grads):
         torch.testing.assert_close(actual, expected, rtol=4e-10, atol=4e-10)
+
+
+@pytest.mark.parametrize("method", ["dt", "jqc"])
+@pytest.mark.parametrize("chunk_size", [1, 2, 4])
+def test_vectorized_block_wy_chunks_match_token_recurrence(method, chunk_size):
+    q, k, v, g, beta, gamma, state = inputs(T=8)
+    _, expected_state = rank2_factor_reference(
+        q, k, v, g, beta, gamma, method=method, initial_state=state
+    )
+    _, _, _, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
+    chunks = block_wy_rank2_chunks(g, left, right, write, v, chunk_size=chunk_size)
+    actual_state = state
+    for chunk in range(chunks[0].shape[1]):
+        compact = tuple(value[:, chunk] for value in chunks)
+        actual_state = apply_compact_chunk_reference(compact, actual_state)
+    torch.testing.assert_close(actual_state, expected_state, rtol=4e-11, atol=4e-11)
+
+
+@pytest.mark.parametrize("method", ["dt", "jqc"])
+def test_vectorized_block_wy_matches_all_state_gradients(method):
+    args = inputs(requires_grad=True, T=4)
+    _, expected_state = rank2_factor_reference(
+        *args[:-1], method=method, initial_state=args[-1]
+    )
+    weight = torch.randn_like(expected_state)
+    expected_grads = torch.autograd.grad((expected_state * weight).sum(), args)
+
+    cloned = tuple(x.detach().clone().requires_grad_() for x in args)
+    q, k, v, g, beta, gamma, state = cloned
+    _, _, _, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
+    chunks = block_wy_rank2_chunks(g, left, right, write, v, chunk_size=q.shape[1])
+    actual_state = apply_compact_chunk_reference(tuple(value[:, 0] for value in chunks), state)
+    actual_grads = torch.autograd.grad((actual_state * weight).sum(), cloned)
+
+    torch.testing.assert_close(actual_state, expected_state, rtol=4e-11, atol=4e-11)
+    for actual, expected in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual, expected, rtol=6e-10, atol=6e-10)

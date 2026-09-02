@@ -278,6 +278,82 @@ def rank2_chunked_final_state_reference(
     return state, ranks
 
 
+def block_wy_rank2_chunks(log_decay, left, right, write, v, *, chunk_size: int):
+    """Construct all exact rank-two chunk transforms without a token loop.
+
+    The two factor directions are flattened only inside each physical chunk.
+    Causality is defined by their source token indices, so the two directions
+    from the same token remain a simultaneous rank-two update. The only solve
+    is a unit-lower-triangular system of order 2C; no KxK matrix is formed.
+
+    Returns scalar, U, Z and offset for every chunk, representing
+      S_out = scalar*S_in + U*(Z^T*S_in) + offset.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if left.shape != right.shape or left.ndim != 5 or left.shape[-2] != 2:
+        raise ValueError("left and right must have shape [B,T,H,2,K]")
+    if log_decay.shape != left.shape[:-2] or write.shape != left.shape[:-2] + left.shape[-1:]:
+        raise ValueError("incompatible log_decay or write shape")
+    if v.shape[:-1] != log_decay.shape:
+        raise ValueError("v must have shape [B,T,H,V]")
+
+    B, T, H, rank, K = left.shape
+    if T % chunk_size:
+        raise ValueError("sequence length must be divisible by chunk_size")
+    chunks = T // chunk_size
+    C = chunk_size
+    Vdim = v.shape[-1]
+
+    g = log_decay.reshape(B, chunks, C, H).permute(0, 1, 3, 2)
+    l = left.reshape(B, chunks, C, H, rank, K).permute(0, 1, 3, 2, 4, 5)
+    r = right.reshape(B, chunks, C, H, rank, K).permute(0, 1, 3, 2, 4, 5)
+    l = l.reshape(B, chunks, H, C * rank, K)
+    r = r.reshape(B, chunks, H, C * rank, K)
+    p = write.reshape(B, chunks, C, H, K).permute(0, 1, 3, 2, 4)
+    values = v.reshape(B, chunks, C, H, Vdim).permute(0, 1, 3, 2, 4)
+
+    prefix = g.cumsum(-1)
+    before = prefix - g
+    token = torch.arange(C, device=left.device).repeat_interleave(rank)
+    factor_prefix = prefix.index_select(-1, token)
+    factor_before = before.index_select(-1, token)
+
+    factor_mask = token[:, None] > token[None, :]
+    factor_decay = (factor_before[..., :, None] - factor_prefix[..., None, :]).exp()
+    interactions = torch.einsum("bnhik,bnhjk->bnhij", r, l)
+    system = torch.eye(C * rank, dtype=interactions.dtype, device=interactions.device)
+    system = system - interactions * factor_decay * factor_mask
+
+    start_reads = factor_before.exp()[..., :, None] * r
+    effective_reads = torch.linalg.solve_triangular(
+        system, start_reads, upper=False, unitriangular=True
+    )
+
+    end_prefix = prefix[..., -1]
+    final_decay = (end_prefix[..., None] - factor_prefix).exp()
+    final_left = final_decay[..., :, None] * l
+
+    write_mask = token[:, None] > torch.arange(C, device=left.device)[None, :]
+    write_decay = (factor_before[..., :, None] - prefix[..., None, :]).exp()
+    read_write = torch.einsum("bnhik,bnhck->bnhic", r, p)
+    write_rhs = torch.einsum(
+        "bnhic,bnhcv->bnhiv", read_write * write_decay * write_mask, values
+    )
+    solved_write = torch.linalg.solve_triangular(
+        system, write_rhs, upper=False, unitriangular=True
+    )
+
+    offset = torch.einsum("bnhik,bnhiv->bnhkv", final_left, solved_write)
+    direct_decay = (end_prefix[..., None] - prefix).exp()
+    offset = offset + torch.einsum("bnhc,bnhck,bnhcv->bnhkv", direct_decay, p, values)
+
+    scalar = end_prefix.exp()
+    u = final_left.transpose(-1, -2).contiguous()
+    z = effective_reads.transpose(-1, -2).contiguous()
+    return scalar, u, z, offset
+
+
 def dense_affine_elements(q, k, v, g, beta, gamma, *, method: str):
     """Materialize dense affine elements only for small scan-algebra tests."""
     qn, _, alpha, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
