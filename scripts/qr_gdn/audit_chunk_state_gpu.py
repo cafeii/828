@@ -20,6 +20,7 @@ def main():
         "pytest",
         "tests/test_qr_gdn_chunk_state_gpu.py",
         "tests/test_qr_gdn_chunk_output_gpu.py",
+        "tests/test_qr_gdn_parallel_gpu.py",
         "tests/test_qr_gdn_rank2_scan.py",
         "-q",
     ]
@@ -28,7 +29,9 @@ def main():
         raise SystemExit(completed.returncode)
     result = {
         "status": "passed",
-        "tests": "qr_gdn_chunk_state_gpu + qr_gdn_chunk_output_gpu + qr_gdn_rank2_scan",
+        "tests": "qr_gdn_chunk_state_gpu + qr_gdn_chunk_output_gpu + qr_gdn_parallel_gpu + qr_gdn_rank2_scan",
+        "parallel_backward": "production_gdn_custom_backward",
+        "production_chunk_calls": 3,
         "physical_timesteps": True,
         "virtual_2t": False,
         "dense_2k_transition": False,
