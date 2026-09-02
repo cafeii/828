@@ -12,8 +12,17 @@
     "mem": "32G",
     "time": "00:20:00"
   },
-  "slurm_state": "PENDING",
+  "slurm_state": "FAILED",
   "retry_of": "34254",
   "entrypoint_fix": "direct pytest with junitxml; no login shell or pipeline",
-  "submitted_at": "2026-09-02T18:49:00+08:00"
+  "submitted_at": "2026-09-02T18:49:00+08:00",
+  "sacct_exit": "1:0",
+  "run_exitcode": "1",
+  "review_status": "FAILED",
+  "required_output_present": true,
+  "pytest_result": "3 failed during import",
+  "first_error": "ModuleNotFoundError: No module named lit_gpt",
+  "root_cause": "configured experiment PYTHONPATH omitted source/model",
+  "kernel_exercised": false,
+  "collected_local": "/Users/zrwang/Desktop/QGDN/experiments/20260902-184721-dtjqc-rank2-state-gpu-retry1-b48063"
 }
