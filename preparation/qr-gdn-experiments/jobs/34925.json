@@ -1,0 +1,21 @@
+{
+  "kind": "dual_read_backward_gpu_performance_diagnostic",
+  "exp_id": "20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7",
+  "job_id": "34925",
+  "job_name": "王正仁-Metis-20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7",
+  "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
+  "node": "tko-b3-nv-dgx09",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-03T07:44:00+08:00",
+  "review_status": "pending_terminal_review",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 8,
+    "memory": "64G",
+    "time": "01:00:00"
+  },
+  "purpose": "GPU FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate after fusing KV dual-read state backward"
+}

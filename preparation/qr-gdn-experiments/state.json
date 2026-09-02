@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "specialized_dual_read_backward_design",
+  "current_stage": "specialized_dual_read_backward_gpu_validation",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,7 +38,28 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "kind": "dual_read_backward_gpu_performance_diagnostic",
+      "exp_id": "20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7",
+      "job_id": "34925",
+      "job_name": "王正仁-Metis-20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7",
+      "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
+      "node": "tko-b3-nv-dgx09",
+      "slurm_state": "RUNNING",
+      "required_outputs": [
+        "result.json"
+      ],
+      "submitted_at": "2026-09-03T07:44:00+08:00",
+      "resource_request": {
+        "gpu": 1,
+        "cpu": 8,
+        "memory": "64G",
+        "time": "01:00:00"
+      },
+      "purpose": "GPU regression and same-H800 340M throughput/peak-memory gate for fused dual-read KV backward"
+    }
+  ],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -193,7 +214,11 @@
           "keep_two_call_causal_decomposition": true,
           "change": "merge native post-update output and shifted pre-update recall contributions before the KV state-gradient scan, avoiding the third full GDN backward",
           "reason": "preserves exact native KV path and targets measured backward duplication instead of slower generic rank2 preparation",
-          "status": "design_pending"
+          "status": "gpu_validation_running",
+          "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
+          "job_id": "34925",
+          "implementation": "one shared reverse state scan, combined value/update gradients, separate auxiliary query-gradient kernel",
+          "cpu_regression": "16_passed_8_gpu_skipped"
         }
       }
     },
@@ -325,7 +350,11 @@
     {
       "stage": "rank2_fused_forward_profiler",
       "commit": "eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b"
+    },
+    {
+      "stage": "specialized_dual_read_backward",
+      "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2"
     }
   ],
-  "last_heartbeat": "2026-09-02T22:58:11.107Z"
+  "last_heartbeat": "2026-09-02T23:34:41.340Z"
 }
