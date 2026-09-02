@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "status": "VALIDATING_GPU_FORWARD",
+  "status": "GPU_FORWARD_RETRY_PENDING",
   "current_stage": "rank2_gpu_state_forward",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
@@ -23,25 +23,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "job_id": "34254",
-      "exp_id": "20260902-181059-dtjqc-rank2-state-gpu-8a21f7",
-      "kind": "gpu_diagnostic",
-      "scope": "rank2 chunk state forward BF16/FP32",
-      "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
-      "job_name": "王正仁-Metis-20260902-181059-dtjqc-rank2-state-gpu-8a21f7",
-      "node": "tko-b3-nv-dgx04",
-      "resources": {
-        "gpus": 1,
-        "cpus": 4,
-        "mem": "32G",
-        "time": "00:20:00"
-      },
-      "slurm_state": "PENDING",
-      "submitted_at": "2026-09-02T18:13:00+08:00"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "validation": {
     "reference_tests": {
@@ -87,9 +69,16 @@
       }
     },
     "gpu": {
-      "status": "queued",
+      "status": "failed_entrypoint_before_kernel",
       "job_id": "34254",
-      "scope": "rank2 chunk state forward BF16/FP32"
+      "slurm_state": "COMPLETED",
+      "sacct_exit": "0:0",
+      "run_exitcode": "0",
+      "formal_review": "failed",
+      "first_error": "ModuleNotFoundError: No module named lit_gpt",
+      "root_cause": "inner bash -lc reset snapshot PYTHONPATH; tee pipeline masked pytest failure",
+      "kernel_exercised": false,
+      "retry": "pending next heartbeat; one-sbatch wake limit reached"
     },
     "ddp_8gpu": {
       "status": "pending"
@@ -136,8 +125,9 @@
     "whole_idle_nodes": 0,
     "selected_fragment_node": "tko-b3-nv-dgx04",
     "selected_fragment_gpu_usage": "7/8 before submission",
-    "action": "submitted_one_gpu_diagnostic",
-    "job_id": "34254"
+    "action": "diagnostic_34254_reviewed_failed_no_second_submission",
+    "job_id": "34254",
+    "reason": "one-sbatch-per-heartbeat limit reached; retry deferred"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",

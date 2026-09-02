@@ -12,6 +12,15 @@
     "mem": "32G",
     "time": "00:20:00"
   },
-  "slurm_state": "PENDING",
-  "submitted_at": "2026-09-02T18:13:00+08:00"
+  "slurm_state": "COMPLETED",
+  "submitted_at": "2026-09-02T18:13:00+08:00",
+  "sacct_exit": "0:0",
+  "run_exitcode": "0",
+  "review_status": "FAILED",
+  "required_output_present": true,
+  "pytest_result": "3 failed during import",
+  "first_error": "ModuleNotFoundError: No module named lit_gpt",
+  "root_cause": "bash -lc reset PYTHONPATH and tee masked pytest exit status",
+  "kernel_exercised": false,
+  "collected_local": "/Users/zrwang/Desktop/QGDN/experiments/20260902-181059-dtjqc-rank2-state-gpu-8a21f7"
 }
