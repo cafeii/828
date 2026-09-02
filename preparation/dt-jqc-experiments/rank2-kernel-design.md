@@ -1,0 +1,20 @@
+# Unified rank-two kernel contract
+
+Both mechanisms use one physical token per recurrence step:
+
+`S_t = alpha_t S_{t-1} + L_{t,0}(R_{t,0}^T S_{t-1}) + L_{t,1}(R_{t,1}^T S_{t-1}) + p_t v_t^T`.
+
+`L` and `R` have shape `[B,T,H,2,K]`; the rank axis is two while the time axis remains exactly `T`. The output is `K^-1/2 q_t^T S_t`. This is the sole contract for the future chunk/scan kernel and prevents a hidden `2T` implementation.
+
+For DT-GDN, let `c=k^Tq`, `d=1-beta*gamma*c^2`, `C00=beta/d`, `C01=-beta*gamma*c/d`, and `C11=gamma/d`. Then:
+
+- `L0=C00 k+C01 q`, `R0=-alpha k`, `p=L0`;
+- `L1=C01 k+C11 q`, `R1=(1-alpha)q`.
+
+For JQC-GDN:
+
+- `L0=k`, `R0=-alpha*beta*k`;
+- `L1=q`, `R1=gamma*((1-alpha)q+alpha*beta*(q^Tk)k)`;
+- `p=beta*(k-gamma*(q^Tk)q)`.
+
+Affine elements compose associatively as `(A2,C2)∘(A1,C1)=(A2A1,A2C1+C2)`. The FP64 tests verify both factorizations against their independent method equations, including all input gradients, and verify an inclusive affine scan against token recurrence. The production implementation must preserve this contract while avoiding dense `K×K` materialization and Python token loops.

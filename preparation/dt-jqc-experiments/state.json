@@ -37,7 +37,13 @@
       ]
     },
     "parallel_kernel": {
-      "status": "pending"
+      "status": "implementing",
+      "contract": "scalar decay + rank-two state transform + rank-one value write at T physical steps",
+      "forbid": [
+        "2T virtual sequence",
+        "dense KxK training path",
+        "Python token loop"
+      ]
     },
     "gpu": {
       "status": "pending"
@@ -64,12 +70,25 @@
       "login_gpu_use": "disabled after CUDA was unexpectedly visible",
       "existing_fla_hopper_guard": "Triton >=3.4,<3.7.1 rejects gated chunk backward; formal GPU jobs must use the previously validated numerical backend or TileLang",
       "impact_on_new_cpu_tests": "none; all targeted tests passed with CUDA disabled"
+    },
+    "rank2_algebra": {
+      "status": "passed",
+      "tests": 6,
+      "time_axis_expansion": false,
+      "rank": 2,
+      "coverage": [
+        "DT canonical factors versus independent closed form and all gradients",
+        "JQC canonical factors versus independent update and all gradients",
+        "dense inclusive affine scan versus token recurrence",
+        "affine composition associativity",
+        "DT near-collinear finite parity at beta=gamma=0.999"
+      ]
     }
   },
   "cluster_snapshot": {
     "whole_idle_nodes": 1,
     "action": "no_submission",
-    "reason": "Parallel kernel validation is incomplete; formal training remains blocked"
+    "reason": "Rank-two algebra is validated; production GPU chunk kernel and backward are not yet implemented"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",

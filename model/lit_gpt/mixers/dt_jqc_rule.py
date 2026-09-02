@@ -126,3 +126,98 @@ def jqc_gdn_affine_reference(q, k, v, g, beta, gamma, *, scale=None, initial_sta
         state = torch.einsum("bhij,bhjv->bhiv", transition, state) + write[..., None] * vt[..., None, :]
         outputs.append(scale * _read(qt, state))
     return torch.stack(outputs, dim=1), state
+
+
+def rank2_factors(q, k, g, beta, gamma, *, method: str):
+    """Return canonical rank-two factors without expanding the time axis.
+
+    The recurrence is
+      S_t = alpha_t S_{t-1}
+            + sum_r left[t,r] (right[t,r]^T S_{t-1})
+            + write[t] v_t^T,
+    with an explicit rank dimension of size two and the original T tokens.
+    """
+    if method not in {"dt", "jqc"}:
+        raise ValueError(f"unknown method: {method}")
+    qn, kn = _normalized(q), _normalized(k)
+    g, beta, gamma = (x.to(qn.dtype) for x in (g, beta, gamma))
+    if qn.shape != kn.shape or any(x.shape != qn.shape[:-1] for x in (g, beta, gamma)):
+        raise ValueError("incompatible rank-two factor shapes")
+    alpha = g.exp()
+    correlation = (qn * kn).sum(-1)
+    if method == "dt":
+        determinant = 1 - beta * gamma * correlation.square()
+        if torch.any(determinant <= 0):
+            raise FloatingPointError("DT-GDN 2x2 system is singular")
+        c00 = beta / determinant
+        c01 = -(beta * gamma * correlation) / determinant
+        c11 = gamma / determinant
+        left0 = c00[..., None] * kn + c01[..., None] * qn
+        left1 = c01[..., None] * kn + c11[..., None] * qn
+        right0 = -alpha[..., None] * kn
+        right1 = (1 - alpha)[..., None] * qn
+        write = left0
+    else:
+        left0 = kn
+        right0 = -(alpha * beta)[..., None] * kn
+        left1 = qn
+        right1 = gamma[..., None] * (
+            (1 - alpha)[..., None] * qn
+            + (alpha * beta * correlation)[..., None] * kn
+        )
+        write = beta[..., None] * (kn - (gamma * correlation)[..., None] * qn)
+    return qn, kn, alpha, torch.stack((left0, left1), dim=-2), torch.stack((right0, right1), dim=-2), write
+
+
+def rank2_factor_reference(q, k, v, g, beta, gamma, *, method: str, scale=None, initial_state=None):
+    """Apply the common rank-two factors as a token-loop correctness oracle."""
+    qn, _, alpha, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
+    v = v.to(qn.dtype)
+    B, T, H, K = qn.shape
+    expected = (B, H, K, v.shape[-1])
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    scale = K**-0.5 if scale is None else scale
+    outputs = []
+    for t in range(T):
+        reads = torch.einsum("bhrk,bhkv->bhrv", right[:, t], state)
+        state = alpha[:, t, :, None, None] * state
+        state = state + torch.einsum("bhrk,bhrv->bhkv", left[:, t], reads)
+        state = state + write[:, t, :, :, None] * v[:, t, :, None, :]
+        outputs.append(scale * _read(qn[:, t], state))
+    return torch.stack(outputs, dim=1), state
+
+
+def dense_affine_elements(q, k, v, g, beta, gamma, *, method: str):
+    """Materialize dense affine elements only for small scan-algebra tests."""
+    qn, _, alpha, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
+    v = v.to(qn.dtype)
+    K = qn.shape[-1]
+    eye = torch.eye(K, dtype=qn.dtype, device=qn.device)
+    transition = alpha[..., None, None] * eye
+    transition = transition + torch.einsum("bthrk,bthrj->bthkj", left, right)
+    offset = write[..., :, None] * v[..., None, :]
+    return qn, transition, offset
+
+
+def compose_affine(after_transition, after_offset, before_transition, before_offset):
+    """Compose ``after(before(S))``; this binary operator is associative."""
+    transition = after_transition @ before_transition
+    offset = after_transition @ before_offset + after_offset
+    return transition, offset
+
+
+def dense_affine_scan_reference(transition, offset, initial_state):
+    """Inclusive affine scan oracle for small tensors."""
+    prefix_transition = torch.eye(
+        transition.shape[-1], dtype=transition.dtype, device=transition.device
+    ).expand(*transition.shape[:1], *transition.shape[2:3], transition.shape[-1], transition.shape[-1])
+    prefix_offset = torch.zeros_like(offset[:, 0])
+    states = []
+    for t in range(transition.shape[1]):
+        prefix_transition, prefix_offset = compose_affine(
+            transition[:, t], offset[:, t], prefix_transition, prefix_offset
+        )
+        states.append(prefix_transition @ initial_state + prefix_offset)
+    return torch.stack(states, dim=1)
