@@ -1,5 +1,8 @@
+# social_iqa_fixed = 上游 social_iqa 换数据集路径：原版 allenai/social_i_qa 是脚本数据集，
+# 在 datasets 5.x 不可加载、在 datasets 2.20 需 trust_remote_code；换 lighteval/siqa
+#（parquet 镜像，列结构一致：context/question/answerA/B/C/label）。评分口径与上游完全一致。
 task: social_iqa_fixed
-dataset_path: allenai/social_i_qa
+dataset_path: lighteval/siqa
 dataset_name: null
 output_type: multiple_choice
 training_split: train
