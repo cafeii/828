@@ -1,0 +1,19 @@
+{
+  "job_id": "34263",
+  "exp_id": "20260902-184721-dtjqc-rank2-state-gpu-retry1-b48063",
+  "kind": "gpu_diagnostic_retry",
+  "scope": "rank2 chunk state forward BF16/FP32",
+  "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
+  "job_name": "王正仁-Metis-20260902-184721-dtjqc-rank2-state-gpu-retry1-b48063",
+  "node": "tko-b3-nv-dgx29",
+  "resources": {
+    "gpus": 1,
+    "cpus": 4,
+    "mem": "32G",
+    "time": "00:20:00"
+  },
+  "slurm_state": "PENDING",
+  "retry_of": "34254",
+  "entrypoint_fix": "direct pytest with junitxml; no login shell or pipeline",
+  "submitted_at": "2026-09-02T18:49:00+08:00"
+}

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "status": "GPU_FORWARD_RETRY_PENDING",
+  "status": "VALIDATING_GPU_FORWARD",
   "current_stage": "rank2_gpu_state_forward",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
@@ -23,7 +23,27 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "job_id": "34263",
+      "exp_id": "20260902-184721-dtjqc-rank2-state-gpu-retry1-b48063",
+      "kind": "gpu_diagnostic_retry",
+      "scope": "rank2 chunk state forward BF16/FP32",
+      "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
+      "job_name": "王正仁-Metis-20260902-184721-dtjqc-rank2-state-gpu-retry1-b48063",
+      "node": "tko-b3-nv-dgx29",
+      "resources": {
+        "gpus": 1,
+        "cpus": 4,
+        "mem": "32G",
+        "time": "00:20:00"
+      },
+      "slurm_state": "PENDING",
+      "retry_of": "34254",
+      "entrypoint_fix": "direct pytest with junitxml; no login shell or pipeline",
+      "submitted_at": "2026-09-02T18:49:00+08:00"
+    }
+  ],
   "submission_count_this_wake": 1,
   "validation": {
     "reference_tests": {
@@ -69,16 +89,11 @@
       }
     },
     "gpu": {
-      "status": "failed_entrypoint_before_kernel",
-      "job_id": "34254",
-      "slurm_state": "COMPLETED",
-      "sacct_exit": "0:0",
-      "run_exitcode": "0",
-      "formal_review": "failed",
-      "first_error": "ModuleNotFoundError: No module named lit_gpt",
-      "root_cause": "inner bash -lc reset snapshot PYTHONPATH; tee pipeline masked pytest failure",
-      "kernel_exercised": false,
-      "retry": "pending next heartbeat; one-sbatch wake limit reached"
+      "status": "queued_retry1",
+      "job_id": "34263",
+      "retry_of": "34254",
+      "scope": "rank2 chunk state forward BF16/FP32",
+      "entrypoint_fix": "direct pytest with real exit code"
     },
     "ddp_8gpu": {
       "status": "pending"
@@ -123,11 +138,10 @@
   },
   "cluster_snapshot": {
     "whole_idle_nodes": 0,
-    "selected_fragment_node": "tko-b3-nv-dgx04",
+    "selected_fragment_node": "tko-b3-nv-dgx29",
     "selected_fragment_gpu_usage": "7/8 before submission",
-    "action": "diagnostic_34254_reviewed_failed_no_second_submission",
-    "job_id": "34254",
-    "reason": "one-sbatch-per-heartbeat limit reached; retry deferred"
+    "action": "submitted_one_gpu_diagnostic_retry",
+    "job_id": "34263"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",
@@ -167,5 +181,5 @@
       "tests": "static compile and 28 CPU FP64 regressions passed"
     }
   ],
-  "last_heartbeat": "2026-09-02T10:07:08.346Z"
+  "last_heartbeat": "2026-09-02T10:46:38.561Z"
 }
