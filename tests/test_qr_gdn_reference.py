@@ -83,9 +83,14 @@ def test_qr_disabled_is_exact_native_gdn():
     qn, kn = F.normalize(q, dim=-1), F.normalize(k, dim=-1)
     outputs, current = [], kv
     for t in range(q.shape[1]):
-        base = g_kv[:, t].exp()[..., None, None] * current
-        error = v[:, t] - torch.einsum("bhk,bhkv->bhv", kn[:, t], base)
-        current = base + beta_kv[:, t, :, None, None] * kn[:, t, :, :, None] * error[..., None, :]
+        current = g_kv[:, t].exp()[..., None, None] * current
+        erased = torch.einsum(
+            "bhk,bhkv->bhv", beta_kv[:, t, :, None] * kn[:, t], current
+        )
+        current = current - kn[:, t, :, :, None] * erased[..., None, :]
+        current = current + kn[:, t, :, :, None] * (
+            beta_kv[:, t, :, None] * v[:, t]
+        )[..., None, :]
         outputs.append(q.shape[-1] ** -0.5 * torch.einsum("bhk,bhkv->bhv", qn[:, t], current))
 
     actual, (actual_kv, actual_qr) = qr_gdn_reference(

@@ -204,8 +204,19 @@ class GatedDeltaNet(nn.Module):
             b = b * 2.0
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
-        gamma = self.recall_gamma(hidden_states) if self.recall_mode != "none" else None
-        gates = {"alpha": g.exp(), "beta": b}
+        is_qr_gdn = self.recall_mode == "qr_gdn"
+        gamma = self.recall_gamma(hidden_states) if self.recall_mode not in {"none", "qr_gdn"} else None
+        if is_qr_gdn:
+            g_qr, b_qr, qr_read_logit = self.qr_gate_values(hidden_states)
+            gates = {
+                "alpha_kv": g.exp(),
+                "beta_kv": b,
+                "alpha_qr": g_qr.exp(),
+                "beta_qr": b_qr,
+                "qr_read": qr_read_logit.tanh(),
+            }
+        else:
+            gates = {"alpha": g.exp(), "beta": b}
         if gamma is not None:
             gates.update(
                 gamma=gamma,
@@ -213,7 +224,28 @@ class GatedDeltaNet(nn.Module):
                 forgetting_margin=(-g.expm1()) * (1 - gamma),
             )
         self._accumulate_gate_stats(**gates)
-        if self.recall_mode in {"dt", "jqc"}:
+        if is_qr_gdn:
+            if kwargs.get("cu_seqlens") is not None:
+                raise NotImplementedError("QR-GDN reference mode takes equal-length batches")
+            if mode != "naive":
+                raise NotImplementedError("The QR-GDN parallel kernel has not passed validation")
+            from .qr_gdn_rule import qr_gdn_reference
+
+            o, recurrent_state = qr_gdn_reference(
+                q,
+                k,
+                v,
+                g,
+                b,
+                g_qr,
+                b_qr,
+                qr_read_logit,
+                initial_state=recurrent_state,
+            )
+            o = o.to(hidden_states.dtype)
+            if not use_cache:
+                recurrent_state = None
+        elif self.recall_mode in {"dt", "jqc"}:
             if kwargs.get("cu_seqlens") is not None:
                 raise NotImplementedError("DT/JQC reference mode takes equal-length batches")
             if mode != "naive":

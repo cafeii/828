@@ -90,9 +90,12 @@ def qr_gdn_reference(
         recalled = _read(qt, old_kv)
         qr_read = _read(qt, old_qr)
 
-        base_kv = g_kv[:, t].exp()[..., None, None] * old_kv
-        kv_error = vt - _read(kt, base_kv)
-        kv = base_kv + beta_kv[:, t, :, None, None] * kt[..., None] * kv_error[..., None, :]
+        # Keep the native GDN operation order so disabling QR is bitwise exact,
+        # rather than only algebraically equivalent in floating point.
+        kv = g_kv[:, t].exp()[..., None, None] * old_kv
+        erased = _read(beta_kv[:, t, :, None] * kt, kv)
+        kv = kv - kt[..., None] * erased[..., None, :]
+        kv = kv + kt[..., None] * (beta_kv[:, t, :, None] * vt)[..., None, :]
 
         output = _read(qt, kv) + read_logit[:, t].tanh()[..., None] * qr_read
         outputs.append(scale * output)

@@ -230,6 +230,8 @@ class Block(nn.Module):
                 from .mixers.gdn import GatedDeltaNet as rnn_cls
             elif config.mixer == "qgdn":
                 from .mixers.qgdn import QueryGuidedDeltaNet as rnn_cls
+            elif config.mixer == "qr_gdn":
+                from .mixers.qr_gdn import QueryRecallGatedDeltaNet as rnn_cls
             elif config.mixer == "dt_gdn":
                 from .mixers.dt_jqc import DualTargetGatedDeltaNet as rnn_cls
             elif config.mixer == "jqc_gdn":
