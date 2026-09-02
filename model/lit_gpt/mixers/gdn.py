@@ -226,23 +226,41 @@ class GatedDeltaNet(nn.Module):
         self._accumulate_gate_stats(**gates)
         if is_qr_gdn:
             if kwargs.get("cu_seqlens") is not None:
-                raise NotImplementedError("QR-GDN reference mode takes equal-length batches")
-            if mode != "naive":
-                raise NotImplementedError("The QR-GDN parallel kernel has not passed validation")
-            from .qr_gdn_rule import qr_gdn_reference
+                raise NotImplementedError("QR-GDN currently takes equal-length batches")
+            if mode == "chunk":
+                from .qr_gdn_parallel import qr_gdn_parallel
 
-            o, recurrent_state = qr_gdn_reference(
-                q,
-                k,
-                v,
-                g,
-                b,
-                g_qr,
-                b_qr,
-                qr_read_logit,
-                initial_state=recurrent_state,
-            )
-            o = o.to(hidden_states.dtype)
+                o, recurrent_state = qr_gdn_parallel(
+                    q,
+                    k,
+                    v,
+                    g,
+                    b,
+                    g_qr,
+                    b_qr,
+                    qr_read_logit,
+                    initial_state=recurrent_state,
+                    output_final_state=use_cache,
+                )
+            elif mode in {"naive", "fused_recurrent"}:
+                # The explicit path is the decoding oracle until a dedicated
+                # fused recurrent two-state kernel is implemented.
+                from .qr_gdn_rule import qr_gdn_reference
+
+                o, recurrent_state = qr_gdn_reference(
+                    q,
+                    k,
+                    v,
+                    g,
+                    b,
+                    g_qr,
+                    b_qr,
+                    qr_read_logit,
+                    initial_state=recurrent_state,
+                )
+                o = o.to(hidden_states.dtype)
+            else:
+                raise NotImplementedError(f"Not supported QR-GDN mode `{mode}`.")
             if not use_cache:
                 recurrent_state = None
         elif self.recall_mode in {"dt", "jqc"}:

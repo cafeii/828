@@ -74,3 +74,34 @@ def test_zero_qr_read_is_exact_native_gdn_output():
         initial_state=(kv, qr), output_final_state=False,
     )
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_model_chunk_path_matches_naive_and_backpropagates():
+    from copy import deepcopy
+
+    from lit_gpt.mixers.qr_gdn import QueryRecallGatedDeltaNet
+
+    torch.manual_seed(2026)
+    kwargs = dict(
+        hidden_size=64,
+        num_heads=4,
+        num_groups=4,
+        head_dim=16,
+        use_short_conv=False,
+    )
+    chunk = QueryRecallGatedDeltaNet(**kwargs, mode="chunk").cuda().train()
+    with torch.no_grad():
+        chunk.qr_read_proj.bias.fill_(0.2)
+    naive = deepcopy(chunk)
+    naive.mode = "naive"
+
+    hidden = torch.randn(1, 64, 64, device="cuda", requires_grad=True)
+    expected = naive(hidden.detach().clone().requires_grad_())[0]
+    actual = chunk(hidden)[0]
+    torch.testing.assert_close(actual.float(), expected.float(), rtol=3e-3, atol=3e-3)
+
+    actual.square().mean().backward()
+    gradients = [parameter.grad for parameter in chunk.parameters() if parameter.grad is not None]
+    assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert chunk.qr_read_proj.weight.grad is not None
+    assert torch.count_nonzero(chunk.qr_read_proj.weight.grad) > 0
