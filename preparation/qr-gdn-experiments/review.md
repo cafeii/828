@@ -57,3 +57,11 @@
 - 修复：oracle 明确把已量化的紧凑变换转为 FP32 后累计，commit `a9af58aaea48bc9149ce7cbc11c44dd882f13cf7`；无 GPU 的开发节点回归为 16 passed、3 GPU-skipped。
 - 重试：本次心跳已使用一次 `sbatch`，遵守上限，不在本轮再次提交；下次心跳可用新快照重跑这一项诊断。
 - 正式训练仍受阻：状态传播 GPU 诊断尚未通过，且 chunk 内输出与反向 kernel 仍未完成。
+
+## GPU 状态传播诊断重试提交
+
+- 实验：`20260903-020132-qr-gdn-state-gpu-retry-a4c2b3`；Slurm job `34791`；快照 commit `8227ce96135a721695c5f1b3535dd3aec7dc7c3b`。
+- 这是 job 34756 的一次诊断重试，包含 BF16 PyTorch oracle dtype 修复。
+- 资源：碎片节点 `tko-b3-nv-dgx04` 已占 7/8 GPU，申请剩余 1 GPU、4 CPU、16G、20 分钟。
+- 提交前开发树干净，精确完整任务名无重复，manifest/job-id/lock 均为空；已加锁并立即登记 job-id。
+- 本轮只执行这一项 `sbatch`，不提交正式训练。
