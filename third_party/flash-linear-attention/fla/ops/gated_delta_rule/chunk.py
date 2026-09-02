@@ -120,7 +120,7 @@ def chunk_gated_delta_rule_fwd(
         state_v_first=state_v_first,
         chunk_size=chunk_size,
     )
-    return g, o, A, final_state, initial_state, g_input
+    return g, o, v_new, A, final_state, initial_state, g_input
 
 
 def chunk_gated_delta_rule_bwd(
@@ -134,6 +134,7 @@ def chunk_gated_delta_rule_bwd(
     initial_state: torch.Tensor,
     do: torch.Tensor,
     dht: torch.Tensor,
+    dv_new_external: torch.Tensor | None = None,
     state_v_first: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     cp_context: FLACPContext | None = None,
@@ -179,6 +180,11 @@ def chunk_gated_delta_rule_bwd(
         chunk_indices=chunk_indices,
         chunk_size=chunk_size,
     )
+    # Optional consumers may reuse the effective per-token state update
+    # produced by the forward state scan. Its gradient enters at the same
+    # point as the output-local gradient before the recurrent-state backward.
+    if dv_new_external is not None:
+        dv = dv + dv_new_external.to(dv.dtype)
 
     if cp_context is not None:
         # initial_state is None in the CP mode
@@ -277,6 +283,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         allow_neg_eigval: bool = False,
         cp_context: FLACPContext | None = None,
         chunk_size: int = 64,
+        output_update: bool = False,
     ):
         q_rstd, k_rstd = None, None
         if use_qk_l2norm_in_kernel:
@@ -289,7 +296,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
 
         if chunk_indices is None and cu_seqlens is not None:
             chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size, cu_seqlens_cpu=cu_seqlens_cpu)
-        g, o, A, final_state, initial_state, g_input = chunk_gated_delta_rule_fwd(
+        g, o, v_new, A, final_state, initial_state, g_input = chunk_gated_delta_rule_fwd(
             q=q,
             k=k,
             v=v,
@@ -332,7 +339,11 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         ctx.cp_context = cp_context
         ctx.state_v_first = state_v_first
         ctx.use_gate_in_kernel = use_gate_in_kernel
-        return o.to(q.dtype), final_state
+        ctx.output_update = output_update
+        outputs = (o.to(q.dtype), final_state)
+        if output_update:
+            outputs += (v_new.to(q.dtype),)
+        return outputs
 
     @staticmethod
     @input_guard
@@ -341,6 +352,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         ctx,
         do: torch.Tensor,
         dht: torch.Tensor,
+        dv_new_external: torch.Tensor | None = None,
     ):
         (
             q,
@@ -370,6 +382,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             initial_state=initial_state,
             do=do,
             dht=dht,
+            dv_new_external=dv_new_external,
             cu_seqlens=cu_seqlens,
             cp_context=ctx.cp_context,
             chunk_indices=chunk_indices,
@@ -388,7 +401,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         return (
             dq.to(q), dk.to(k), dv.to(v), dg.to(g), db.to(beta_raw),
             None, dh0, None, None, None, None, None, None, None, dA_log, ddt_bias,
-            None, None, None, None,
+            None, None, None, None, None,
         )
 
 
@@ -403,6 +416,7 @@ def chunk_gated_delta_rule(
     scale: float | None = None,
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
+    output_update: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
     use_beta_sigmoid_in_kernel: bool = False,
     allow_neg_eigval: bool = False,
@@ -438,6 +452,11 @@ def chunk_gated_delta_rule(
             Default: `None`.
         output_final_state (Optional[bool]):
             Whether to output the final state of shape `[N, HV, K, V]`. Default: `False`.
+        output_update (Optional[bool]):
+            Whether to also return the effective per-token delta value used by
+            the recurrent state update. This is intended for fused composed
+            recurrences that need the pre-update read without a second state
+            scan. Default: `False`.
         use_qk_l2norm_in_kernel (bool):
             Whether to apply L2norm to the q/k tensor internally. Default: `False`.
         use_gate_in_kernel (bool):
@@ -568,7 +587,7 @@ def chunk_gated_delta_rule(
 
     if scale is None:
         scale = k.shape[-1] ** -0.5
-    o, final_state = ChunkGatedDeltaRuleFunction.apply(
+    outputs = ChunkGatedDeltaRuleFunction.apply(
         q,
         k,
         v,
@@ -589,8 +608,9 @@ def chunk_gated_delta_rule(
         allow_neg_eigval,
         cp_context,
         chunk_size,
+        output_update,
     )
-    return o, final_state
+    return outputs
 
 
 chunk_gdn = chunk_gated_delta_rule
