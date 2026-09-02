@@ -6,16 +6,28 @@
   "commit": "415589690f51cbbf28c678eddf5552c696c2af52",
   "implementation_commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3",
   "node": "tko-b3-nv-dgx04",
-  "slurm_state": "RUNNING",
+  "slurm_state": "FAILED",
   "required_outputs": [
     "result.json"
   ],
   "submitted_at": "2026-09-02T21:41:10.812Z",
-  "review_status": "pending",
+  "review_status": "reviewed_failed",
   "resource_request": {
     "gpu": 1,
     "cpu": 8,
     "memory": "64G",
     "time": "01:00:00"
-  }
+  },
+  "exit_code": 1,
+  "elapsed": "00:01:49",
+  "run_exitcode_present": true,
+  "run_json_present": true,
+  "required_output_present": false,
+  "tests_passed": 5,
+  "tests_failed": 3,
+  "logs_collected": true,
+  "first_substantive_error": "BF16 recall stayed FP32 and caused Triton bf16/fp32 dot compilation mismatch",
+  "design_error": "division by small alpha_kv made algebraic old-state recovery numerically unstable under extreme forgetting",
+  "replacement_commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2",
+  "retry": "deferred_by_one_sbatch_per_heartbeat_limit"
 }

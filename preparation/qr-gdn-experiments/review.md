@@ -177,3 +177,17 @@
 - 资源：best-fit 碎片节点 `tko-b3-nv-dgx04`（提交时 4/8 GPU 已占用），申请 1 GPU、8 CPU、64G、1 小时。
 - 先重跑全部并行前向/反向、BF16、极端门控和分段续算检查，再以相同 H800、340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点复测 GDN 与两调用 QR-GDN 的吞吐和峰值显存。
 - 提交前开发树干净、完整唯一任务名无重复、manifest/job-id/lock 均为空；已原子加锁并立即登记 job-id。本轮只执行这一项 `sbatch`，正式训练仍受 80% 吞吐、8 卡 DDP 等门槛阻止。
+
+## 两调用候选 GPU 诊断失败审查（job 34895）
+
+- Slurm `FAILED`，exit code `1:0`，elapsed `00:01:49`；`run.exitcode=1`。`run.json` 和完整日志已回收，因测试先失败而没有生成必需的 `result.json`。
+- GPU 测试为 5 passed、3 failed。第一处实质错误是 BF16 路径中代数恢复的 `recall` 保持 FP32，第二次 FLA 调用由此形成 BF16/FP32 Triton dot 类型不一致。
+- 更关键的设计错误是 $M_{t-1}^{KV\top}q_t=(M_t^{KV\top}q_t-\langle q_t,k_t\rangle\delta_t)/\alpha_t^{KV}$ 在 $\alpha_t^{KV}$ 很小时需要相消后除以小数；极端遗忘测试出现明显放大。这不是可以通过放宽容差接受的路径，因此废弃该恢复公式。
+- 没有运行性能基准，也没有提交正式训练。本轮 `sbatch` 配额已由 job 34895 使用，不在同一心跳重试。
+
+## 稳定更新前读出候选
+
+- Commit：`60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2`。
+- KV chunk 在一次状态扫描后已有 chunk 初态和有效写入。新增一个移位查询输出 kernel：在位置 $t-1$ 用 $q_t$ 读取 $M_{t-1}^{KV}$，再把结果右移，从而直接得到 $r_t$；不做相消，也不除以 $\alpha_t^{KV}$。
+- 自定义反向在移位查询流上复用已验证的 GDN 反向，并在 L2 归一化反向之前把查询、键、值、门控和初态梯度合并。训练仍是两次完整 chunk 状态扫描，另加一个只读输出 kernel；没有逐 token Python 循环、`2T` 展开或稠密 $2K\times2K$ 转移。
+- Python 编译、diff 检查和 CPU 回归 16 passed。GPU 前向、BF16、极端门控、反向及吞吐需下一次心跳重新验证。
