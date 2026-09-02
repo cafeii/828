@@ -189,6 +189,95 @@ def rank2_factor_reference(q, k, v, g, beta, gamma, *, method: str, scale=None, 
     return torch.stack(outputs, dim=1), state
 
 
+def compact_rank2_chunk_reference(alpha, left, right, write, v):
+    """Build an exact scalar-plus-low-rank transform for one physical chunk.
+
+    This is a differentiable CPU oracle for the production WY/Triton kernel.
+    It keeps C physical timesteps and appends exactly two factor columns per
+    timestep, so the compact rank is 2C without materializing KxK transitions
+    or expanding the external time axis to 2C.
+
+    The returned tuple (a, U, Z, E) represents
+      S_out = a S_in + U (Z^T S_in) + E.
+    """
+    if left.shape != right.shape or left.ndim != 5 or left.shape[-2] != 2:
+        raise ValueError("left and right must have shape [B,C,H,2,K]")
+    if alpha.shape != left.shape[:-2] or write.shape != left.shape[:-2] + left.shape[-1:]:
+        raise ValueError("incompatible alpha or write shape")
+    if v.shape[:-1] != alpha.shape:
+        raise ValueError("v must have shape [B,C,H,V]")
+
+    B, C, H, _, K = left.shape
+    Vdim = v.shape[-1]
+    scalar = alpha.new_ones((B, H))
+    u = left.new_empty((B, H, K, 0))
+    z = right.new_empty((B, H, K, 0))
+    offset = v.new_zeros((B, H, K, Vdim))
+
+    for t in range(C):
+        lt = left[:, t].transpose(-1, -2)
+        rt = right[:, t].transpose(-1, -2)
+        at = alpha[:, t]
+
+        offset_reads = torch.einsum("bhkr,bhkv->bhrv", rt, offset)
+        offset = at[..., None, None] * offset
+        offset = offset + torch.einsum("bhkr,bhrv->bhkv", lt, offset_reads)
+        offset = offset + write[:, t, :, :, None] * v[:, t, :, None, :]
+
+        if u.shape[-1] == 0:
+            appended_z = scalar[..., None, None] * rt
+        else:
+            interaction = torch.einsum("bhkm,bhkr->bhmr", u, rt)
+            appended_z = scalar[..., None, None] * rt
+            appended_z = appended_z + torch.einsum("bhkm,bhmr->bhkr", z, interaction)
+        u = torch.cat((at[..., None, None] * u, lt), dim=-1)
+        z = torch.cat((z, appended_z), dim=-1)
+        scalar = at * scalar
+
+    return scalar, u, z, offset
+
+
+def apply_compact_chunk_reference(compact, state):
+    """Apply a compact chunk transform returned above to an input state."""
+    scalar, u, z, offset = compact
+    if state.shape != offset.shape:
+        raise ValueError("state and compact offset must have the same shape")
+    projected = torch.einsum("bhkm,bhkv->bhmv", z, state)
+    return scalar[..., None, None] * state + torch.einsum("bhkm,bhmv->bhkv", u, projected) + offset
+
+
+def rank2_chunked_final_state_reference(
+    q, k, v, g, beta, gamma, *, method: str, chunk_size: int, initial_state=None
+):
+    """Apply exact compact rank-two chunk transforms sequentially.
+
+    The Python chunk loop is test-only. The production kernel will construct
+    and apply the same compact representation on device.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    qn, _, alpha, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
+    v = v.to(qn.dtype)
+    B, T, H, K = qn.shape
+    expected = (B, H, K, v.shape[-1])
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    ranks = []
+    for start in range(0, T, chunk_size):
+        stop = min(start + chunk_size, T)
+        compact = compact_rank2_chunk_reference(
+            alpha[:, start:stop],
+            left[:, start:stop],
+            right[:, start:stop],
+            write[:, start:stop],
+            v[:, start:stop],
+        )
+        ranks.append(compact[1].shape[-1])
+        state = apply_compact_chunk_reference(compact, state)
+    return state, ranks
+
+
 def dense_affine_elements(q, k, v, g, beta, gamma, *, method: str):
     """Materialize dense affine elements only for small scan-algebra tests."""
     qn, _, alpha, left, right, write = rank2_factors(q, k, g, beta, gamma, method=method)
