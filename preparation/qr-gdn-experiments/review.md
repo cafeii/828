@@ -40,3 +40,12 @@
 - 构造了支持双通道向量遗忘的精确 block-WY 变换，保持物理序列长度为 $T$，每个长度为 $C$ 的 chunk 紧凑秩为 $2C$；没有 `2T` 虚拟序列或 $2K\times2K$ 稠密转移。
 - 验证：显式递推与 rank-2 因子的输出、双终态及全部梯度一致；chunk size 1/2/4/8 的终态一致；单 chunk 的全部状态梯度一致。新增 6 项通过，合并 CPU 回归共 33 项通过。
 - 当前限制：这一步只固定了并行代数和可微 PyTorch oracle；尚未接入 GPU 状态传播与 chunk 内输出 kernel，正式 `chunk` 路径仍失败关闭。
+
+## GPU 状态传播诊断提交
+
+- Commit：`b51e08f1ff31f0b5ffdfcddf5378118beb320863`
+- 实验：`20260903-012356-qr-gdn-state-gpu-f95c41`；Slurm job `34756`。
+- 资源：碎片节点 `tko-b3-nv-dgx07` 的 1 GPU、4 CPU、16G、20 分钟，不占用空闲整节点。
+- 提交前复核：开发工作树干净、完整唯一任务名无重复、manifest job-id 为空、submission.lock 与 job-id 文件均不存在；已原子创建锁并立即登记 job-id。
+- 目的：验证紧凑向量遗忘 chunk 变换的 FP32/BF16 GPU 状态传播、初态和可选终态；不训练模型。
+- 正式训练仍受阻：chunk 内输出和反向 kernel 尚未完成。

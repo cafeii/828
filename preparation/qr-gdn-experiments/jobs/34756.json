@@ -1,0 +1,20 @@
+{
+  "kind": "gpu_diagnostic",
+  "exp_id": "20260903-012356-qr-gdn-state-gpu-f95c41",
+  "job_id": "34756",
+  "job_name": "王正仁-Metis-20260903-012356-qr-gdn-state-gpu-f95c41",
+  "commit": "b51e08f1ff31f0b5ffdfcddf5378118beb320863",
+  "node": "tko-b3-nv-dgx07",
+  "slurm_state": "PENDING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-02T17:20:39.761Z",
+  "review_status": "active",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 4,
+    "memory": "16G",
+    "time": "00:20:00"
+  }
+}

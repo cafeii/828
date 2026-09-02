@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "MODEL_INTEGRATION",
-  "current_stage": "gpu_parallel_kernel_implementation",
+  "status": "GPU_VALIDATION",
+  "current_stage": "gpu_vector_decay_state_diagnostic",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,8 +38,22 @@
     3407,
     42
   ],
-  "active_jobs": [],
-  "submission_count_this_wake": 0,
+  "active_jobs": [
+    {
+      "kind": "gpu_diagnostic",
+      "exp_id": "20260903-012356-qr-gdn-state-gpu-f95c41",
+      "job_id": "34756",
+      "job_name": "王正仁-Metis-20260903-012356-qr-gdn-state-gpu-f95c41",
+      "commit": "b51e08f1ff31f0b5ffdfcddf5378118beb320863",
+      "node": "tko-b3-nv-dgx07",
+      "slurm_state": "PENDING",
+      "required_outputs": [
+        "result.json"
+      ],
+      "submitted_at": "2026-09-02T17:20:39.761Z"
+    }
+  ],
+  "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
     "status": "prepared_never_submitted",
@@ -79,9 +93,12 @@
       "dense_2k_transition": false,
       "rank_per_chunk": "2C",
       "cpu_scan_tests": 6,
-      "combined_cpu_regression": 33
+      "combined_cpu_regression": 33,
+      "state_propagation_kernel": "implemented",
+      "chunk_internal_outputs": "pending",
+      "backward_kernel": "pending"
     },
-    "gpu": "pending",
+    "gpu": "submitted_job_34756",
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"
   },
@@ -105,7 +122,11 @@
     {
       "stage": "parallel_rank2_vector_decay_algebra",
       "commit": "e92d4579e5df29ad0dca09205b0fd56f5a2f3fdc"
+    },
+    {
+      "stage": "gpu_vector_decay_state_forward",
+      "commit": "b51e08f1ff31f0b5ffdfcddf5378118beb320863"
     }
   ],
-  "last_heartbeat": "2026-09-02T16:33:39.735Z"
+  "last_heartbeat": "2026-09-02T17:20:39.761Z"
 }
