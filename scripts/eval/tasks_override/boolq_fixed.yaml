@@ -1,0 +1,18 @@
+# 与上游 lm-eval 0.4.9 tasks/super_glue/boolq/default.yaml 等效：
+# dataset_path 由 super_glue/boolq（裸名解析失败，同上）换为同一数据的 google/boolq；
+# 其标签列为 answer(bool)，doc_to_target 渲染 "0"/"1" 后经 lm-eval 的 isdigit→literal_eval
+# 转 int（api/task.py doc_to_target），与原版 label(int) 索引 ["no","yes"] 语义一致。
+task: boolq_fixed
+dataset_path: google/boolq
+output_type: multiple_choice
+training_split: train
+validation_split: validation
+doc_to_text: "{{passage}}\nQuestion: {{question}}?\nAnswer:"
+doc_to_target: "{{answer|int}}"
+doc_to_choice: ["no", "yes"]
+should_decontaminate: true
+doc_to_decontamination_query: passage
+metric_list:
+  - metric: acc
+metadata:
+  version: 2.0

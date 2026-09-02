@@ -16,8 +16,8 @@ from pathlib import Path
 
 _WD = Path(__file__).resolve().parents[2]
 
-# 与 run 脚本任务清单保持一致（docs/experiment.md）
-STD_TASKS = "wikitext,lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa,social_iqa_fixed,boolq"
+# 与 run 脚本任务清单保持一致（docs/experiment.md）；裸名数据集走 *_fixed override
+STD_TASKS = "wikitext,lambada_openai,piqa,hellaswag_fixed,winogrande_fixed,arc_easy,arc_challenge,openbookqa_fixed,social_iqa_fixed,boolq_fixed"
 JRT_TASKS = "based_swde,based_fda,based_squad,based_drop,based_nq_2048,based_triviaqa"
 
 

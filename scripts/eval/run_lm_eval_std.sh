@@ -5,7 +5,9 @@
 #   Lambada(openai) ppl/acc, PIQA acc, Hellaswag acc_norm, Winogrande acc,
 #   ARC-easy acc, ARC-challenge acc_norm, OpenBookQA acc, SIQA acc, BoolQ acc
 # （acc/acc_norm 两项 lm-eval 都会输出；汇总时按上述口径取列——Hellaswag 与 ARC-c 取 acc_norm，
-#   ARC-c acc_norm 为多数派口径：Mamba1/GDN/MoM 均如此，GDN2 用 acc）
+#   ARC-c acc_norm 为多数派口径：Mamba1/GDN/MoM 均如此，GDN2 用 acc。
+#   hellaswag/winogrande/openbookqa/boolq 因裸名数据集在 datasets 2.20 + huggingface_hub 1.x
+#   下无法解析，经 tasks_override/ 的 *_fixed 版本指向同名命名空间数据集，评分口径不变）
 #
 # 用法: bash scripts/eval/run_lm_eval_std.sh <model_name> <ckpt_path> [output_dir]
 # 环境变量:
@@ -29,9 +31,9 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 
 # social_iqa_fixed = 上游 social_iqa 换 dataset_path（旧脚本数据集名在 datasets>=3 不可加载），
 # 定义在 tasks_override/siqa.yaml，评分口径与上游完全一致
-TASKS="wikitext,lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa,social_iqa_fixed,boolq"
+TASKS="wikitext,lambada_openai,piqa,hellaswag_fixed,winogrande_fixed,arc_easy,arc_challenge,openbookqa_fixed,social_iqa_fixed,boolq_fixed"
 # 前期快速验证子集（docs/experiment.md 评估安排）
-[[ "${QUICK:-0}" = "1" ]] && TASKS="wikitext,hellaswag,winogrande,arc_easy,arc_challenge"
+[[ "${QUICK:-0}" = "1" ]] && TASKS="wikitext,hellaswag_fixed,winogrande_fixed,arc_easy,arc_challenge"
 
 mkdir -p "${OUTPUT_DIR}"
 "${EVAL_PY}" "${WORKSPACE}/scripts/eval/run_lm_eval.py" \
