@@ -20,6 +20,7 @@ def _rank2_chunk_state_fwd_kernel(
     K: tl.constexpr,
     V: tl.constexpr,
     M: tl.constexpr,
+    BM: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
     HAS_INITIAL: tl.constexpr,
@@ -31,7 +32,7 @@ def _rank2_chunk_state_fwd_kernel(
     i_h = i_bh % H
     o_k = tl.arange(0, BK)
     o_v = i_v * BV + tl.arange(0, BV)
-    o_m = tl.arange(0, M)
+    o_m = tl.arange(0, BM)
     mask_state = (o_k[:, None] < K) & (o_v[None, :] < V)
     mask_factor = (o_k[:, None] < K) & (o_m[None, :] < M)
 
@@ -97,6 +98,7 @@ def rank2_chunk_state_fwd(
     starts = offset.new_empty((B, chunks, H, K, V))
     final_state = torch.empty(expected_initial, dtype=torch.float32, device=offset.device) if output_final_state else None
     BK = max(triton.next_power_of_2(K), 16)
+    BM = max(triton.next_power_of_2(M), 16)
     BV = 32
     grid = (triton.cdiv(V, BV), B * H)
     _rank2_chunk_state_fwd_kernel[grid](
@@ -112,6 +114,7 @@ def rank2_chunk_state_fwd(
         K=K,
         V=V,
         M=M,
+        BM=BM,
         BK=BK,
         BV=BV,
         HAS_INITIAL=initial_state is not None,
