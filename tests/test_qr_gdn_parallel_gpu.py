@@ -105,3 +105,72 @@ def test_model_chunk_path_matches_naive_and_backpropagates():
     assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
     assert chunk.qr_read_proj.weight.grad is not None
     assert torch.count_nonzero(chunk.qr_read_proj.weight.grad) > 0
+
+
+
+def test_parallel_split_continuation_matches_single_pass():
+    from lit_gpt.mixers.qr_gdn_parallel import qr_gdn_parallel
+
+    args = inputs(T=128)
+    data, state = args[:8], args[8:]
+    full_output, full_state = qr_gdn_parallel(
+        *data, initial_state=state, output_final_state=True
+    )
+    first_data = tuple(value[:, :64] for value in data)
+    second_data = tuple(value[:, 64:] for value in data)
+    first_output, middle_state = qr_gdn_parallel(
+        *first_data, initial_state=state, output_final_state=True
+    )
+    second_output, split_state = qr_gdn_parallel(
+        *second_data, initial_state=middle_state, output_final_state=True
+    )
+    torch.testing.assert_close(
+        torch.cat((first_output, second_output), dim=1), full_output, rtol=1e-3, atol=1e-3
+    )
+    for value, expected in zip(split_state, full_state):
+        torch.testing.assert_close(value, expected, rtol=1e-3, atol=1e-3)
+
+
+def test_parallel_extreme_gates_stay_finite_and_match_reference():
+    from lit_gpt.mixers.qr_gdn_parallel import qr_gdn_parallel
+    from lit_gpt.mixers.qr_gdn_rule import qr_gdn_reference
+
+    raw = list(inputs(T=64))
+    positions = torch.linspace(0, 1, 64, device="cuda")[None, :, None]
+    raw[3] = (-(1e-4 + positions * 15.0)).expand_as(raw[3])
+    raw[4] = (1e-4 + positions * (0.9998)).expand_as(raw[4])
+    raw[5] = (-(15.0 - positions * (15.0 - 1e-4))).expand_as(raw[5])
+    raw[6] = (0.9999 - positions * 0.9998).expand_as(raw[6])
+    raw[7] = ((positions * 2 - 1) * 5.0).expand_as(raw[7])
+    args = tuple(value.detach().clone().requires_grad_() for value in raw)
+    data, state = args[:8], args[8:]
+    expected = qr_gdn_reference(*data, initial_state=state)
+    actual = qr_gdn_parallel(*data, initial_state=state, output_final_state=True)
+    torch.testing.assert_close(actual[0], expected[0], rtol=3e-2, atol=3e-2)
+    for value, reference in zip(actual[1], expected[1]):
+        torch.testing.assert_close(value, reference, rtol=3e-2, atol=3e-2)
+    loss = actual[0].square().mean() + sum(value.square().mean() for value in actual[1])
+    gradients = torch.autograd.grad(loss, args)
+    assert all(torch.isfinite(value).all() for value in (*actual[1], *gradients))
+
+
+def test_model_chunk_bf16_autocast_backpropagates():
+    from lit_gpt.mixers.qr_gdn import QueryRecallGatedDeltaNet
+
+    torch.manual_seed(314)
+    model = QueryRecallGatedDeltaNet(
+        hidden_size=64,
+        num_heads=4,
+        num_groups=4,
+        head_dim=16,
+        use_short_conv=False,
+        mode="chunk",
+    ).cuda().train()
+    hidden = torch.randn(1, 64, 64, device="cuda", requires_grad=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        output = model(hidden)[0]
+        loss = output.float().square().mean()
+    loss.backward()
+    assert torch.isfinite(output).all()
+    gradients = [value.grad for value in model.parameters() if value.grad is not None]
+    assert gradients and all(torch.isfinite(value).all() for value in gradients)
