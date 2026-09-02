@@ -198,3 +198,11 @@
 - 资源：best-fit 碎片节点 tko-b3-nv-dgx04（提交前 4/8 GPU 已占用），申请 1 GPU、8 CPU、64G、1 小时。
 - 先运行全部 GPU 数值、BF16、近极端门控、分段恢复和反向检查，再按相同 H800、340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点复测吞吐和峰值显存。
 - 提交前开发树干净，完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 sbatch，正式训练仍受 80% 吞吐与 8 卡 DDP 门槛阻止。
+
+## 稳定更新前读出候选终态审查（job 34914）
+
+- Slurm COMPLETED，exit code 0:0，elapsed 00:03:23；run.exitcode=0。run.json、日志和必需的 result.json 均完整并已回收。
+- H800 数值套件 8 passed：FP32/BF16、近极端门控、反向、初末状态和分段续算均通过；稳定读取方案消除了除以小 alpha^KV 的病态恢复。
+- 同卡 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点：GDN 18,314.69 token/s，QR-GDN 12,462.27 token/s，比例 68.05%，仍低于 80% 门槛。
+- 相比三调用原型的 62.99%，吞吐比例提高 5.05 个百分点，但第二次完整 QR 状态扫描及附加反向仍过重。峰值显存 GDN/QR-GDN 为 6.6846/6.6713 GB，没有异常增长；递归状态字节仍严格为两倍。
+- 正式训练继续阻止。下一步实现联合双状态融合 kernel，避免两套独立 chunk 调用及其重复调度/中间量；完成数值回归后再在后续心跳提交一次 GPU 复测。

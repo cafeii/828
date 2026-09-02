@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "GPU_VALIDATION_RUNNING",
-  "current_stage": "stable_pre_read_gpu_performance_running",
+  "status": "PERFORMANCE_OPTIMIZATION",
+  "current_stage": "fused_dual_state_kernel_required",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,30 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "stable_pre_read_gpu_performance_diagnostic",
-      "exp_id": "20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd",
-      "job_id": "34914",
-      "job_name": "王正仁-Metis-20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd",
-      "commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
-      "implementation_commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2",
-      "node": "tko-b3-nv-dgx04",
-      "slurm_state": "RUNNING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-02T22:20:10.950Z",
-      "review_status": "running",
-      "resource_request": {
-        "gpu": 1,
-        "cpu": 8,
-        "memory": "64G",
-        "time": "01:00:00"
-      },
-      "purpose": "GPU FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -167,11 +144,23 @@
           "change": "reuse KV chunk states and effective updates with a shifted-query output kernel to read the pre-update state directly; no division by alpha_kv",
           "backward": "reuse proven GDN backward on the shifted query stream and merge gradients before L2 normalization",
           "cpu_regression": "16_passed",
-          "gpu_validation": "running_job_34914",
-          "throughput_retest": "running_job_34914",
+          "gpu_validation": "passed_job_34914",
+          "throughput_retest": "gate_failed_job_34914",
           "snapshot_commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
-          "slurm_state": "RUNNING",
-          "node": "tko-b3-nv-dgx04"
+          "slurm_state": "COMPLETED",
+          "node": "tko-b3-nv-dgx04",
+          "exit_code": 0,
+          "elapsed": "00:03:23",
+          "tests_passed": 8,
+          "gdn_tokens_per_second": 18314.69371844823,
+          "qr_gdn_tokens_per_second": 12462.265617772986,
+          "qr_to_gdn_ratio": 0.6804517623584311,
+          "throughput_gate_passed": false,
+          "peak_memory_gb": {
+            "gdn": 6.68460544,
+            "qr_gdn": 6.671320064
+          },
+          "result": "experiments/20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd/outputs/result.json"
         }
       }
     },
@@ -199,26 +188,27 @@
     },
     "ddp_8gpu": "pending",
     "throughput_and_memory": {
-      "status": "measured_gate_failed",
-      "job_id": "34888",
-      "commit": "e58a27f76eb4b137ed762f71250a6698e1c500bc",
+      "status": "stable_pre_read_measured_gate_failed",
+      "job_id": "34914",
+      "commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
+      "implementation_commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2",
       "slurm_state": "COMPLETED",
       "exit_code": 0,
-      "elapsed": "00:07:06",
+      "elapsed": "00:03:23",
       "sequence_length": 4096,
       "micro_batch_size": 1,
       "precision": "bf16-mixed",
       "activation_checkpointing": true,
-      "gdn_tokens_per_second": 18201.018877525818,
-      "qr_gdn_tokens_per_second": 11465.697136977953,
-      "qr_to_gdn_ratio": 0.6299480932430394,
+      "gdn_tokens_per_second": 18314.69371844823,
+      "qr_gdn_tokens_per_second": 12462.265617772986,
+      "qr_to_gdn_ratio": 0.6804517623584311,
       "required_ratio": 0.8,
       "gate_passed": false,
       "gdn_peak_memory_gb": 6.68460544,
-      "qr_gdn_peak_memory_gb": 6.689670144,
+      "qr_gdn_peak_memory_gb": 6.671320064,
       "gdn_state_bytes_fp32": 5242880,
       "qr_gdn_state_bytes_fp32": 10485760,
-      "result": "experiments/20260903-045704-qr-gdn-stability-performance-39343a/outputs/result.json"
+      "result": "experiments/20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd/outputs/result.json"
     },
     "stability_and_performance_harness": {
       "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3",
@@ -247,8 +237,8 @@
     }
   },
   "formal_runs": {
-    "qr_gdn_3407": "blocked_by_validation",
-    "qr_gdn_42": "blocked_by_validation"
+    "qr_gdn_3407": "blocked_by_throughput_and_ddp",
+    "qr_gdn_42": "blocked_by_throughput_and_ddp"
   },
   "commits": [
     {
