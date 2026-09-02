@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "REFERENCE_IMPLEMENTATION",
-  "current_stage": "joint_theory_and_fp64_reference",
+  "status": "MODEL_INTEGRATION",
+  "current_stage": "model_integration_and_parallel_kernel_design",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -77,6 +77,10 @@
     {
       "stage": "joint_theory",
       "commit": "6ac9421c501ef63e6f274689204c4577f6d766b7"
+    },
+    {
+      "stage": "fp64_reference",
+      "commit": "2cf36020eec5438cda33b8b57d5d43ca7386f195"
     }
   ],
   "last_heartbeat": "2026-09-02T15:48:37.447Z"
