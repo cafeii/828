@@ -98,3 +98,13 @@
 - H800：13 passed。新增 chunk 输出覆盖 FP32/BF16 以及零/非零初态，均与 FP32 逐 token oracle 相符；既有状态传播和 rank-2 扫描也通过。
 - 时间维保持真实 $T$，不同物理 chunk 并行；没有逐 token Python 训练循环、`2T` 展开或稠密 $2K\times2K$ 转移。
 - 并行前向门槛通过。正式训练仍受阻于反向 kernel，以及稳定性、恢复、8 卡 DDP 和吞吐/显存验证。
+
+## 并行自动微分候选与 GPU 诊断提交
+
+- Commit：`0d2623790f2efd569fb5109a80fdc01364d93f97`。
+- 利用块下三角依赖拆成三次生产级 GDN chunk 调用：原生 KV 更新后读、移位 KV 更新得到更新前回忆、移位 QR 更新得到更新前 QR 读出；三次调用都复用 FLA 的正式自定义反向。
+- 保持真实 $T$ 个物理位置，无逐 token Python 训练循环、无 `2T` 虚拟序列、无稠密 $2K\times2K$ 转移。QR 读出门为零时，主 KV 调用和标准 GDN 完全相同，开发检查逐位一致。
+- 开发检查：FP32/BF16 前向与终态通过；激活专用 Conda 编译器环境后，FP32 反向与 FP64/PyTorch 参考通过。未激活 Conda 时 TileLang 因找不到 `nvcc` 被拒绝，触发 Hopper/Triton 3.5 的已知保护；这确认正式作业必须沿用已验证的 Conda 激活流程，不是模型数学错误。
+- 实验：`20260903-033439-qr-gdn-parallel-backward-gpu-599d2d`，Slurm job `34860`，快照 commit 同上。资源为碎片节点 `tko-b3-nv-dgx04`（提交时 5/8 GPU 已占用）的 1 GPU、4 CPU、16G、20 分钟。
+- 提交前核对开发树干净、完整唯一任务名无重复、manifest/job-id/lock 为空；已原子加锁并登记 job-id。本轮只执行此一次 `sbatch`。
+- 当前候选需要三次完整 chunk 调用，吞吐可能低于 80% 门槛；即使数值诊断通过，也必须先接入模型并基准吞吐/显存，未达标则融合优化，不提交正式训练。
