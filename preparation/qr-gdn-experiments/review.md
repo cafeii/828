@@ -191,3 +191,10 @@
 - KV chunk 在一次状态扫描后已有 chunk 初态和有效写入。新增一个移位查询输出 kernel：在位置 $t-1$ 用 $q_t$ 读取 $M_{t-1}^{KV}$，再把结果右移，从而直接得到 $r_t$；不做相消，也不除以 $\alpha_t^{KV}$。
 - 自定义反向在移位查询流上复用已验证的 GDN 反向，并在 L2 归一化反向之前把查询、键、值、门控和初态梯度合并。训练仍是两次完整 chunk 状态扫描，另加一个只读输出 kernel；没有逐 token Python 循环、`2T` 展开或稠密 $2K\times2K$ 转移。
 - Python 编译、diff 检查和 CPU 回归 16 passed。GPU 前向、BF16、极端门控、反向及吞吐需下一次心跳重新验证。
+
+## 稳定更新前读出候选 GPU 数值与性能复测提交
+
+- 实验：20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd；Slurm job 34914；快照 commit 40f0c7d98059a885871a4c9a0ca0aceca5b62042，核心实现 commit 60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2。
+- 资源：best-fit 碎片节点 tko-b3-nv-dgx04（提交前 4/8 GPU 已占用），申请 1 GPU、8 CPU、64G、1 小时。
+- 先运行全部 GPU 数值、BF16、近极端门控、分段恢复和反向检查，再按相同 H800、340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点复测吞吐和峰值显存。
+- 提交前开发树干净，完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 sbatch，正式训练仍受 80% 吞吐与 8 卡 DDP 门槛阻止。

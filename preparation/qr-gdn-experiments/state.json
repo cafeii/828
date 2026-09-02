@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "stable_pre_read_candidate_gpu_pending",
+  "status": "GPU_VALIDATION_RUNNING",
+  "current_stage": "stable_pre_read_gpu_performance_running",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,7 +38,30 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "kind": "stable_pre_read_gpu_performance_diagnostic",
+      "exp_id": "20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd",
+      "job_id": "34914",
+      "job_name": "王正仁-Metis-20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd",
+      "commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
+      "implementation_commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2",
+      "node": "tko-b3-nv-dgx04",
+      "slurm_state": "RUNNING",
+      "required_outputs": [
+        "result.json"
+      ],
+      "submitted_at": "2026-09-02T22:20:10.950Z",
+      "review_status": "running",
+      "resource_request": {
+        "gpu": 1,
+        "cpu": 8,
+        "memory": "64G",
+        "time": "01:00:00"
+      },
+      "purpose": "GPU FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate"
+    }
+  ],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -144,8 +167,11 @@
           "change": "reuse KV chunk states and effective updates with a shifted-query output kernel to read the pre-update state directly; no division by alpha_kv",
           "backward": "reuse proven GDN backward on the shifted query stream and merge gradients before L2 normalization",
           "cpu_regression": "16_passed",
-          "gpu_validation": "pending",
-          "throughput_retest": "pending"
+          "gpu_validation": "running_job_34914",
+          "throughput_retest": "running_job_34914",
+          "snapshot_commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
+          "slurm_state": "RUNNING",
+          "node": "tko-b3-nv-dgx04"
         }
       }
     },
@@ -274,5 +300,5 @@
       "commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2"
     }
   ],
-  "last_heartbeat": "2026-09-02T21:41:10.812Z"
+  "last_heartbeat": "2026-09-02T22:20:10.950Z"
 }
