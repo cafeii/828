@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "stability_and_performance_harness",
+  "current_stage": "stability_and_performance_gpu_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -151,7 +151,30 @@
       "model_chunk": "passed_job_34875"
     },
     "ddp_8gpu": "pending",
-    "throughput_and_memory": "pending"
+    "throughput_and_memory": "pending",
+    "stability_and_performance_harness": {
+      "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3",
+      "gpu_tests_added": [
+        "split continuation",
+        "near-extreme gates forward/backward",
+        "BF16 model autocast backward"
+      ],
+      "benchmark": [
+        "GDN 340M",
+        "QR-GDN 340M"
+      ],
+      "sequence_length": 4096,
+      "micro_batch_size": 1,
+      "precision": "bf16-mixed",
+      "activation_checkpointing": true,
+      "throughput_gate": 0.8,
+      "gpu_status": "pending_next_heartbeat"
+    },
+    "parameter_counts": {
+      "gdn_control_340M": 344353984,
+      "qr_gdn_340M": 345338304,
+      "qr_extra": 984320
+    }
   },
   "formal_runs": {
     "qr_gdn_3407": "blocked_by_validation",
@@ -193,6 +216,10 @@
     {
       "stage": "parallel_model_chunk_wiring_candidate",
       "commit": "70457db631c6c531b89409b225f863525a54d8e7"
+    },
+    {
+      "stage": "stability_and_performance_harness",
+      "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3"
     }
   ],
   "last_heartbeat": "2026-09-02T20:19:10.568Z"
