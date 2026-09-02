@@ -170,3 +170,10 @@
 - 扩展 vendored FLA 自定义自动微分接口，使有效增量可被组合 recurrence 读取，且其外部梯度在状态反向前正确并入；默认 GDN API 行为保持不变。
 - 训练路径由三次降为两次生产级 chunk 调用；仍保持真实 $T$、无逐 token Python 循环、无 `2T` 序列和无稠密 $2K\times2K$ 转移。
 - CPU/静态回归 16 passed，Python 编译和 diff 检查通过。该代数恢复与扩展反向尚须下一次心跳在 H800 上验证并重测吞吐；本次已提交 job 34888，遵守每次心跳最多一次 `sbatch`，不追加 GPU 作业。
+
+## 两调用候选 GPU 数值与性能复测提交
+
+- 实验：`20260903-054145-qr-gdn-two-call-gpu-perf-4d3e5d`；Slurm job `34895`；快照 commit `415589690f51cbbf28c678eddf5552c696c2af52`，核心实现 commit `92d5f22c32e10d590f748e742c7e9818e4cbb1e3`。
+- 资源：best-fit 碎片节点 `tko-b3-nv-dgx04`（提交时 4/8 GPU 已占用），申请 1 GPU、8 CPU、64G、1 小时。
+- 先重跑全部并行前向/反向、BF16、极端门控和分段续算检查，再以相同 H800、340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点复测 GDN 与两调用 QR-GDN 的吞吐和峰值显存。
+- 提交前开发树干净、完整唯一任务名无重复、manifest/job-id/lock 均为空；已原子加锁并立即登记 job-id。本轮只执行这一项 `sbatch`，正式训练仍受 80% 吞吐、8 卡 DDP 等门槛阻止。

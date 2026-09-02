@@ -1,0 +1,21 @@
+{
+  "kind": "two_call_gpu_performance_diagnostic",
+  "exp_id": "20260903-054145-qr-gdn-two-call-gpu-perf-4d3e5d",
+  "job_id": "34895",
+  "job_name": "王正仁-Metis-20260903-054145-qr-gdn-two-call-gpu-perf-4d3e5d",
+  "commit": "415589690f51cbbf28c678eddf5552c696c2af52",
+  "implementation_commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3",
+  "node": "tko-b3-nv-dgx04",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-02T21:41:10.812Z",
+  "review_status": "pending",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 8,
+    "memory": "64G",
+    "time": "01:00:00"
+  }
+}

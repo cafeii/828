@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "two_call_performance_candidate_gpu_pending",
+  "current_stage": "two_call_gpu_validation_and_performance_running",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,7 +38,19 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "kind": "diagnostic",
+      "purpose": "QR-GDN two-call forward/backward validation plus same-H800 340M throughput and memory retest",
+      "exp_id": "20260903-054145-qr-gdn-two-call-gpu-perf-4d3e5d",
+      "job_id": "34895",
+      "job_name": "王正仁-Metis-20260903-054145-qr-gdn-two-call-gpu-perf-4d3e5d",
+      "commit": "415589690f51cbbf28c678eddf5552c696c2af52",
+      "implementation_commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3",
+      "slurm_state": "RUNNING",
+      "node": "tko-b3-nv-dgx04"
+    }
+  ],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -132,8 +144,8 @@
         "physical_chunk_calls": 2,
         "change": "reuse KV effective delta to recover pre-update recall algebraically; remove redundant shifted KV scan",
         "cpu_regression": "16_passed",
-        "gpu_validation": "pending",
-        "throughput_retest": "pending"
+        "gpu_validation": "running_job_34895",
+        "throughput_retest": "running_job_34895"
       }
     },
     "gpu": {
@@ -257,5 +269,5 @@
       "commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3"
     }
   ],
-  "last_heartbeat": "2026-09-02T20:56:40.685Z"
+  "last_heartbeat": "2026-09-02T21:41:10.812Z"
 }
