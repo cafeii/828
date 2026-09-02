@@ -115,3 +115,11 @@
 - `run.json`、完整日志与 `outputs/result.json` 均已核对并回收。首次回收时 required-output 元数据误写成 `outputs/result.json`，检查器因而在实际文件已存在时报告缺失；将 manifest 纠正为相对 outputs 目录的 `result.json` 后，状态与回收检查均正式通过，未重提作业。
 - H800 共 17 passed：既有状态传播、chunk 输出与 rank-2 扫描继续通过；新增三调用并行候选的 FP32/BF16 前向、双终态、FP32 全输入反向，以及 QR 读出关闭时的原生 GDN 逐位一致性均通过。
 - 结论：生产 FLA 自定义反向可以承载当前块下三角分解，数值和自动微分门槛通过。正式训练仍未开始；下一步接入模型 `chunk` 路径，再做稳定性/恢复、8 卡 DDP 和 340M 吞吐/峰值显存基准。三次完整 chunk 调用的性能风险仍需实测，未达到 GDN 80% 时必须融合优化。
+
+## 模型并行 chunk 接入候选
+
+- Commit：`70457db631c6c531b89409b225f863525a54d8e7`。
+- QR-GDN 训练态 `chunk` 路径已接入三调用并行自动微分实现；短序列评测/增量解码暂用显式参考，直到专用 fused recurrent 双状态 kernel 完成。
+- 新增模型级测试：并行 chunk 与 naive 参考输出相符，并检查所有实际梯度有限且 QR 读出投影取得非零梯度。
+- CPU/静态回归：10 passed、5 个 CUDA 测试 skipped；Python 编译与 diff 检查通过。模型级 GPU 测试尚未作为 Slurm 诊断运行，本轮已使用 job 34860 的唯一 `sbatch` 配额，留待下一次心跳。
+- 正式训练继续阻止；模型级 GPU、稳定性/恢复、8 卡 DDP 和 340M 吞吐/显存门槛均未完成。

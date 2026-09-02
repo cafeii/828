@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "parallel_model_wiring",
+  "current_stage": "parallel_model_wiring_gpu_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -73,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "forward_backward_gpu_passed_model_wiring_pending",
+      "status": "forward_backward_gpu_passed_model_chunk_gpu_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -114,6 +114,13 @@
         "initial_and_final_state": "passed",
         "native_gdn_zero_read_parity": "bitwise",
         "result": "experiments/20260903-033439-qr-gdn-parallel-backward-gpu-599d2d/outputs/result.json"
+      },
+      "model_chunk_path": {
+        "commit": "70457db631c6c531b89409b225f863525a54d8e7",
+        "training_mode": "parallel_three_call_chunk",
+        "short_eval_or_decode": "explicit_reference_until_fused_recurrent_kernel",
+        "cpu_static": "10_passed_5_gpu_skipped",
+        "gpu_model_forward_backward": "pending"
       }
     },
     "gpu": {
@@ -176,6 +183,10 @@
     {
       "stage": "parallel_autograd_three_call_prototype",
       "commit": "0d2623790f2efd569fb5109a80fdc01364d93f97"
+    },
+    {
+      "stage": "parallel_model_chunk_wiring_candidate",
+      "commit": "70457db631c6c531b89409b225f863525a54d8e7"
     }
   ],
   "last_heartbeat": "2026-09-02T19:21:40.319Z"
