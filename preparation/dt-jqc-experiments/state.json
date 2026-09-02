@@ -10,10 +10,19 @@
   },
   "baseline_commit": "f62322a5fd0cdbc1ed45a9753bdfa22a663143d4",
   "baseline_results": {
-    "3407": {"loss": 2.694321140, "perplexity": 14.795471283},
-    "42": {"loss": 2.693908996, "perplexity": 14.789374677}
+    "3407": {
+      "loss": 2.69432114,
+      "perplexity": 14.795471283
+    },
+    "42": {
+      "loss": 2.693908996,
+      "perplexity": 14.789374677
+    }
   },
-  "formal_seeds": [3407, 42],
+  "formal_seeds": [
+    3407,
+    42
+  ],
   "active_jobs": [],
   "submission_count_this_wake": 0,
   "validation": {
@@ -27,10 +36,19 @@
         "JQC gamma=0 native GDN parity"
       ]
     },
-    "parallel_kernel": {"status": "pending"},
-    "gpu": {"status": "pending"},
-    "ddp_8gpu": {"status": "pending"},
-    "throughput_gate": {"status": "pending", "minimum_ratio_to_gdn": 0.8}
+    "parallel_kernel": {
+      "status": "pending"
+    },
+    "gpu": {
+      "status": "pending"
+    },
+    "ddp_8gpu": {
+      "status": "pending"
+    },
+    "throughput_gate": {
+      "status": "pending",
+      "minimum_ratio_to_gdn": 0.8
+    }
   },
   "cluster_snapshot": {
     "whole_idle_nodes": 0,
@@ -43,5 +61,11 @@
     "dt_gdn_42": "blocked_by_validation",
     "jqc_gdn_42": "blocked_by_validation"
   },
-  "commits": []
+  "commits": [
+    {
+      "commit": "187786e5b6d8849d7622c0174a20362e926e6ea6",
+      "milestone": "verified DT/JQC FP64 reference recurrences",
+      "tests": "4 passed"
+    }
+  ]
 }
