@@ -1,0 +1,20 @@
+{
+  "kind": "gpu_chunk_output_diagnostic",
+  "exp_id": "20260903-024229-qr-gdn-chunk-output-gpu-c9bd61",
+  "job_id": "34840",
+  "job_name": "王正仁-Metis-20260903-024229-qr-gdn-chunk-output-gpu-c9bd61",
+  "commit": "4b52c867fc1f210a9161c2cd1a023fbaffd50244",
+  "node": "tko-b3-nv-dgx07",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-02T18:39:40.139Z",
+  "review_status": "active",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 4,
+    "memory": "16G",
+    "time": "00:20:00"
+  }
+}

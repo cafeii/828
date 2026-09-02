@@ -82,3 +82,11 @@
 - 新增 FP32/BF16、零/非零初态的 token oracle 对照测试，并把它加入 GPU 审查入口。
 - 开发节点验证：Python 编译通过；16 passed、7 GPU-skipped。GPU 编译与数值对照尚待下一次心跳提交诊断，本轮 `sbatch` 配额已用完。
 - 反向 kernel 尚未实现，模型 `chunk` 正式路径仍保持失败关闭，正式训练继续阻止。
+
+## Chunk 内输出 GPU 诊断提交
+
+- 实验：`20260903-024229-qr-gdn-chunk-output-gpu-c9bd61`；Slurm job `34840`；快照 commit `4b52c867fc1f210a9161c2cd1a023fbaffd50244`。
+- 资源：碎片节点 `tko-b3-nv-dgx07` 已占 7/8 GPU，申请剩余 1 GPU、4 CPU、16G、20 分钟。
+- 提交前开发树干净，精确任务名无重复，manifest/job-id/lock 为空；已加锁并登记 job-id。
+- 验证范围：既有状态传播与 rank-2 扫描，加上 chunk 内输出的 FP32/BF16、零/非零初态四种组合。
+- 本轮只执行这一项 `sbatch`，不提交正式训练。
