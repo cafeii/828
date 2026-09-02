@@ -67,6 +67,8 @@ class GatedDeltaNet(nn.Module):
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
         self.recall_mode = "none"  # QGDN subclass opts into the Recall rule.
+        self.collect_gate_stats = False
+        self._gate_moments = {}
 
         self.head_k_dim = head_dim
         self.head_v_dim = int(head_dim * expand_v)
@@ -132,6 +134,28 @@ class GatedDeltaNet(nn.Module):
             nn.init.xavier_uniform_(self.p_mat, gain=2**-2.5)
         module._is_hf_initialized = True
 
+    @staticmethod
+    def _moment_triplet(value: torch.Tensor) -> torch.Tensor:
+        value = value.detach().to(torch.float64)
+        return torch.stack((value.sum(), value.square().sum(), value.new_tensor(value.numel())))
+
+    def reset_gate_stats(self) -> None:
+        self._gate_moments = {}
+
+    def _accumulate_gate_stats(self, **gates: torch.Tensor) -> None:
+        if not self.collect_gate_stats:
+            return
+        with torch.no_grad():
+            for name, value in gates.items():
+                moments = self._moment_triplet(value)
+                if name in self._gate_moments:
+                    self._gate_moments[name].add_(moments)
+                else:
+                    self._gate_moments[name] = moments
+
+    def gate_moments(self) -> dict[str, torch.Tensor]:
+        return self._gate_moments
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -180,11 +204,20 @@ class GatedDeltaNet(nn.Module):
             b = b * 2.0
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
+        gamma = self.recall_gamma(hidden_states) if self.recall_mode != "none" else None
+        gates = {"alpha": g.exp(), "beta": b}
+        if gamma is not None:
+            gates.update(
+                gamma=gamma,
+                gamma_saturated=(gamma > 0.95).to(gamma.dtype),
+                forgetting_margin=(-g.expm1()) * (1 - gamma),
+            )
+        self._accumulate_gate_stats(**gates)
         if self.recall_mode != "none":
             from .qgdn_rule import qgdn_rule
 
             o, recurrent_state = qgdn_rule(
-                q, k, v, g, b, self.recall_gamma(hidden_states),
+                q, k, v, g, b, gamma,
                 recall_mode=self.recall_mode, mode=mode,
                 initial_state=recurrent_state, output_final_state=use_cache,
                 cu_seqlens=kwargs.get("cu_seqlens"),

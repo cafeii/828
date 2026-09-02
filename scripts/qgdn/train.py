@@ -119,6 +119,32 @@ def reduce_sum(tensor, world):
     return tensor
 
 
+def global_gate_statistics(model, world):
+    """Merge raw moments across microbatches, layers and DDP ranks."""
+    totals = {}
+    for block in model.transformer.h:
+        if not hasattr(block.attn, "gate_moments"):
+            continue
+        for name, moments in block.attn.gate_moments().items():
+            if name in totals:
+                totals[name].add_(moments)
+            else:
+                totals[name] = moments.clone()
+    result = {}
+    for name in sorted(totals):
+        total, square_total, count = reduce_sum(totals[name], world)
+        if count.item() <= 0:
+            raise RuntimeError(f"Gate statistics for {name} have zero count")
+        mean = total / count
+        variance = torch.clamp(square_total / count - mean.square(), min=0)
+        if name == "gamma_saturated":
+            result["gamma_saturated_fraction"] = mean.item()
+        else:
+            result[f"{name}_mean"] = mean.item()
+            result[f"{name}_std"] = variance.sqrt().item()
+    return result
+
+
 def main():
     args = parse_args()
     if args.output.resolve().is_relative_to(ROOT):
@@ -292,14 +318,19 @@ def main():
         start = time.perf_counter()
         should_log = step % args.log_every == 0 or step + 1 == stop
         for block in model.transformer.h:
-            if hasattr(block.attn, "collect_recall_stats"):
-                block.attn.collect_recall_stats = should_log
+            if hasattr(block.attn, "collect_gate_stats"):
+                block.attn.collect_gate_stats = should_log
+                if should_log:
+                    block.attn.reset_gate_stats()
         lr = learning_rate(args, step)
         for group in optimizer.param_groups:
             group["lr"] = lr
         optimizer.zero_grad(set_to_none=True)
         loss_sum = torch.zeros((), device=device)
         for micro in range(accumulation):
+            for block in model.transformer.h:
+                if hasattr(block.attn, "collect_gate_stats"):
+                    block.attn.collect_gate_stats = should_log
             begin = step * args.global_batch_size + (micro * world + rank) * args.micro_batch_size
             x, y = batch(range(begin, begin + args.micro_batch_size))
             sync = training_model.no_sync() if world > 1 and micro + 1 < accumulation else contextlib.nullcontext()
@@ -307,6 +338,11 @@ def main():
                 with amp():
                     logits = training_model(x)
                     loss = F.cross_entropy(logits.float().flatten(0, 1), y.flatten(), ignore_index=-100)
+                # Non-reentrant activation checkpointing recomputes layers during backward.
+                # Disable side-effectful observation so every gate element is counted once.
+                for block in model.transformer.h:
+                    if hasattr(block.attn, "collect_gate_stats"):
+                        block.attn.collect_gate_stats = False
                 (loss / accumulation).backward()
             loss_sum += loss.detach() / accumulation
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip, error_if_nonfinite=True)
@@ -320,8 +356,8 @@ def main():
         train_seconds += elapsed
         step += 1
         for block in model.transformer.h:
-            if hasattr(block.attn, "collect_recall_stats"):
-                block.attn.collect_recall_stats = False
+            if hasattr(block.attn, "collect_gate_stats"):
+                block.attn.collect_gate_stats = False
         if should_log:
             record = dict(kind="train", step=step, tokens=step * args.global_batch_size * args.sequence_length,
                           loss=mean_loss.item(), grad_norm=float(norm), lr=lr, step_seconds=elapsed,
@@ -329,12 +365,7 @@ def main():
                           peak_memory_gb=0 if args.cpu else torch.cuda.max_memory_allocated() / 1e9)
             if args.task == "lm":
                 record["data_epochs"] = step * args.global_batch_size / corpus["train"].n_blocks
-            stats = [b.attn.last_recall_stats for b in model.transformer.h
-                     if getattr(b.attn, "last_recall_stats", None) is not None]
-            if stats:
-                values = reduce_sum(torch.stack(stats).mean(0), world) / world
-                record.update(zip(("gamma_mean", "gamma_saturated_fraction", "alpha_mean", "forgetting_margin_mean"),
-                                  values.tolist()))
+            record.update(global_gate_statistics(model, world))
             log(record)
         if step % args.eval_every == 0 or step == stop:
             last_validation = evaluate()

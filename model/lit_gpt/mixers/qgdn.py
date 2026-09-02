@@ -40,9 +40,6 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
         elif recall_gate == "head":
             self.recall_logit = nn.Parameter(torch.full((self.num_heads,), math.log(recall_init / (1 - recall_init))))
             self.recall_logit._no_weight_decay = True
-        self.collect_recall_stats = False
-        self.last_recall_stats = None
-
     def recall_gamma(self, x):
         if self.recall_gate == "token":
             gamma = self.recall_proj(x).float().sigmoid()
@@ -50,11 +47,4 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             gamma = self.recall_logit.float().sigmoid().expand(*x.shape[:2], self.num_heads)
         else:
             gamma = x.new_full((*x.shape[:2], self.num_heads), self.recall_init, dtype=torch.float32)
-        if self.collect_recall_stats:
-            with torch.no_grad():
-                g = -self.A_log.float().exp() * torch.nn.functional.softplus(self.gk_proj(x).float() + self.dt_bias)
-                alpha = g.exp()
-                margin = (-g.expm1()) * (1 - gamma)
-                self.last_recall_stats = torch.stack((gamma.mean(), (gamma > 0.95).float().mean(),
-                                                     alpha.mean(), margin.mean())).detach()
         return gamma

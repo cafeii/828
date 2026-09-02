@@ -136,6 +136,48 @@ def test_backbone_initialization_and_gate_gradient(recall_weight_init, recall_in
             assert not torch.equal(block.attn.recall_proj.weight, block.attn.b_proj.weight)
 
 
+@pytest.mark.parametrize("mixer", ["gdn", "qgdn"])
+def test_gate_moments_are_complete_and_observation_is_noninvasive(mixer):
+    torch.manual_seed(3407)
+    cfg = Config.from_name(f"{mixer}_recall_tiny", use_short_conv=False, _norm_class="RMSNorm")
+    model = GPT(cfg)
+    model.apply(lambda module: model._init_weights(module, n_layer=cfg.n_layer))
+    for block in model.transformer.h:
+        block.attn.mode = "naive"
+    tokens = torch.randint(0, cfg.padded_vocab_size, (2, 13))
+    targets = torch.randint(0, cfg.padded_vocab_size, (2, 13))
+
+    baseline = model(tokens)
+    baseline_loss = F.cross_entropy(baseline.flatten(0, 1), targets.flatten())
+    baseline_loss.backward()
+    baseline_gradients = {name: parameter.grad.clone() for name, parameter in model.named_parameters()}
+    model.zero_grad(set_to_none=True)
+
+    for block in model.transformer.h:
+        block.attn.reset_gate_stats()
+        block.attn.collect_gate_stats = True
+    observed = model(tokens)
+    observed_loss = F.cross_entropy(observed.flatten(0, 1), targets.flatten())
+    observed_loss.backward()
+    torch.testing.assert_close(observed, baseline, rtol=0, atol=0)
+    for name, parameter in model.named_parameters():
+        torch.testing.assert_close(parameter.grad, baseline_gradients[name], rtol=0, atol=0)
+
+    expected = {"alpha", "beta"} | ({"gamma", "gamma_saturated", "forgetting_margin"} if mixer == "qgdn" else set())
+    first = []
+    for block in model.transformer.h:
+        moments = block.attn.gate_moments()
+        assert set(moments) == expected
+        assert all(value.dtype == torch.float64 and value.shape == (3,) for value in moments.values())
+        assert all(value[2].item() > 0 for value in moments.values())
+        first.append({name: value.clone() for name, value in moments.items()})
+
+    model(tokens)
+    for before, block in zip(first, model.transformer.h):
+        for name, moments in block.attn.gate_moments().items():
+            torch.testing.assert_close(moments, before[name] * 2, rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("T", [17, 65, 257, 4096])
 @pytest.mark.parametrize("recall_mode", ["query", "key", "isotropic"])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity requires an allocated GPU")
