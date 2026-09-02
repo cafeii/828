@@ -1,7 +1,7 @@
 #!/bin/bash
 # 服务器冒烟sbatch模板（供 run-remote-experiment skill 填充）
 # 占位符：__EXP_ID__ __MODEL_NAME__ __USER_NAME__ __CONDA_ENV__ __TRAIN_DATA__ __VAL_DATA__
-#SBATCH --job-name=__USER_NAME__-memos-b3-lsa-smoke
+#SBATCH --job-name=__USER_NAME__-memos-b3-lsr-smoke
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=100G

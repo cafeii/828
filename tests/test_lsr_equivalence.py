@@ -1,5 +1,5 @@
-# LSA 数学等价性单测（CPU，纯 torch）。数学依据见 docs/research.md。
-# 运行：uv run pytest tests/test_lsa_equivalence.py -q（repo 根）
+# LSR 数学等价性单测（CPU，纯 torch）。数学依据见 docs/research.md。
+# 运行：uv run pytest tests/test_lsr_equivalence.py -q（repo 根）
 
 import sys
 from pathlib import Path
@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "model"))
 try:
     from lit_gpt.mixers.naive import (
         naive_gdn2_recurrence,
-        naive_lsa_expanded_forward,
-        naive_lsa_forward,
+        naive_lsr_expanded_forward,
+        naive_lsr_forward,
     )
 except ImportError:
     # lit_gpt/__init__.py 可能 import 尚不存在的 config；绕开包顶层直接按路径加载
@@ -26,8 +26,8 @@ except ImportError:
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     naive_gdn2_recurrence = _mod.naive_gdn2_recurrence
-    naive_lsa_forward = _mod.naive_lsa_forward
-    naive_lsa_expanded_forward = _mod.naive_lsa_expanded_forward
+    naive_lsr_forward = _mod.naive_lsr_forward
+    naive_lsr_expanded_forward = _mod.naive_lsr_expanded_forward
 
 B, T, H, G, DK, DV, DC = 2, 8, 8, 2, 16, 16, 16
 I = H // G
@@ -58,36 +58,36 @@ def expand_initial_state(T0, P):
 def test_p_factorization():
     """两条路径严格等价：出口乘 P（潜递归）== 入口展开 P（真实 state 递归）。"""
     q, k, c, g, b, w, P = make_inputs(torch.float64)
-    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
-    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    o_latent, _ = naive_lsr_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsr_expanded_forward(q, k, c, g, b, w, P)
     assert torch.allclose(o_latent, o_expanded, atol=1e-10)
 
     # fp32 下容差放宽
     q, k, c, g, b, w, P = make_inputs(torch.float32, seed=1)
-    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
-    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    o_latent, _ = naive_lsr_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsr_expanded_forward(q, k, c, g, b, w, P)
     assert torch.allclose(o_latent, o_expanded, atol=1e-5)
 
 
 def test_identity_p_reduces_to_gqa():
-    """dc=dv 且 P_{g,i}=I 时，LSA 退化为 GQA（组级 v 直接被组内所有 q 头读取）。"""
+    """dc=dv 且 P_{g,i}=I 时，LSR 退化为 GQA（组级 v 直接被组内所有 q 头读取）。"""
     q, k, c, g, b, w, _ = make_inputs(torch.float64)
     P = torch.eye(DV, dtype=torch.float64).expand(H, DV, DC).contiguous()
-    o_lsa, _ = naive_lsa_forward(q, k, c, g, b, w, P)
+    o_lsr, _ = naive_lsr_forward(q, k, c, g, b, w, P)
 
     rep = lambda x: x.repeat_interleave(I, dim=2)
     o_gqa, _ = naive_gdn2_recurrence(q, rep(k), rep(c), rep(g), rep(b), rep(w))
-    assert torch.allclose(o_lsa, o_gqa, atol=1e-12)
+    assert torch.allclose(o_lsr, o_gqa, atol=1e-12)
 
 
 def test_state_shape():
     """潜 state 是 G 份：T_final 形状 [B,G,dk,dc]（组内各头一致性在函数内断言）。"""
     q, k, c, g, b, w, P = make_inputs(torch.float64)
-    o, T_final = naive_lsa_forward(q, k, c, g, b, w, P)
+    o, T_final = naive_lsr_forward(q, k, c, g, b, w, P)
     assert o.shape == (B, T, H, DV)
     assert T_final.shape == (B, G, DK, DC)
 
-    _, S_final = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    _, S_final = naive_lsr_expanded_forward(q, k, c, g, b, w, P)
     assert S_final.shape == (B, H, DK, DV)
     # 真实 state 与潜 state 满足 S[h] = T[g(h)] @ P[h]^T
     assert torch.allclose(S_final, expand_initial_state(T_final, P), atol=1e-10)
@@ -126,8 +126,8 @@ def test_initial_state_equivalence():
     gen = torch.Generator().manual_seed(100)
     T0 = torch.randn(B, G, DK, DC, generator=gen, dtype=torch.float64)
 
-    o_latent, T_final = naive_lsa_forward(q, k, c, g, b, w, P, initial_state=T0)
-    o_expanded, S_final = naive_lsa_expanded_forward(
+    o_latent, T_final = naive_lsr_forward(q, k, c, g, b, w, P, initial_state=T0)
+    o_expanded, S_final = naive_lsr_expanded_forward(
         q, k, c, g, b, w, P, initial_state=expand_initial_state(T0, P)
     )
     assert torch.allclose(o_latent, o_expanded, atol=1e-10)
@@ -137,7 +137,7 @@ def test_initial_state_equivalence():
 # ---- GDN / KDA 骨架形态（β 为组级标量；GDN 为标量 decay，KDA 为 channel-wise decay）----
 # GDN: S_t = α(I - βkk^T)S_{t-1} + βkv^T ≡ GDN2 取 b=β·1(k维)、w=β·1(v维)、g 标量广播到 k 维。
 # KDA: channel-wise decay ≡ GDN2 同取 b=β·1、w=β·1，g 直接对应。
-# 两骨架无独立写门，LSA 写入为 β k c^T，P 可提出性依然严格成立。
+# 两骨架无独立写门，LSR 写入为 β k c^T，P 可提出性依然严格成立。
 
 
 def make_scalar_beta_inputs(backbone, dtype=torch.float64, seed=0):
@@ -165,24 +165,24 @@ def make_scalar_beta_inputs(backbone, dtype=torch.float64, seed=0):
 def test_backbone_p_factorization(backbone):
     """GDN/KDA 形态下策略1（入口展开v=Pc）与策略2（出口乘P）严格等价。"""
     q, k, c, g, b, w, P = make_scalar_beta_inputs(backbone)
-    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
-    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    o_latent, _ = naive_lsr_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsr_expanded_forward(q, k, c, g, b, w, P)
     assert torch.allclose(o_latent, o_expanded, atol=1e-10)
 
     # fp32 下容差放宽
     q, k, c, g, b, w, P = make_scalar_beta_inputs(backbone, torch.float32, seed=1)
-    o_latent, _ = naive_lsa_forward(q, k, c, g, b, w, P)
-    o_expanded, _ = naive_lsa_expanded_forward(q, k, c, g, b, w, P)
+    o_latent, _ = naive_lsr_forward(q, k, c, g, b, w, P)
+    o_expanded, _ = naive_lsr_expanded_forward(q, k, c, g, b, w, P)
     assert torch.allclose(o_latent, o_expanded, atol=1e-5)
 
 
 @pytest.mark.parametrize("backbone", ["gdn", "kda"])
 def test_backbone_identity_p_reduces_to_gqa(backbone):
-    """GDN/KDA 形态下 dc=dv 且 P=I 时，LSA 退化为 GQA（组级 v 直读）。"""
+    """GDN/KDA 形态下 dc=dv 且 P=I 时，LSR 退化为 GQA（组级 v 直读）。"""
     q, k, c, g, b, w, _ = make_scalar_beta_inputs(backbone)
     P = torch.eye(DV, dtype=torch.float64).expand(H, DV, DC).contiguous()
-    o_lsa, _ = naive_lsa_forward(q, k, c, g, b, w, P)
+    o_lsr, _ = naive_lsr_forward(q, k, c, g, b, w, P)
 
     rep = lambda x: x.repeat_interleave(I, dim=2)
     o_gqa, _ = naive_gdn2_recurrence(q, rep(k), rep(c), rep(g), rep(b), rep(w))
-    assert torch.allclose(o_lsa, o_gqa, atol=1e-12)
+    assert torch.allclose(o_lsr, o_gqa, atol=1e-12)

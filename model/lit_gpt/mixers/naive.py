@@ -1,12 +1,12 @@
 # 纯 torch 逐 token 递归参考实现（CPU 可跑，无 triton/fla 依赖）。
 # 语义与 third_party/GatedDeltaNet-2 的 chunk_gdn2 kernel 对齐
 # （use_qk_l2norm_in_kernel=True, use_gate_in_kernel=False）。
-# LSA 数学推导见 docs/research.md。
+# LSR 数学推导见 docs/research.md。
 
 import torch
 import torch.nn.functional as F
 
-__all__ = ["naive_gdn2_recurrence", "naive_lsa_forward", "naive_lsa_expanded_forward"]
+__all__ = ["naive_gdn2_recurrence", "naive_lsr_forward", "naive_lsr_expanded_forward"]
 
 
 def _compute_dtype(x: torch.Tensor) -> torch.dtype:
@@ -62,8 +62,8 @@ def naive_gdn2_recurrence(q, k, v, g, b, w, scale=None, initial_state=None):
     return o, S
 
 
-def naive_lsa_forward(q, k, c, g, b, w, P, scale=None, initial_state=None):
-    """LSA 潜空间递归：组级潜 state T_g 递归 + 出口乘 P。
+def naive_lsr_forward(q, k, c, g, b, w, P, scale=None, initial_state=None):
+    """LSR 潜空间递归：组级潜 state T_g 递归 + 出口乘 P。
 
     组级张量 repeat_interleave 到 H 头（头 g*I..(g+1)*I-1 属于组 g）后走
     naive_gdn2_recurrence（v 口传 c，w 口传 w），得潜输出 o_latent:[B,T,H,dc]，
@@ -93,15 +93,15 @@ def naive_lsa_forward(q, k, c, g, b, w, P, scale=None, initial_state=None):
     return o, S[:, :, 0]
 
 
-def naive_lsa_expanded_forward(q, k, c, g, b, w, P, scale=None, initial_state=None):
+def naive_lsr_expanded_forward(q, k, c, g, b, w, P, scale=None, initial_state=None):
     """策略 1 参考：入口展开 v_{t,g,i} = P_{g,i} (w_t⊙c_t)，per-head 真实 state 递归。
 
     P reshape 为 [G, I, dv, dc]，v = einsum('btgc,givc->btgiv') 展平到 H 头，
     组级 k/g/b repeat 到头，w 口传全 1，走 naive_gdn2_recurrence。
-    与 naive_lsa_forward 数学等价（P 可从递归提出，见 docs/research.md）。
+    与 naive_lsr_forward 数学等价（P 可从递归提出，见 docs/research.md）。
 
     Args:
-        形状同 naive_lsa_forward；initial_state 为 per-head 真实 state
+        形状同 naive_lsr_forward；initial_state 为 per-head 真实 state
         S_0:[B, H, dk, dv]（对应潜 T_0 时应取 S_0[h] = T_0[g(h)] @ P[h]^T）。
 
     Returns:

@@ -103,7 +103,7 @@ def main():
     if args.wandb:
         from pytorch_lightning.loggers import WandbLogger
 
-        loggers.append(WandbLogger(project="rnn-lsa", name=args.exp_name, id=args.exp_name, save_dir=out_dir))
+        loggers.append(WandbLogger(project="rnn-lsr", name=args.exp_name, id=args.exp_name, save_dir=out_dir))
 
     if args.devices * args.nodes > 1:
         # 显存够时 ddp 最快（无参数收集通信）；OOM 再逐级升分片：

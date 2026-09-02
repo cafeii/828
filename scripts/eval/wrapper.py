@@ -82,8 +82,11 @@ class LitGPTForCausalLM(PreTrainedModel, _GenMixin):
     ) -> CausalLMOutputWithPast:
         if attention_mask is not None and not bool(attention_mask.bool().all()):
             raise NotImplementedError("模型不支持padding mask：生成类任务请用batch_size=1")
-        if use_cache and past_key_values is None:
-            past_key_values = _CacheCls()
+        if use_cache:
+            # transformers generate 会按 _supports_cache_class 自动建 DynamicCache 传入，
+            # 与fla模型同款防御：非预期类型一律丢弃重建（fla Cache / SimpleCache 二选一）
+            if past_key_values is None or not isinstance(past_key_values, _CacheCls):
+                past_key_values = _CacheCls()
         logits = self.gpt(input_ids, past_key_values=past_key_values)
         if logits_to_keep:
             logits = logits[:, -logits_to_keep:]

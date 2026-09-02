@@ -1,8 +1,8 @@
 # 适配自 third_party/GatedDeltaNet-2/lit_gpt/gdn2.py（NVIDIA, 见原文件版权头）。
 #
-# 改动：把 GVA（num_v_heads > num_heads）形态换成 GQA/LSA 形态——
+# 改动：把 GVA（num_v_heads > num_heads）形态换成 GQA/LSR 形态——
 # k、擦除门b、遗忘门g、写门w、value（或潜value）均为组级（G份），q保持逐头（H份）。
-# LSA（use_lsa=True）时组级value是潜向量c（维度d_c），每组只有一份潜状态T_g，
+# LSR（use_lsr=True）时组级value是潜向量c（维度d_c），每组只有一份潜状态T_g，
 # 每头输出由静态参数P还原：o_{g,i} = (q_{g,i} T_g) P_{g,i}^T。
 #
 # kernel策略2（见 plans/2026-08-30-lsa-kernel-optimization.md）：
@@ -36,15 +36,15 @@ class RMSNormSwishGate(nn.Module):
 
 
 class GatedDeltaNet2(nn.Module):
-    """GDN2 token mixer，统一支持 MHA / GQA / GQA+expand_v / GQA+LSA 形态。
+    """GDN2 token mixer，统一支持 MHA / GQA / GQA+expand_v / GQA+LSR 形态。
 
     形状约定（G=num_groups, I=num_heads//G, d_k=head_dim,
-    d_v=head_dim*expand_v, d_c=lsa_latent_dim）：
+    d_v=head_dim*expand_v, d_c=lsr_latent_dim）：
       q: [B,T,H,d_k] 逐头
       k/b/g: [B,T,G,d_k] 组级
-      v/w:  [B,T,G,d_s] 组级，d_s = d_c（LSA）或 d_v（GQA）
+      v/w:  [B,T,G,d_s] 组级，d_s = d_c（LSR）或 d_v（GQA）
       递归状态: G份 [d_k, d_s]（策略2下kernel内冗余为H份，数学等价）
-      LSA还原: P [H, d_v, d_c]，o = einsum('bthc,hvc->bthv', o_latent, P)
+      LSR还原: P [H, d_v, d_c]，o = einsum('bthc,hvc->bthv', o_latent, P)
     """
 
     def __init__(
@@ -55,8 +55,8 @@ class GatedDeltaNet2(nn.Module):
         head_dim: int = 128,
         expand_v: float = 1.0,
         num_v_heads: Optional[int] = None,
-        use_lsa: bool = False,
-        lsa_latent_dim: Optional[int] = None,
+        use_lsr: bool = False,
+        lsr_latent_dim: Optional[int] = None,
         mode: Literal["chunk", "fused_recurrent", "naive"] = "chunk",
         use_short_conv: bool = True,
         allow_neg_eigval: bool = False,
@@ -74,12 +74,12 @@ class GatedDeltaNet2(nn.Module):
         assert num_heads % self.num_groups == 0, "num_groups必须整除num_heads"
         self.heads_per_group = num_heads // self.num_groups
         # 方案「GQA+增加v_head」：k/遗忘门/擦除门保持组级G份，v/w头数增至num_v_heads
-        # （状态数=num_v_heads份，对照LSA的G份潜状态）。None→组级；与LSA互斥。
+        # （状态数=num_v_heads份，对照LSR的G份潜状态）。None→组级；与LSR互斥。
         self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_groups
-        assert not (use_lsa and self.num_v_heads != self.num_groups), "LSA的潜v是组级，与num_v_heads互斥"
+        assert not (use_lsr and self.num_v_heads != self.num_groups), "LSR的潜v是组级，与num_v_heads互斥"
         assert self.num_v_heads % self.num_groups == 0 and num_heads % self.num_v_heads == 0, \
             "需满足整除链 num_groups | num_v_heads | num_heads"
-        self.use_lsa = use_lsa
+        self.use_lsr = use_lsr
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
@@ -88,8 +88,8 @@ class GatedDeltaNet2(nn.Module):
         self.head_v_dim = int(head_dim * expand_v)
         if not math.isclose(head_dim * expand_v, self.head_v_dim, rel_tol=1e-5):
             raise ValueError(f"expand_v={expand_v}与head_dim={head_dim}的乘积不是整数。")
-        # d_s: 进入递归的value侧维度（LSA为潜维，否则为头维）
-        self.latent_dim = (lsa_latent_dim or self.head_v_dim) if use_lsa else self.head_v_dim
+        # d_s: 进入递归的value侧维度（LSR为潜维，否则为头维）
+        self.latent_dim = (lsr_latent_dim or self.head_v_dim) if use_lsr else self.head_v_dim
 
         self.key_dim = self.num_heads * self.head_k_dim  # q逐头
         self.gk_dim = self.num_groups * self.head_k_dim  # k/b/g组级
@@ -125,8 +125,8 @@ class GatedDeltaNet2(nn.Module):
         self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
         self.dt_bias._no_weight_decay = True
 
-        # LSA静态还原矩阵 P [H, d_v, d_c]
-        if use_lsa:
+        # LSR静态还原矩阵 P [H, d_v, d_c]
+        if use_lsr:
             self.p_mat = nn.Parameter(torch.empty(self.num_heads, self.head_v_dim, self.latent_dim))
 
         # 输出路径：逐头SiLU门控RMSNorm + 输出投影
@@ -150,7 +150,7 @@ class GatedDeltaNet2(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
-        if module is self and self.use_lsa:
+        if module is self and self.use_lsr:
             nn.init.xavier_uniform_(self.p_mat, gain=2**-2.5)
         module._is_hf_initialized = True
 
@@ -247,8 +247,8 @@ class GatedDeltaNet2(nn.Module):
                 offset=T,
             )
 
-        # LSA出口还原：潜空间读取结果乘静态P回到每头value空间
-        if self.use_lsa:
+        # LSR出口还原：潜空间读取结果乘静态P回到每头value空间
+        if self.use_lsr:
             o = torch.einsum("bthc,hvc->bthv", o, self.p_mat.to(o.dtype))
 
         o = self.o_norm(o, rearrange(self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim))

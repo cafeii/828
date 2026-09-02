@@ -2,7 +2,7 @@
 
 vendored from https://github.com/NVIDIA/RULER @ c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a
 
-改动目的：接入工作区自训 lit_gpt 模型（GQA baseline / LSA），并去掉 nemo-toolkit 硬依赖。
+改动目的：接入工作区自训 lit_gpt 模型（GQA baseline / LSR），并去掉 nemo-toolkit 硬依赖。
 评测口径见 `docs/experiment.md`（S-NIAH-1/2/3 + MK-NIAH-1）与 `plans/2026-09-01-lsa300m-eval.md`（1K/2K/4K/8K）。
 
 ## 1. 新增 `scripts/pred/litgpt_model.py`（新文件）
@@ -55,3 +55,8 @@ vendored from https://github.com/NVIDIA/RULER @ c3f5e3b4f87f97e048793bb510a3a6b1
 `evaluate.py` 三段，并在其中固定：4 任务子集、SEQ_LENGTHS=(1024 2048 4096 8192)、
 `MODEL_TEMPLATE_TYPE=base`、tokenizer 显式走 hf（避免 `config_models.sh` 见到
 `tokenizer.model` 就误判为 nemo SentencePiece 分支）、`BATCH_SIZE=1`。
+
+## 命名说明（2026-09-02）
+
+工作区架构命名口径由 LSA 统一为 LSR（Latent State RNN）。本补丁涉及的 `litgpt` 注册名不变；
+注释/文档中的 LSA 字样已同步为 LSR。历史计划文件名（plans/2026-09-01-lsa300m-eval.md）保留原名。

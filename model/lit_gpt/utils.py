@@ -19,8 +19,12 @@ from typing import Any, Dict, List, Mapping, Optional, Type, TypeVar, Union
 import torch
 import torch.nn as nn
 import torch.utils._device
-from lightning.fabric.loggers import CSVLogger
 from torch.serialization import normalize_storage_type
+
+try:
+    from lightning.fabric.loggers import CSVLogger
+except ImportError:  # 评估环境（.venv-eval等）无lightning；CSVLogger仅训练路径step_csv_logger使用
+    CSVLogger = None
 
 
 def find_multiple(n: int, k: int) -> int:

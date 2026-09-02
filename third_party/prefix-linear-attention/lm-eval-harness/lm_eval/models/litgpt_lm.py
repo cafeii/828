@@ -1,7 +1,7 @@
 # 工作区自训 lit_gpt 模型接入（JRT评估用）：包装为 HFLM 供本 harness 消费。
 # model_args 示例:
 #   --model litgpt
-#   --model_args model_name=gdn2_lsa_340M,ckpt_path=outputs/.../final-model-ckpt.pth,tokenizer_path=checkpoints/Llama-2-7b-hf
+#   --model_args model_name=gdn2_lsr_340M,ckpt_path=outputs/.../final-model-ckpt.pth,tokenizer_path=checkpoints/Llama-2-7b-hf
 # 生成类任务（based_*）模型不支持padding mask，必须 --batch_size 1。
 import sys
 from pathlib import Path

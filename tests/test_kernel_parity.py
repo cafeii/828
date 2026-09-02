@@ -1,4 +1,4 @@
-# 服务器GPU单测：真实chunk_gdn2 kernel上的LSA策略等价性验证。
+# 服务器GPU单测：真实chunk_gdn2 kernel上的LSR策略等价性验证。
 # 运行（服务器，lzc-rnn env）: pytest tests/test_kernel_parity.py -q
 import sys
 from pathlib import Path
@@ -80,11 +80,11 @@ def test_strategy1_vs_strategy2():
 
 @requires_cuda
 def test_mixer_layer_forward_backward():
-    """整层GatedDeltaNet2（LSA开）前向反向可跑，梯度有限"""
+    """整层GatedDeltaNet2（LSR开）前向反向可跑，梯度有限"""
     from lit_gpt.mixers.gdn2 import GatedDeltaNet2
 
     layer = GatedDeltaNet2(
-        hidden_size=256, num_heads=H, num_groups=G, head_dim=DK, use_lsa=True,
+        hidden_size=256, num_heads=H, num_groups=G, head_dim=DK, use_lsr=True,
     ).cuda().to(torch.bfloat16)
     layer.train()
     x = torch.randn(B, T, 256, dtype=torch.bfloat16, device="cuda", requires_grad=True)
@@ -159,7 +159,7 @@ def test_kda_chunk_vs_naive():
 
 
 @requires_cuda
-def test_gdn_lsa_strategy_parity():
+def test_gdn_lsr_strategy_parity():
     """GDN：策略1（入口展开v=Pc，β照传）vs 策略2（出口乘P）在真实kernel上等价"""
     from lit_gpt.kernels import get_chunk_gated_delta_rule
 
@@ -183,7 +183,7 @@ def test_gdn_lsa_strategy_parity():
 
 
 @requires_cuda
-def test_kda_lsa_strategy_parity():
+def test_kda_lsr_strategy_parity():
     """KDA：策略1（入口展开v=Pc，β照传）vs 策略2（出口乘P）在真实kernel上等价"""
     from lit_gpt.kernels import get_chunk_kda
 

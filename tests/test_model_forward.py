@@ -27,15 +27,15 @@ CASES = {
     "mha": dict(),
     "gqa": dict(num_groups=2),
     "gqa_expandv": dict(num_groups=2, expand_v=2.0),
-    "lsa": dict(num_groups=2, use_lsa=True),
-    "lsa_dc32": dict(num_groups=2, use_lsa=True, lsa_latent_dim=32),
+    "lsr": dict(num_groups=2, use_lsr=True),
+    "lsr_dc32": dict(num_groups=2, use_lsr=True, lsr_latent_dim=32),
     # GDN/KDA 骨架（同形态覆盖）
     "gdn_mha": dict(mixer="gdn"),
     "gdn_gqa": dict(mixer="gdn", num_groups=2),
-    "gdn_lsa": dict(mixer="gdn", num_groups=2, use_lsa=True),
+    "gdn_lsr": dict(mixer="gdn", num_groups=2, use_lsr=True),
     "kda_mha": dict(mixer="kda"),
     "kda_gqa": dict(mixer="kda", num_groups=2),
-    "kda_lsa": dict(mixer="kda", num_groups=2, use_lsa=True),
+    "kda_lsr": dict(mixer="kda", num_groups=2, use_lsr=True),
 }
 
 
@@ -60,11 +60,11 @@ def test_forward_backward(case):
     assert grads and all(g.isfinite().all() for g in grads)
 
 
-def test_lsa_state_smaller_than_mha():
-    """LSA的递归状态参数化：潜state按G份（通过mixer属性核对形状语义）"""
+def test_lsr_state_smaller_than_mha():
+    """LSR的递归状态参数化：潜state按G份（通过mixer属性核对形状语义）"""
     from lit_gpt.mixers.gdn2 import GatedDeltaNet2
 
-    m = GatedDeltaNet2(hidden_size=64, num_heads=4, num_groups=2, head_dim=16, use_lsa=True, use_short_conv=False)
+    m = GatedDeltaNet2(hidden_size=64, num_heads=4, num_groups=2, head_dim=16, use_lsr=True, use_short_conv=False)
     assert m.k_proj.out_features == 2 * 16  # 组级k
     assert m.v_proj.out_features == 2 * 16  # 组级潜v
     assert m.q_proj.out_features == 4 * 16  # 逐头q

@@ -5,7 +5,7 @@
 # see LICENSE file at https://github.com/Lightning-AI/litgpt/blob/main/LICENSE
 
 # 适配自 third_party/GatedDeltaNet-2/lit_gpt/config.py：
-# 把 gdn2_per_layer 换成通用的 mixer/mixer_per_layer 分派，并加入 GQA/LSA 相关字段。
+# 把 gdn2_per_layer 换成通用的 mixer/mixer_per_layer 分派，并加入 GQA/LSR 相关字段。
 
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Type
@@ -42,15 +42,15 @@ class Config:
     intermediate_size: Optional[int] = None
     condense_ratio: int = 1
 
-    # ---- RNN mixer（GDN2/LSA）相关 ----
+    # ---- RNN mixer（GDN2/LSR）相关 ----
     mixer: str = "attn"  # "attn" | "gdn2" | "gdn" | "kda"
     mixer_per_layer: int = 1  # 1=全RNN层；N>1=每N层1个RNN其余attn；<=0=纯attn
     num_groups: Optional[int] = None  # RNN组数G；None→n_head（MHA形态）
     head_dim: Optional[int] = None  # RNN头维d_k；None→n_embd//n_head
     expand_v: float = 1.0  # value头维扩展（方案：GQA+expand v_dim）
     num_v_heads: Optional[int] = None  # v头总数（方案：GQA+增加v_head，状态数=v头数）；None→等同组数
-    use_lsa: bool = False  # LSA开关：组级潜状态 + 静态P还原
-    lsa_latent_dim: Optional[int] = None  # 潜维d_c；None→head_v_dim
+    use_lsr: bool = False  # LSR开关：组级潜状态 + 静态P还原
+    lsr_latent_dim: Optional[int] = None  # 潜维d_c；None→head_v_dim
     use_short_conv: bool = True
     conv_size: int = 4
     allow_neg_eigval: bool = False
@@ -140,33 +140,33 @@ configs = [
     # 开发用小配置（CPU/单卡可跑通）
     dict(
         _gdn2_340M_base,
-        name="gdn2_lsa_tiny",
+        name="gdn2_lsr_tiny",
         n_layer=2,
         n_head=4,
         n_embd=256,
         intermediate_size=704,
         num_groups=2,
-        use_lsa=True,
+        use_lsr=True,
     ),
-    # ---- ~340M 主实验方案（docs/experiment.md：MHA / GQA / GVA / LSA，G=4）----
+    # ---- ~340M 主实验方案（docs/experiment.md：MHA / GQA / GVA / LSR，G=4）----
     dict(_gdn2_340M_base, name="gdn2_mha_340M"),  # num_groups=None → G=H，MHA形态
     dict(_gdn2_340M_base, name="gdn2_gqa_340M", num_groups=4),
     dict(_gdn2_340M_base, name="gdn2_gva_340M", num_groups=4, num_v_heads=16),
-    dict(_gdn2_340M_base, name="gdn2_lsa_340M", num_groups=4, use_lsa=True),
+    dict(_gdn2_340M_base, name="gdn2_lsr_340M", num_groups=4, use_lsr=True),
     # ---- ~340M GDN/KDA 骨架对照（沿用gdn2骨架超参，只换mixer）----
     dict(_gdn2_340M_base, name="gdn_mha_340M", mixer="gdn"),
     dict(_gdn2_340M_base, name="gdn_gqa_340M", mixer="gdn", num_groups=4),
     dict(_gdn2_340M_base, name="gdn_gva_340M", mixer="gdn", num_groups=4, num_v_heads=16),
-    dict(_gdn2_340M_base, name="gdn_lsa_340M", mixer="gdn", num_groups=4, use_lsa=True),
+    dict(_gdn2_340M_base, name="gdn_lsr_340M", mixer="gdn", num_groups=4, use_lsr=True),
     dict(_gdn2_340M_base, name="kda_mha_340M", mixer="kda"),
     dict(_gdn2_340M_base, name="kda_gqa_340M", mixer="kda", num_groups=4),
     dict(_gdn2_340M_base, name="kda_gva_340M", mixer="kda", num_groups=4, num_v_heads=16),
-    dict(_gdn2_340M_base, name="kda_lsa_340M", mixer="kda", num_groups=4, use_lsa=True),
+    dict(_gdn2_340M_base, name="kda_lsr_340M", mixer="kda", num_groups=4, use_lsr=True),
     # ---- ~1.3B（head=32，G=4）----
     dict(_gdn2_1p3B_base, name="gdn2_mha_1.3B"),
     dict(_gdn2_1p3B_base, name="gdn2_gqa_1.3B", num_groups=4),
     dict(_gdn2_1p3B_base, name="gdn2_gva_1.3B", num_groups=4, num_v_heads=32),
-    dict(_gdn2_1p3B_base, name="gdn2_lsa_1.3B", num_groups=4, use_lsa=True),
+    dict(_gdn2_1p3B_base, name="gdn2_lsr_1.3B", num_groups=4, use_lsr=True),
 ]
 
 name_to_config = {config["name"]: config for config in configs}

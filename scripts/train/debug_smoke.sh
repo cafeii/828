@@ -8,7 +8,7 @@ TRAIN_DATA=${1:?需要train_data_dir（litdata格式）}
 VAL_DATA=${2:-}
 
 ARGS=(
-  --model_name gdn2_lsa_tiny
+  --model_name gdn2_lsr_tiny
   --exp_name debug_smoke_$(date +%m%d%H%M)
   --train_data_dir "$TRAIN_DATA"
   --devices 1

@@ -3,11 +3,11 @@
 #
 # 递归：S_t = (I - β_t k k^T) Diag(exp(g_t)) S_{t-1} + β_t k v^T
 #   g_t 为 channel-wise decay（log域 g:[B,T,H,d_k]），β_t 为 per-head 标量。
-# GQA/LSA 化的关键约束：β 与 decay 必须组级（若逐头则组内各头 state 不同，P 无法提出），q 保持逐头。
+# GQA/LSR 化的关键约束：β 与 decay 必须组级（若逐头则组内各头 state 不同，P 无法提出），q 保持逐头。
 # KDA ≡ GDN2 取 b=β·1（k维广播）、w=β·1（v维广播）（GDN2 kernel docstring 原话），
 # naive 模式据此复用 naive_gdn2_recurrence；chunk/fused_recurrent 走 fla 的 kda kernel
 # （g:[B,T,H,K] 预计算 log-decay、beta:[B,T,H]，use_gate_in_kernel=False，见 fla.ops.kda 文档）。
-# LSA（use_lsa=True）：v 为组级潜向量 c，写入 β k c^T，出口乘静态 P 还原（同 gdn2.py 策略2）。
+# LSR（use_lsr=True）：v 为组级潜向量 c，写入 β k c^T，出口乘静态 P 还原（同 gdn2.py 策略2）。
 #
 # 与 fla 原版 KDA 的有意差异：输出门用 SiLU 门控 RMSNorm（原版为 sigmoid 门），
 # 与本项目 GDN/GDN2 骨架保持一致，便于跨骨架对照归因。
@@ -24,16 +24,16 @@ from torch.nn import functional as F
 
 
 class KimiDeltaAttention(nn.Module):
-    """KDA token mixer，统一支持 MHA / GQA / GQA+expand_v / GQA+LSA 形态。
+    """KDA token mixer，统一支持 MHA / GQA / GQA+expand_v / GQA+LSR 形态。
 
     形状约定（G=num_groups, I=num_heads//G, d_k=head_dim,
-    d_v=head_dim*expand_v, d_c=lsa_latent_dim）：
+    d_v=head_dim*expand_v, d_c=lsr_latent_dim）：
       q: [B,T,H,d_k] 逐头
       k/g: [B,T,G,d_k] 组级（g为channel-wise log-decay）
-      v:  [B,T,G,d_s] 组级，d_s = d_c（LSA）或 d_v（GQA）
+      v:  [B,T,G,d_s] 组级，d_s = d_c（LSR）或 d_v（GQA）
       b:  [B,T,G] 组级标量（擦除写入门β）
       递归状态: G份 [d_k, d_s]（策略2下kernel内冗余为H份，数学等价）
-      LSA还原: P [H, d_v, d_c]，o = einsum('bthc,hvc->bthv', o_latent, P)
+      LSR还原: P [H, d_v, d_c]，o = einsum('bthc,hvc->bthv', o_latent, P)
     """
 
     def __init__(
@@ -44,8 +44,8 @@ class KimiDeltaAttention(nn.Module):
         head_dim: int = 128,
         expand_v: float = 1.0,
         num_v_heads: Optional[int] = None,
-        use_lsa: bool = False,
-        lsa_latent_dim: Optional[int] = None,
+        use_lsr: bool = False,
+        lsr_latent_dim: Optional[int] = None,
         mode: Literal["chunk", "fused_recurrent", "naive"] = "chunk",
         use_short_conv: bool = True,
         allow_neg_eigval: bool = False,
@@ -65,7 +65,7 @@ class KimiDeltaAttention(nn.Module):
         self.num_groups = num_groups if num_groups is not None else num_heads
         assert num_heads % self.num_groups == 0, "num_groups必须整除num_heads"
         self.heads_per_group = num_heads // self.num_groups
-        self.use_lsa = use_lsa
+        self.use_lsr = use_lsr
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
@@ -74,8 +74,8 @@ class KimiDeltaAttention(nn.Module):
         self.head_v_dim = int(head_dim * expand_v)
         if not math.isclose(head_dim * expand_v, self.head_v_dim, rel_tol=1e-5):
             raise ValueError(f"expand_v={expand_v}与head_dim={head_dim}的乘积不是整数。")
-        # d_s: 进入递归的value侧维度（LSA为潜维，否则为头维）
-        self.latent_dim = (lsa_latent_dim or self.head_v_dim) if use_lsa else self.head_v_dim
+        # d_s: 进入递归的value侧维度（LSR为潜维，否则为头维）
+        self.latent_dim = (lsr_latent_dim or self.head_v_dim) if use_lsr else self.head_v_dim
 
         self.key_dim = self.num_heads * self.head_k_dim  # q逐头
         self.gk_dim = self.num_groups * self.head_k_dim  # k/g组级
@@ -110,8 +110,8 @@ class KimiDeltaAttention(nn.Module):
         self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
         self.dt_bias._no_weight_decay = True
 
-        # LSA静态还原矩阵 P [H, d_v, d_c]
-        if use_lsa:
+        # LSR静态还原矩阵 P [H, d_v, d_c]
+        if use_lsr:
             self.p_mat = nn.Parameter(torch.empty(self.num_heads, self.head_v_dim, self.latent_dim))
 
         # 输出路径：逐头SiLU门控RMSNorm + 输出投影（g_proj低秩与KDA原版一致）
@@ -137,7 +137,7 @@ class KimiDeltaAttention(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
-        if module is self and self.use_lsa:
+        if module is self and self.use_lsr:
             nn.init.xavier_uniform_(self.p_mat, gain=2**-2.5)
         module._is_hf_initialized = True
 
@@ -238,8 +238,8 @@ class KimiDeltaAttention(nn.Module):
                 offset=T,
             )
 
-        # LSA出口还原：潜空间读取结果乘静态P回到每头value空间
-        if self.use_lsa:
+        # LSR出口还原：潜空间读取结果乘静态P回到每头value空间
+        if self.use_lsr:
             o = torch.einsum("bthc,hvc->bthv", o, self.p_mat.to(o.dtype))
 
         o = self.o_norm(o, rearrange(self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim))

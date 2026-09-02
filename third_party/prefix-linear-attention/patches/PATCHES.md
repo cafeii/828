@@ -23,3 +23,8 @@
 本 fork 的 `lm_eval/tasks/` 只含 `based_*`（JRT 12 项）、`scrolls`、`super_glue`（含 boolq）。
 标准零样本任务中 **只有 BoolQ 在本 fork 内**；Lambada/PIQA/Hellaswag/Winogrande/ARC-e/ARC-c/OpenBookQA/SIQA 均不在，
 需另行安排（见工作区 plans/ 中的评估计划）。故本目录下的脚本只承担 JRT 部分：`scripts/eval/run_jrt.sh`。
+
+## 命名说明（2026-09-02）
+
+工作区架构命名口径由 LSA 统一为 LSR（Latent State RNN），`litgpt_lm.py` 注释中的示例 model_name
+同步为 `gdn2_lsr_340M`。模型注册名 `litgpt` 不变。

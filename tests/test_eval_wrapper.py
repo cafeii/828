@@ -28,7 +28,7 @@ def make_tiny(**kw):
 
 CASES = {
     "gqa": dict(num_groups=2),
-    "lsa": dict(num_groups=2, use_lsa=True),
+    "lsr": dict(num_groups=2, use_lsr=True),
 }
 
 
