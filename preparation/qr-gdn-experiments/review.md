@@ -130,3 +130,10 @@
 - 资源：碎片节点 `tko-b3-nv-dgx04`（提交时 4/8 GPU 已占用）的 1 GPU、4 CPU、16G、20 分钟。
 - 验证范围：全部已有 QR-GDN GPU 内核测试，外加模型级 `chunk` 与 `naive` 前向一致性、训练反向有限性和 QR 读出投影非零梯度。
 - 提交前开发树干净，完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 `sbatch`，不提交正式训练。
+
+## 模型级并行 chunk GPU 诊断终态审查（job 34875）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:01:23`；`run.exitcode=0`。
+- `run.json`、日志和必需产物 `outputs/result.json` 完整并已回收。
+- H800 共 18 passed：模型级 QR-GDN `chunk` 输出与 naive 参考一致，完整反向梯度有限，QR 读出投影取得非零梯度；先前状态、输出、FP32/BF16 和底层自动微分检查继续通过。
+- 模型并行路径门槛通过。正式训练仍未开始；后续门槛为近极端门控稳定性、分段恢复/缓存一致性、340M 吞吐与峰值显存，以及 8 卡 DDP smoke。
