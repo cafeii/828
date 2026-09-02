@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "parallel_model_wiring_gpu_pending",
+  "current_stage": "parallel_model_chunk_gpu_diagnostic",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,7 +38,18 @@
     3407,
     42
   ],
-  "active_jobs": [],
+  "active_jobs": [
+    {
+      "kind": "diagnostic",
+      "purpose": "model-level QR-GDN chunk forward/backward parity on H800",
+      "exp_id": "20260903-041940-qr-gdn-model-chunk-gpu-9550c1",
+      "job_id": "34875",
+      "job_name": "王正仁-Metis-20260903-041940-qr-gdn-model-chunk-gpu-9550c1",
+      "commit": "909b99f2baf69edb24c9e9d444427596f8323734",
+      "slurm_state": "RUNNING",
+      "node": "tko-b3-nv-dgx04"
+    }
+  ],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -120,7 +131,7 @@
         "training_mode": "parallel_three_call_chunk",
         "short_eval_or_decode": "explicit_reference_until_fused_recurrent_kernel",
         "cpu_static": "10_passed_5_gpu_skipped",
-        "gpu_model_forward_backward": "pending"
+        "gpu_model_forward_backward": "running_job_34875"
       }
     },
     "gpu": {
@@ -189,5 +200,5 @@
       "commit": "70457db631c6c531b89409b225f863525a54d8e7"
     }
   ],
-  "last_heartbeat": "2026-09-02T19:21:40.319Z"
+  "last_heartbeat": "2026-09-02T20:19:10.568Z"
 }

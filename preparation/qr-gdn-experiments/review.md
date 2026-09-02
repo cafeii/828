@@ -123,3 +123,10 @@
 - 新增模型级测试：并行 chunk 与 naive 参考输出相符，并检查所有实际梯度有限且 QR 读出投影取得非零梯度。
 - CPU/静态回归：10 passed、5 个 CUDA 测试 skipped；Python 编译与 diff 检查通过。模型级 GPU 测试尚未作为 Slurm 诊断运行，本轮已使用 job 34860 的唯一 `sbatch` 配额，留待下一次心跳。
 - 正式训练继续阻止；模型级 GPU、稳定性/恢复、8 卡 DDP 和 340M 吞吐/显存门槛均未完成。
+
+## 模型级并行 chunk GPU 诊断提交
+
+- 实验：`20260903-041940-qr-gdn-model-chunk-gpu-9550c1`；Slurm job `34875`；快照 commit `909b99f2baf69edb24c9e9d444427596f8323734`。
+- 资源：碎片节点 `tko-b3-nv-dgx04`（提交时 4/8 GPU 已占用）的 1 GPU、4 CPU、16G、20 分钟。
+- 验证范围：全部已有 QR-GDN GPU 内核测试，外加模型级 `chunk` 与 `naive` 前向一致性、训练反向有限性和 QR 读出投影非零梯度。
+- 提交前开发树干净，完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 `sbatch`，不提交正式训练。
