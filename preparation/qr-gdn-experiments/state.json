@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "KERNEL_IMPLEMENTATION",
-  "current_stage": "stability_and_performance_gpu_running",
+  "status": "PERFORMANCE_OPTIMIZATION",
+  "current_stage": "two_call_performance_candidate_gpu_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,18 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "diagnostic",
-      "purpose": "QR-GDN stability plus same-H800 340M throughput and memory benchmark",
-      "exp_id": "20260903-045704-qr-gdn-stability-performance-39343a",
-      "job_id": "34888",
-      "job_name": "王正仁-Metis-20260903-045704-qr-gdn-stability-performance-39343a",
-      "commit": "e58a27f76eb4b137ed762f71250a6698e1c500bc",
-      "slurm_state": "RUNNING",
-      "node": "tko-b3-nv-dgx03"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -84,7 +73,7 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "forward_backward_gpu_passed_model_chunk_gpu_pending",
+      "status": "two_call_optimization_candidate_gpu_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
@@ -137,6 +126,14 @@
         "elapsed": "00:01:23",
         "combined_gpu_tests_passed": 18,
         "result": "experiments/20260903-041940-qr-gdn-model-chunk-gpu-9550c1/outputs/result.json"
+      },
+      "performance_optimization": {
+        "commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3",
+        "physical_chunk_calls": 2,
+        "change": "reuse KV effective delta to recover pre-update recall algebraically; remove redundant shifted KV scan",
+        "cpu_regression": "16_passed",
+        "gpu_validation": "pending",
+        "throughput_retest": "pending"
       }
     },
     "gpu": {
@@ -162,7 +159,28 @@
       "model_chunk": "passed_job_34875"
     },
     "ddp_8gpu": "pending",
-    "throughput_and_memory": "pending",
+    "throughput_and_memory": {
+      "status": "measured_gate_failed",
+      "job_id": "34888",
+      "commit": "e58a27f76eb4b137ed762f71250a6698e1c500bc",
+      "slurm_state": "COMPLETED",
+      "exit_code": 0,
+      "elapsed": "00:07:06",
+      "sequence_length": 4096,
+      "micro_batch_size": 1,
+      "precision": "bf16-mixed",
+      "activation_checkpointing": true,
+      "gdn_tokens_per_second": 18201.018877525818,
+      "qr_gdn_tokens_per_second": 11465.697136977953,
+      "qr_to_gdn_ratio": 0.6299480932430394,
+      "required_ratio": 0.8,
+      "gate_passed": false,
+      "gdn_peak_memory_gb": 6.68460544,
+      "qr_gdn_peak_memory_gb": 6.689670144,
+      "gdn_state_bytes_fp32": 5242880,
+      "qr_gdn_state_bytes_fp32": 10485760,
+      "result": "experiments/20260903-045704-qr-gdn-stability-performance-39343a/outputs/result.json"
+    },
     "stability_and_performance_harness": {
       "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3",
       "gpu_tests_added": [
@@ -179,7 +197,9 @@
       "precision": "bf16-mixed",
       "activation_checkpointing": true,
       "throughput_gate": 0.8,
-      "gpu_status": "running_job_34888"
+      "gpu_status": "completed_job_34888",
+      "gpu_tests_passed": 8,
+      "throughput_gate_passed": false
     },
     "parameter_counts": {
       "gdn_control_340M": 344353984,
@@ -231,6 +251,10 @@
     {
       "stage": "stability_and_performance_harness",
       "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3"
+    },
+    {
+      "stage": "two_call_performance_candidate",
+      "commit": "92d5f22c32e10d590f748e742c7e9818e4cbb1e3"
     }
   ],
   "last_heartbeat": "2026-09-02T20:56:40.685Z"

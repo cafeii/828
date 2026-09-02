@@ -153,3 +153,20 @@
 - 验证先运行分段恢复、近极端门控和 BF16 模型反向，再在同一 H800 上顺序测量 GDN 340M 与 QR-GDN 340M：sequence length 4096、micro batch 1、BF16 mixed、激活检查点，1 个 warmup 和 3 个正式训练步。
 - 吞吐门槛固定为 QR-GDN/GDN ≥ 0.8，同时记录参数、两倍状态字节和峰值显存。低于门槛只记录为需优化，不启动完整训练。
 - 提交前开发树干净、完整唯一任务名无重复，manifest/job-id/lock 均为空；已原子加锁并登记 job-id。本轮只执行这一项 `sbatch`。
+
+## 稳定性与 340M 性能诊断终态审查（job 34888）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:07:06`；`run.exitcode=0`。`run.json`、日志和 `outputs/result.json` 完整并已回收。
+- H800 稳定性套件 8 passed：分段续算、近极端门控前向/反向和 BF16 模型反向均通过，没有新增数值错误。
+- 同卡 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点的实测吞吐：GDN 18,201.02 token/s，QR-GDN 11,465.70 token/s，比例 62.99%，未达到 80% 门槛。
+- GDN/QR-GDN 峰值显存分别为 6.6846/6.6897 GB；FP32 递归状态字节分别为 5,242,880/10,485,760，确认 QR 隐状态严格为两倍，当前显存增加主要未体现在模型训练峰值上。
+- 正式训练继续阻止。当前三次完整 chunk 调用的性能代价过高，先做融合优化，再重新验证前向、反向与吞吐。
+
+## 两调用性能优化候选
+
+- Commit：`92d5f22c32e10d590f748e742c7e9818e4cbb1e3`。
+- 原生 KV chunk 已经产生有效增量 $\delta_t$ 且输出 $M_t^{KV\top}q_t$。利用
+  $M_{t-1}^{KV\top}q_t=(M_t^{KV\top}q_t-\langle q_t,k_t\rangle\delta_t)/\alpha_t^{KV}$，直接恢复 QR 写入目标，删除一次移位 KV 全状态扫描。
+- 扩展 vendored FLA 自定义自动微分接口，使有效增量可被组合 recurrence 读取，且其外部梯度在状态反向前正确并入；默认 GDN API 行为保持不变。
+- 训练路径由三次降为两次生产级 chunk 调用；仍保持真实 $T$、无逐 token Python 循环、无 `2T` 序列和无稠密 $2K\times2K$ 转移。
+- CPU/静态回归 16 passed，Python 编译和 diff 检查通过。该代数恢复与扩展反向尚须下一次心跳在 H800 上验证并重测吞吐；本次已提交 job 34888，遵守每次心跳最多一次 `sbatch`，不追加 GPU 作业。
