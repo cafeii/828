@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "IMPLEMENTING_PARALLEL_KERNEL",
-  "current_stage": "rank2_parallel_kernel",
+  "status": "VALIDATING_GPU_FORWARD",
+  "current_stage": "rank2_gpu_state_forward",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -23,8 +23,26 @@
     3407,
     42
   ],
-  "active_jobs": [],
-  "submission_count_this_wake": 0,
+  "active_jobs": [
+    {
+      "job_id": "34254",
+      "exp_id": "20260902-181059-dtjqc-rank2-state-gpu-8a21f7",
+      "kind": "gpu_diagnostic",
+      "scope": "rank2 chunk state forward BF16/FP32",
+      "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
+      "job_name": "王正仁-Metis-20260902-181059-dtjqc-rank2-state-gpu-8a21f7",
+      "node": "tko-b3-nv-dgx04",
+      "resources": {
+        "gpus": 1,
+        "cpus": 4,
+        "mem": "32G",
+        "time": "00:20:00"
+      },
+      "slurm_state": "PENDING",
+      "submitted_at": "2026-09-02T18:13:00+08:00"
+    }
+  ],
+  "submission_count_this_wake": 1,
   "validation": {
     "reference_tests": {
       "status": "passed",
@@ -69,7 +87,9 @@
       }
     },
     "gpu": {
-      "status": "pending"
+      "status": "queued",
+      "job_id": "34254",
+      "scope": "rank2 chunk state forward BF16/FP32"
     },
     "ddp_8gpu": {
       "status": "pending"
@@ -114,9 +134,10 @@
   },
   "cluster_snapshot": {
     "whole_idle_nodes": 0,
-    "nodes": [],
-    "action": "no_submission",
-    "reason": "No whole H800 node is idle and production GPU state/output/backward kernels remain incomplete"
+    "selected_fragment_node": "tko-b3-nv-dgx04",
+    "selected_fragment_gpu_usage": "7/8 before submission",
+    "action": "submitted_one_gpu_diagnostic",
+    "job_id": "34254"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",
@@ -149,7 +170,12 @@
       "commit": "852faeec156917177a8400125a50a2a2ce7c2a64",
       "milestone": "vectorized strict-token-causal rank-two block-WY preprocessing",
       "tests": "28 targeted CPU FP64 checks passed"
+    },
+    {
+      "commit": "a3b5acfd9377a49014a2b91eb719f1c3f81d1523",
+      "milestone": "Triton rank-two cross-chunk state forward, pending GPU validation",
+      "tests": "static compile and 28 CPU FP64 regressions passed"
     }
   ],
-  "last_heartbeat": "2026-09-02T09:26:38.152Z"
+  "last_heartbeat": "2026-09-02T10:07:08.346Z"
 }
