@@ -18,3 +18,13 @@ For JQC-GDN:
 - `p=beta*(k-gamma*(q^Tk)q)`.
 
 Affine elements compose associatively as `(A2,C2)∘(A1,C1)=(A2A1,A2C1+C2)`. The FP64 tests verify both factorizations against their independent method equations, including all input gradients, and verify an inclusive affine scan against token recurrence. The production implementation must preserve this contract while avoiding dense `K×K` materialization and Python token loops.
+
+## Compact physical-chunk form
+
+Write one token transition as `A=alpha*I+L*R^T`, with `L,R` having two columns. A prefix product is represented exactly as `P=a*I+U*Z^T`. Left-composing one token gives:
+
+`A*P=(alpha*a)*I + [alpha*U,L] [Z,a*R+Z*(U^T*R)]^T`.
+
+Thus each physical token appends two columns and a chunk of length `C` has compact rank `2C`; it does not create a virtual `2T` sequence or a dense `K×K` transition. The affine offset is updated under the same token transition and yields the exact chunk map `S_out=a*S_in+U*(Z^T*S_in)+E`.
+
+The CPU oracle validates this representation for chunk sizes 1, 2, 4 and 7 against the independent token recurrence for DT-GDN and JQC-GDN. It also validates gradients with respect to q, k, v, alpha, beta, gamma and the initial state. The remaining implementation work is to build the same `2C` compact factors and backward pass inside the GPU chunk kernel.

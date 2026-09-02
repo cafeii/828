@@ -43,7 +43,18 @@
         "2T virtual sequence",
         "dense KxK training path",
         "Python token loop"
-      ]
+      ],
+      "compact_chunk_oracle": {
+        "status": "passed",
+        "representation": "scalar identity plus rank-2C factors plus affine offset over C physical tokens",
+        "tests": 10,
+        "coverage": [
+          "DT/JQC chunk sizes 1, 2, 4 and 7 recover token recurrence terminal state",
+          "compact rank is exactly 2C without virtual time expansion",
+          "all-input and initial-state gradient parity"
+        ],
+        "production_gpu_kernel": "pending"
+      }
     },
     "gpu": {
       "status": "pending"
@@ -73,7 +84,7 @@
     },
     "rank2_algebra": {
       "status": "passed",
-      "tests": 6,
+      "tests": 16,
       "time_axis_expansion": false,
       "rank": 2,
       "coverage": [
@@ -81,14 +92,20 @@
         "JQC canonical factors versus independent update and all gradients",
         "dense inclusive affine scan versus token recurrence",
         "affine composition associativity",
-        "DT near-collinear finite parity at beta=gamma=0.999"
+        "DT near-collinear finite parity at beta=gamma=0.999",
+        "compact rank-2C physical-chunk transform versus token recurrence for four chunk sizes",
+        "compact chunk all-input and initial-state gradient parity"
       ]
     }
   },
   "cluster_snapshot": {
-    "whole_idle_nodes": 1,
+    "whole_idle_nodes": 2,
+    "nodes": [
+      "tko-b3-nv-dgx26",
+      "tko-b3-nv-dgx43"
+    ],
     "action": "no_submission",
-    "reason": "Rank-two algebra is validated; production GPU chunk kernel and backward are not yet implemented"
+    "reason": "Production GPU chunk kernel and backward are not yet implemented; formal runs remain validation-blocked"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",
@@ -111,6 +128,12 @@
       "commit": "f161a5d9f5232e7394e9c0795b8e80090da0e14d",
       "milestone": "unified rank-two factors and associative affine-scan contract",
       "tests": "13 DT/JQC CPU checks passed"
+    },
+    {
+      "commit": "a8e9d850d3cc3fe3145de4703363b30ec40d8c5a",
+      "milestone": "compact rank-2C physical-chunk algebra and gradient oracle",
+      "tests": "20 targeted CPU FP64 checks passed"
     }
-  ]
+  ],
+  "last_heartbeat": "2026-09-02T08:47:08.009Z"
 }
