@@ -8,9 +8,10 @@
 #
 # 用法: bash scripts/eval/run_ruler.sh <model_name> <ckpt_path> [output_dir]
 # 环境变量: EVAL_PY 覆盖解释器；NUM_SAMPLES 覆盖每任务样本数（默认 500，与官方一致）
+#   QUICK=1  前期快速验证子集（docs/experiment.md：S-NIAH-2/3 × 4 长度），缺省全量
 set -Eeuo pipefail
 
-MODEL_NAME="${1:?需要 model_name，如 gdn2_lsa_340M}"
+MODEL_NAME="${1:?需要 model_name，如 gdn2_lsr_340M}"
 CKPT_PATH="${2:?需要 ckpt_path}"
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${3:-${WORKSPACE}/outputs/eval/ruler/${MODEL_NAME}}"
@@ -20,6 +21,8 @@ NUM_SAMPLES="${NUM_SAMPLES:-500}"
 
 RULER_SCRIPTS="${WORKSPACE}/third_party/RULER/scripts"
 TASKS=(niah_single_1 niah_single_2 niah_single_3 niah_multikey_1)
+# 前期快速验证子集（docs/experiment.md 评估安排）
+[[ "${QUICK:-0}" = "1" ]] && TASKS=(niah_single_2 niah_single_3)
 SEQ_LENGTHS=(1024 2048 4096 8192)
 # nltk punkt 已预下载（服务器无外网）；tokenizer 从本地路径加载不触网
 export NLTK_DATA="${NLTK_DATA:-${WORKSPACE}/dataset/eval_data/nltk_data}"
@@ -27,6 +30,7 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 
 [[ "${CKPT_PATH}" = /* ]] || CKPT_PATH="${WORKSPACE}/${CKPT_PATH}"
 [[ -f "${CKPT_PATH}" ]] || { echo "[fail] ckpt 不存在: ${CKPT_PATH}" >&2; exit 1; }
+[[ -x "${EVAL_PY}" ]] || { echo "[fail] EVAL_PY 不可执行: ${EVAL_PY}（服务器上请设 EVAL_PY 指向含 fla/lightning 的 conda python）" >&2; exit 1; }
 [[ -f "${RULER_SCRIPTS}/data/synthetic/json/PaulGrahamEssays.json" ]] || {
   echo "[fail] 缺 PaulGrahamEssays.json（S-NIAH-2/3、MK-NIAH-1 依赖），需先本地下载并同步" >&2; exit 1; }
 

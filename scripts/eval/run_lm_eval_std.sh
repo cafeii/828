@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# 标准零样本九项任务（lm-eval 0.4.9 上游，独立评估环境）。
-# 任务与指标对齐 docs/experiment.md：
+# 标准零样本任务（lm-eval 0.4.9 上游，独立评估环境）。
+# 任务与指标对齐 docs/experiment.md，指标取列口径：
+#   Wikitext ppl（OOD ppl：训练集为 FineWeb，Wikitext 域外；GDN/GDN2/MoM/FLA 均报此列）,
 #   Lambada(openai) ppl/acc, PIQA acc, Hellaswag acc_norm, Winogrande acc,
 #   ARC-easy acc, ARC-challenge acc_norm, OpenBookQA acc, SIQA acc, BoolQ acc
-# （FineWeb-test ppl 不在此脚本：用训练 val litdata 单独算，见 run_fineweb_ppl.py）
+# （acc/acc_norm 两项 lm-eval 都会输出；汇总时按上述口径取列——Hellaswag 与 ARC-c 取 acc_norm，
+#   ARC-c acc_norm 为多数派口径：Mamba1/GDN/MoM 均如此，GDN2 用 acc）
 #
 # 用法: bash scripts/eval/run_lm_eval_std.sh <model_name> <ckpt_path> [output_dir]
-# 环境变量: EVAL_PY 覆盖 python 解释器（服务器上用 conda 环境的 python）
+# 环境变量:
+#   EVAL_PY  覆盖 python 解释器（服务器上用 conda 环境的 python）
+#   QUICK=1  前期快速验证子集（docs/experiment.md：Wikitext/Hellaswag/Winogrande/ARC-e/c），缺省全量
 set -Eeuo pipefail
 
-MODEL_NAME="${1:?需要 model_name，如 gdn2_lsa_340M}"
+MODEL_NAME="${1:?需要 model_name，如 gdn2_lsr_340M}"
 CKPT_PATH="${2:?需要 ckpt_path}"
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${3:-${WORKSPACE}/outputs/eval/lm_eval_std/${MODEL_NAME}}"
@@ -21,10 +25,13 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 
 [[ "${CKPT_PATH}" = /* ]] || CKPT_PATH="${WORKSPACE}/${CKPT_PATH}"
 [[ -f "${CKPT_PATH}" ]] || { echo "[fail] ckpt 不存在: ${CKPT_PATH}" >&2; exit 1; }
+[[ -x "${EVAL_PY}" ]] || { echo "[fail] EVAL_PY 不可执行: ${EVAL_PY}（服务器上请设 EVAL_PY 指向含 fla/lightning/lm_eval 的 conda python）" >&2; exit 1; }
 
 # social_iqa_fixed = 上游 social_iqa 换 dataset_path（旧脚本数据集名在 datasets>=3 不可加载），
 # 定义在 tasks_override/siqa.yaml，评分口径与上游完全一致
-TASKS="lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa,social_iqa_fixed,boolq"
+TASKS="wikitext,lambada_openai,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa,social_iqa_fixed,boolq"
+# 前期快速验证子集（docs/experiment.md 评估安排）
+[[ "${QUICK:-0}" = "1" ]] && TASKS="wikitext,hellaswag,winogrande,arc_easy,arc_challenge"
 
 mkdir -p "${OUTPUT_DIR}"
 "${EVAL_PY}" "${WORKSPACE}/scripts/eval/run_lm_eval.py" \

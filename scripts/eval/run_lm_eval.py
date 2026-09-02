@@ -3,7 +3,7 @@
 # 上游包里没有我们的模型类，正式插件机制只覆盖任务不覆盖模型，
 # 故用本脚本先注册 litgpt 模型再转交官方 CLI。用法与 lm_eval CLI 相同：
 #   python scripts/eval/run_lm_eval.py --model litgpt \
-#     --model_args model_name=gdn2_lsa_340M,ckpt_path=...,tokenizer_path=... \
+#     --model_args model_name=gdn2_lsr_340M,ckpt_path=...,tokenizer_path=... \
 #     --tasks piqa,hellaswag --batch_size 8 --output_path outputs/eval/...
 import sys
 from pathlib import Path
