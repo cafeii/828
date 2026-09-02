@@ -11,6 +11,7 @@ from . import optimum_lm
 from . import neuron_optimum
 from . import local_lm
 from . import jrt_lm
+from . import litgpt_lm  # PATCH(rnn工作区): 自训lit_gpt模型接入，见 ../patches/PATCHES.md
 # TODO: implement __all__
 
 

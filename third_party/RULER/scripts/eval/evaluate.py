@@ -38,7 +38,11 @@ import yaml
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
-from nemo.collections.asr.parts.utils.manifest_utils import read_manifest, write_manifest
+# PATCH(rnn工作区): 原为 nemo.collections.asr...manifest_utils，改用仓库自带纯json实现。
+# 见 ../../patches/PATCHES.md
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from data.manifest_utils import read_manifest, write_manifest
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True, help='path to the prediction jsonl files')

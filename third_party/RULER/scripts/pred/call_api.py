@@ -42,7 +42,10 @@ import time
 from tqdm import tqdm
 from pathlib import Path
 import traceback
-from nemo.collections.asr.parts.utils.manifest_utils import read_manifest
+# PATCH(rnn工作区): 原为 nemo.collections.asr...manifest_utils，改用仓库自带纯json实现，
+# 去掉整条推理链路对 nemo-toolkit 的硬依赖。见 ../../patches/PATCHES.md
+sys.path.append(str(Path(__file__).parent.parent))
+from data.manifest_utils import read_manifest
 
 SERVER_TYPES = (
     'trtllm',
@@ -52,6 +55,7 @@ SERVER_TYPES = (
     'gemini',
     'hf',
     'mamba',
+    'litgpt',  # PATCH(rnn工作区)
 )
 
 
@@ -179,6 +183,18 @@ def get_llm(tokens_to_generate):
             max_new_tokens=tokens_to_generate,
         )
     
+    elif args.server_type == 'litgpt':
+        # PATCH(rnn工作区): 自训 lit_gpt 模型，见 ../../patches/PATCHES.md
+        from litgpt_model import LitGPTModel
+        llm = LitGPTModel(
+            name_or_path=args.model_name_or_path,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            stop=args.stop_words,
+            max_new_tokens=tokens_to_generate,
+        )
+
     elif args.server_type == 'mamba':
         from model_wrappers import MambaModel
         # mamba uses its own generation function, do not pass in do_sample

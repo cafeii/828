@@ -269,8 +269,13 @@ def generate_samples(num_samples: int, max_seq_length: int, save_dir: str, incre
                 assert length <= max_seq_length, f"{length} exceeds max_seq_length."
                 break
             except:
-                if used_haystack > incremental:
-                    used_haystack -= incremental
+                # 本地补丁：原实现按 incremental 整步回退（essay 时为 500/10 句），
+                # 一次超限就砍掉一大段 haystack，使样本长度系统性低于 max_seq_length。
+                # 改为逐 1 回退，贴住上限；下界仍受 incremental 保护避免死循环。
+                if used_haystack > 1:
+                    used_haystack -= 1
+                else:
+                    break
 
         if args.remove_newline_tab:
             input_text = ' '.join(input_text.replace('\n', ' ').replace('\t', ' ').strip().split())

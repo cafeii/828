@@ -15,6 +15,26 @@
 import json
 
 
+# PATCH(rnn工作区): 上游此文件只有 write_manifest，read_manifest 需从 nemo 引入。
+# 补一个等价的纯 json 实现，使 pred/eval 链路无需 nemo-toolkit。见 ../../patches/PATCHES.md
+def read_manifest(manifest_path):
+    """
+    Read manifest file (jsonl)
+
+    Args:
+        manifest_path (str or Path): Path to manifest file
+    Returns:
+        list: List of manifest file entries
+    """
+    data = []
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                data.append(json.loads(line))
+    return data
+
+
 def write_manifest(output_path, target_manifest, ensure_ascii: bool = True):
     """
     Write to manifest file
