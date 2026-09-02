@@ -175,7 +175,16 @@ def chunk_gated_delta_rule_bwd(
     A_log: torch.Tensor | None = None,
     dt_bias: torch.Tensor | None = None,
     chunk_size: int = 64,
+    q_aux: torch.Tensor | None = None,
+    do_aux: torch.Tensor | None = None,
+    scale_aux: float | None = None,
 ):
+    assert (q_aux is None) == (do_aux is None), "q_aux and do_aux must be supplied together"
+    if q_aux is not None:
+        assert cp_context is None and cu_seqlens is None
+        assert q_aux.shape == q.shape and do_aux.shape == do.shape
+        if scale_aux is None:
+            scale_aux = 1.0
     w, u = recompute_w_u_fwd(
         k=k,
         v=v,
@@ -211,6 +220,17 @@ def chunk_gated_delta_rule_bwd(
         chunk_indices=chunk_indices,
         chunk_size=chunk_size,
     )
+    if q_aux is not None:
+        dv.add_(chunk_bwd_dv_local(
+            q=q_aux,
+            k=k,
+            g=g,
+            do=do_aux,
+            scale=scale_aux,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            chunk_size=chunk_size,
+        ))
     if cp_context is not None:
         # initial_state is None in the CP mode
         # We only need to compute dht of current rank and pass it to the backward kernel
@@ -239,7 +259,10 @@ def chunk_gated_delta_rule_bwd(
         dht=dht,
         do=do,
         dv=dv,
+        q_aux=q_aux,
+        do_aux=do_aux,
         scale=scale,
+        scale_aux=scale_aux,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
         state_v_first=state_v_first,
@@ -261,6 +284,26 @@ def chunk_gated_delta_rule_bwd(
         state_v_first=state_v_first,
         chunk_size=chunk_size,
     )
+    dq_aux = None
+    if q_aux is not None:
+        dq_aux, dk_aux, _, dg_aux = chunk_bwd_dqkwg(
+            q=q_aux,
+            k=k,
+            v=v_new,
+            w=None,
+            g=g,
+            h=h,
+            dv=None,
+            do=do_aux,
+            dh=torch.zeros_like(dh),
+            scale=scale_aux,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            state_v_first=state_v_first,
+            chunk_size=chunk_size,
+        )
+        dk.add_(dk_aux)
+        dg.add_(dg_aux)
     dk2, dv, db, dg2 = prepare_wy_repr_bwd(
         k=k,
         v=v,
@@ -278,7 +321,7 @@ def chunk_gated_delta_rule_bwd(
     dA_log, ddt_bias = None, None
     if use_gate_in_kernel:
         dg, dA_log, ddt_bias = gdn_gate_bwd(g=g_input, A_log=A_log, dt_bias=dt_bias, dyg=dg)
-    return dq, dk, dv, db, dg, dh0, dA_log, ddt_bias
+    return dq, dk, dv, db, dg, dh0, dA_log, ddt_bias, dq_aux
 
 
 class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
@@ -397,7 +440,15 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             A_log,
             dt_bias,
         ) = ctx.saved_tensors
-        dq, dk, dv, db, dg, dh0, dA_log, ddt_bias = chunk_gated_delta_rule_bwd(
+        q_next, do_next = None, None
+        if dpre_read is not None:
+            # pre_read[:, 1:] is the inclusive state read at positions :-1
+            # using q[:, 1:]. Feed this shifted stream into the same reverse
+            # state scan as the native read instead of recomputing the entire
+            # GDN backward a second time.
+            q_next = torch.cat((q[:, 1:], torch.zeros_like(q[:, :1])), dim=1)
+            do_next = torch.cat((dpre_read[:, 1:], torch.zeros_like(dpre_read[:, :1])), dim=1)
+        dq, dk, dv, db, dg, dh0, dA_log, ddt_bias, dq_aux = chunk_gated_delta_rule_bwd(
             q=q,
             k=k,
             v=v,
@@ -417,44 +468,14 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             A_log=A_log,
             dt_bias=dt_bias,
             chunk_size=ctx.chunk_size,
+            q_aux=q_next,
+            do_aux=do_next,
+            scale_aux=1.0,
         )
         if dpre_read is not None:
-            # pre_read[:, 1:] is the inclusive state read at positions :-1
-            # using q[:, 1:]. Reuse the proven GDN backward on that shifted
-            # query stream, then map its query gradient back by one position.
-            q_next = torch.cat((q[:, 1:], torch.zeros_like(q[:, :1])), dim=1)
-            do_next = torch.cat((dpre_read[:, 1:], torch.zeros_like(dpre_read[:, :1])), dim=1)
-            dq2, dk2, dv2, db2, dg2, dh02, dA_log2, ddt_bias2 = chunk_gated_delta_rule_bwd(
-                q=q_next,
-                k=k,
-                v=v,
-                g=g,
-                beta=beta,
-                A=A,
-                scale=1.0,
-                initial_state=initial_state,
-                do=do_next,
-                dht=None,
-                cu_seqlens=cu_seqlens,
-                cp_context=ctx.cp_context,
-                chunk_indices=chunk_indices,
-                state_v_first=ctx.state_v_first,
-                use_gate_in_kernel=ctx.use_gate_in_kernel,
-                g_input=g_input,
-                A_log=A_log,
-                dt_bias=dt_bias,
-                chunk_size=ctx.chunk_size,
-            )
             dq_shifted = torch.zeros_like(dq)
-            dq_shifted[:, 1:] = dq2[:, :-1]
+            dq_shifted[:, 1:] = dq_aux[:, :-1]
             dq = dq + dq_shifted
-            dk, dv, db, dg = dk + dk2, dv + dv2, db + db2, dg + dg2
-            if dh02 is not None:
-                dh0 = dh02 if dh0 is None else dh0 + dh02
-            if dA_log2 is not None:
-                dA_log = dA_log2 if dA_log is None else dA_log + dA_log2
-            if ddt_bias2 is not None:
-                ddt_bias = ddt_bias2 if ddt_bias is None else ddt_bias + ddt_bias2
 
             if initial_state is not None:
                 dfirst = dpre_read[:, 0].float()

@@ -351,6 +351,7 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
     'USE_GK': lambda args: args['gk'] is not None,
+    'USE_AUX_READ': lambda args: args['q_aux'] is not None,
     'USE_INITIAL_STATE': lambda args: args['dh0'] is not None,
     'USE_FINAL_STATE_GRADIENT': lambda args: args['dht'] is not None,
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -362,7 +363,7 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
         for num_stages in ([2, 3, 4] if check_shared_mem('ampere') else [1])
         for BV in ([32, 64] if check_shared_mem('ada') else [32])
     ],
-    key=['H', 'HV', 'K', 'V', 'BT', 'BV', 'USE_G', 'STATE_V_FIRST'],
+    key=['H', 'HV', 'K', 'V', 'BT', 'BV', 'USE_G', 'USE_AUX_READ', 'STATE_V_FIRST'],
     **autotune_cache_kwargs,
 )
 @triton.jit(do_not_specialize=['T'])
@@ -375,12 +376,15 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
     dht,
     dh0,
     do,
+    q_aux,
+    do_aux,
     dh,
     dv,
     dv2,
     cu_seqlens,
     chunk_offsets,
     scale,
+    scale_aux,
     T,
     H: tl.constexpr,
     HV: tl.constexpr,
@@ -390,6 +394,7 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
     BV: tl.constexpr,
     USE_G: tl.constexpr,
     USE_GK: tl.constexpr,
+    USE_AUX_READ: tl.constexpr,
     USE_INITIAL_STATE: tl.constexpr,
     USE_FINAL_STATE_GRADIENT: tl.constexpr,
     STATE_V_FIRST: tl.constexpr,
@@ -431,6 +436,9 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
     k += (bos * H + i_h // (HV // H)).to(tl.int64) * K
     w += (bos * HV + i_h).to(tl.int64) * K
     do += (bos * HV + i_h).to(tl.int64) * V
+    if USE_AUX_READ:
+        q_aux += (bos * H + i_h // (HV // H)).to(tl.int64) * K
+        do_aux += (bos * HV + i_h).to(tl.int64) * V
     dv += (bos * HV + i_h).to(tl.int64) * V
     dv2 += (bos * HV + i_h).to(tl.int64) * V
     dh += (boh * HV + i_h).to(tl.int64) * K*V
@@ -533,6 +541,9 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
         p_do = do + o_t[:, None] * (HV*V) + o_v[None, :]
 
         b_do = tl.load(p_do, mask=m_t[:, None] & m_v[None, :], other=0.0)
+        if USE_AUX_READ:
+            p_do_aux = do_aux + o_t[:, None] * (HV*V) + o_v[None, :]
+            b_do_aux = tl.load(p_do_aux, mask=m_t[:, None] & m_v[None, :], other=0.0)
 
         # Update dv
         p_k = k + o_t[:, None] * (H*K) + o_k1[None, :]
@@ -585,9 +596,14 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
         p_q = q + o_k1[:, None] + o_t[None, :] * (H*K)
         b_w = tl.load(p_w, mask=m_k1[:, None] & m_t[None, :], other=0.0)
         b_q = tl.load(p_q, mask=m_k1[:, None] & m_t[None, :], other=0.0)
+        if USE_AUX_READ:
+            p_q_aux = q_aux + o_k1[:, None] + o_t[None, :] * (H*K)
+            b_q_aux = tl.load(p_q_aux, mask=m_k1[:, None] & m_t[None, :], other=0.0)
         if USE_G:
             b_dh1 *= bg_last_exp
             b_q = b_q * b_g_exp[None, :]
+            if USE_AUX_READ:
+                b_q_aux = b_q_aux * b_g_exp[None, :]
         if USE_GK:
             if STATE_V_FIRST:
                 b_dh1 *= exp2(b_gk_last1)[None, :]
@@ -595,16 +611,25 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
                 b_dh1 *= exp2(b_gk_last1[:, None])
         if STATE_V_FIRST:
             b_dh1 += tl.trans(tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype)))
+            if USE_AUX_READ:
+                b_dh1 += tl.trans(tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux)
         else:
             b_dh1 += tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype))
+            if USE_AUX_READ:
+                b_dh1 += tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux
         if K > 64:
             p_q = q + o_k2[:, None] + o_t[None, :] * (H*K)
             p_w = w + o_k2[:, None] + o_t[None, :] * (HV*K)
             b_q = tl.load(p_q, mask=m_k2[:, None] & m_t[None, :], other=0.0)
             b_w = tl.load(p_w, mask=m_k2[:, None] & m_t[None, :], other=0.0)
+            if USE_AUX_READ:
+                p_q_aux = q_aux + o_k2[:, None] + o_t[None, :] * (H*K)
+                b_q_aux = tl.load(p_q_aux, mask=m_k2[:, None] & m_t[None, :], other=0.0)
             if USE_G:
                 b_dh2 *= bg_last_exp
                 b_q = b_q * b_g_exp[None, :]
+                if USE_AUX_READ:
+                    b_q_aux = b_q_aux * b_g_exp[None, :]
             if USE_GK:
                 if STATE_V_FIRST:
                     b_dh2 *= exp2(b_gk_last2)[None, :]
@@ -612,16 +637,25 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
                     b_dh2 *= exp2(b_gk_last2[:, None])
             if STATE_V_FIRST:
                 b_dh2 += tl.trans(tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype)))
+                if USE_AUX_READ:
+                    b_dh2 += tl.trans(tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux)
             else:
                 b_dh2 += tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype))
+                if USE_AUX_READ:
+                    b_dh2 += tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux
         if K > 128:
             p_q = q + o_k3[:, None] + o_t[None, :] * (H*K)
             p_w = w + o_k3[:, None] + o_t[None, :] * (HV*K)
             b_q = tl.load(p_q, mask=m_k3[:, None] & m_t[None, :], other=0.0)
             b_w = tl.load(p_w, mask=m_k3[:, None] & m_t[None, :], other=0.0)
+            if USE_AUX_READ:
+                p_q_aux = q_aux + o_k3[:, None] + o_t[None, :] * (H*K)
+                b_q_aux = tl.load(p_q_aux, mask=m_k3[:, None] & m_t[None, :], other=0.0)
             if USE_G:
                 b_dh3 *= bg_last_exp
                 b_q = b_q * b_g_exp[None, :]
+                if USE_AUX_READ:
+                    b_q_aux = b_q_aux * b_g_exp[None, :]
             if USE_GK:
                 if STATE_V_FIRST:
                     b_dh3 *= exp2(b_gk_last3)[None, :]
@@ -629,16 +663,25 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
                     b_dh3 *= exp2(b_gk_last3[:, None])
             if STATE_V_FIRST:
                 b_dh3 += tl.trans(tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype)))
+                if USE_AUX_READ:
+                    b_dh3 += tl.trans(tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux)
             else:
                 b_dh3 += tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype))
+                if USE_AUX_READ:
+                    b_dh3 += tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux
         if K > 192:
             p_q = q + o_k4[:, None] + o_t[None, :] * (H*K)
             p_w = w + o_k4[:, None] + o_t[None, :] * (HV*K)
             b_q = tl.load(p_q, mask=m_k4[:, None] & m_t[None, :], other=0.0)
             b_w = tl.load(p_w, mask=m_k4[:, None] & m_t[None, :], other=0.0)
+            if USE_AUX_READ:
+                p_q_aux = q_aux + o_k4[:, None] + o_t[None, :] * (H*K)
+                b_q_aux = tl.load(p_q_aux, mask=m_k4[:, None] & m_t[None, :], other=0.0)
             if USE_G:
                 b_dh4 *= bg_last_exp
                 b_q = b_q * b_g_exp[None, :]
+                if USE_AUX_READ:
+                    b_q_aux = b_q_aux * b_g_exp[None, :]
             if USE_GK:
                 if STATE_V_FIRST:
                     b_dh4 *= exp2(b_gk_last4)[None, :]
@@ -646,8 +689,12 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
                     b_dh4 *= exp2(b_gk_last4[:, None])
             if STATE_V_FIRST:
                 b_dh4 += tl.trans(tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype)))
+                if USE_AUX_READ:
+                    b_dh4 += tl.trans(tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux)
             else:
                 b_dh4 += tl.dot(b_q.to(b_q.dtype), b_do.to(b_q.dtype)) * scale - tl.dot(b_w, b_dv.to(b_w.dtype))
+                if USE_AUX_READ:
+                    b_dh4 += tl.dot(b_q_aux.to(b_q_aux.dtype), b_do_aux.to(b_q_aux.dtype)) * scale_aux
 
     if USE_INITIAL_STATE:
         if STATE_V_FIRST:
@@ -750,11 +797,14 @@ def chunk_gated_delta_rule_bwd_dhu(
     w: torch.Tensor,
     do: torch.Tensor,
     dv: torch.Tensor,
+    q_aux: torch.Tensor | None = None,
+    do_aux: torch.Tensor | None = None,
     g: torch.Tensor | None = None,
     gk: torch.Tensor | None = None,
     h0: torch.Tensor | None = None,
     dht: torch.Tensor | None = None,
     scale: float | None = None,
+    scale_aux: float | None = None,
     state_v_first: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     chunk_size: int = 64,
@@ -764,6 +814,11 @@ def chunk_gated_delta_rule_bwd_dhu(
     # N: the actual number of sequences in the batch with either equal or variable lengths
     BT = chunk_size
     assert K <= 256, "current kernel does not support head dimension being larger than 256."
+    assert (q_aux is None) == (do_aux is None), "q_aux and do_aux must be supplied together"
+    if scale_aux is None:
+        scale_aux = 1.0
+    if q_aux is not None:
+        assert q_aux.shape == q.shape and do_aux.shape == do.shape
 
     if chunk_indices is None and cu_seqlens is not None:
         chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
@@ -789,12 +844,15 @@ def chunk_gated_delta_rule_bwd_dhu(
         dht=dht,
         dh0=dh0,
         do=do,
+        q_aux=q_aux,
+        do_aux=do_aux,
         dh=dh,
         dv=dv,
         dv2=dv2,
         cu_seqlens=cu_seqlens,
         chunk_offsets=chunk_offsets,
         scale=scale,
+        scale_aux=scale_aux,
         T=T,
         H=H,
         HV=HV,
