@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "GPU_VALIDATION",
-  "current_stage": "gpu_vector_decay_state_retry_running",
+  "status": "KERNEL_IMPLEMENTATION",
+  "current_stage": "chunk_internal_output_and_backward",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,22 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "gpu_diagnostic_retry",
-      "exp_id": "20260903-020132-qr-gdn-state-gpu-retry-a4c2b3",
-      "job_id": "34791",
-      "job_name": "王正仁-Metis-20260903-020132-qr-gdn-state-gpu-retry-a4c2b3",
-      "commit": "8227ce96135a721695c5f1b3535dd3aec7dc7c3b",
-      "node": "tko-b3-nv-dgx04",
-      "slurm_state": "PENDING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-02T18:00:39.999Z",
-      "retry_of_job_id": "34756"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -88,28 +73,35 @@
       "gate_moments": "raw_fp64_sum_sumsq_count"
     },
     "parallel_kernel": {
-      "status": "algebra_passed_gpu_pending",
+      "status": "state_propagation_gpu_passed_output_backward_pending",
       "physical_timesteps": true,
       "virtual_2t": false,
       "dense_2k_transition": false,
       "rank_per_chunk": "2C",
       "cpu_scan_tests": 6,
       "combined_cpu_regression": 33,
-      "state_propagation_kernel": "implemented",
+      "state_propagation_kernel": "gpu_passed",
       "chunk_internal_outputs": "pending",
       "backward_kernel": "pending"
     },
     "gpu": {
-      "status": "diagnostic_failed_before_bf16_kernel_assertion",
-      "job_id": "34756",
-      "slurm_state": "FAILED",
-      "exit_code": 1,
-      "passed_before_failure": 8,
-      "failed": 1,
-      "first_substantive_error": "BF16 PyTorch oracle mixed BF16 compact factors with FP32 accumulator in einsum",
-      "kernel_fault_established": false,
-      "fix_commit": "a9af58aaea48bc9149ce7cbc11c44dd882f13cf7",
-      "retry": "submitted_job_34791"
+      "status": "state_propagation_passed",
+      "job_id": "34791",
+      "slurm_state": "COMPLETED",
+      "exit_code": 0,
+      "elapsed": "00:01:16",
+      "tests_passed": 9,
+      "cuda_device": "NVIDIA H800",
+      "torch": "2.9.0+cu128",
+      "cuda": "12.8",
+      "fp32": "passed",
+      "bf16_storage_fp32_accumulation": "passed",
+      "initial_state": "passed",
+      "final_state": "passed",
+      "physical_timesteps": true,
+      "virtual_2t": false,
+      "dense_2k_transition": false,
+      "result": "experiments/20260903-020132-qr-gdn-state-gpu-retry-a4c2b3/outputs/result.json"
     },
     "ddp_8gpu": "pending",
     "throughput_and_memory": "pending"

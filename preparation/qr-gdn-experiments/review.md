@@ -65,3 +65,11 @@
 - 资源：碎片节点 `tko-b3-nv-dgx04` 已占 7/8 GPU，申请剩余 1 GPU、4 CPU、16G、20 分钟。
 - 提交前开发树干净，精确完整任务名无重复，manifest/job-id/lock 均为空；已加锁并立即登记 job-id。
 - 本轮只执行这一项 `sbatch`，不提交正式训练。
+
+## GPU 状态传播诊断重试终态审查（job 34791）
+
+- Slurm `COMPLETED`，exit code `0:0`，elapsed `00:01:16`；`run.exitcode=0`。
+- `run.json`、完整日志和必需产物 `outputs/result.json` 均已核对并回收。
+- H800 结果：9 passed；FP32 与 BF16 存储/FP32 累积、带/不带初态、可选终态均与 PyTorch oracle 相符。
+- 结构约束：真实物理时间步；没有 `2T` 虚拟序列，也没有稠密 $2K\times2K$ 转移。
+- 状态传播 GPU 门槛通过。正式训练仍受阻于 chunk 内输出与反向 kernel，以及后续稳定性、恢复、8 卡 DDP 和吞吐/显存门槛。

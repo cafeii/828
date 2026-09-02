@@ -5,17 +5,31 @@
   "job_name": "王正仁-Metis-20260903-020132-qr-gdn-state-gpu-retry-a4c2b3",
   "commit": "8227ce96135a721695c5f1b3535dd3aec7dc7c3b",
   "node": "tko-b3-nv-dgx04",
-  "slurm_state": "PENDING",
+  "slurm_state": "COMPLETED",
   "required_outputs": [
     "result.json"
   ],
   "submitted_at": "2026-09-02T18:00:39.999Z",
   "retry_of_job_id": "34756",
-  "review_status": "active",
+  "review_status": "reviewed_passed",
   "resource_request": {
     "gpu": 1,
     "cpu": 4,
     "memory": "16G",
     "time": "00:20:00"
+  },
+  "exit_code": 0,
+  "elapsed": "00:01:16",
+  "run_exitcode_present": true,
+  "run_json_present": true,
+  "required_output_present": true,
+  "tests_passed": 9,
+  "tests_failed": 0,
+  "logs_collected": true,
+  "result": {
+    "status": "passed",
+    "cuda_device": "NVIDIA H800",
+    "torch": "2.9.0+cu128",
+    "cuda": "12.8"
   }
 }
