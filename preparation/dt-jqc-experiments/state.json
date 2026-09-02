@@ -82,6 +82,11 @@
       "commit": "187786e5b6d8849d7622c0174a20362e926e6ea6",
       "milestone": "verified DT/JQC FP64 reference recurrences",
       "tests": "4 passed"
+    },
+    {
+      "commit": "b85811212008fde697bffa567c1aeacfcd8e1737",
+      "milestone": "DT/JQC model and trainer integration with fail-closed chunk path",
+      "tests": "8 targeted CPU checks passed"
     }
   ]
 }
