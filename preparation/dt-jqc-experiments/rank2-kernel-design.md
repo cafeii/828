@@ -28,3 +28,11 @@ Write one token transition as `A=alpha*I+L*R^T`, with `L,R` having two columns. 
 Thus each physical token appends two columns and a chunk of length `C` has compact rank `2C`; it does not create a virtual `2T` sequence or a dense `K×K` transition. The affine offset is updated under the same token transition and yields the exact chunk map `S_out=a*S_in+U*(Z^T*S_in)+E`.
 
 The CPU oracle validates this representation for chunk sizes 1, 2, 4 and 7 against the independent token recurrence for DT-GDN and JQC-GDN. It also validates gradients with respect to q, k, v, alpha, beta, gamma and the initial state. The remaining implementation work is to build the same `2C` compact factors and backward pass inside the GPU chunk kernel.
+
+## Vectorized block-WY construction
+
+The block-WY preprocessing now builds every chunk without a token loop. Factor rows are indexed by `(token, direction)` and the strict causal mask compares token indices. Consequently the two directions from one token never interact as if one happened first.
+
+For factor row `i=(t,r)` and factor column `j=(s,u)`, the lower-triangular interaction is zero unless `s<t`; otherwise it is the decay from the end of token `s` to the start of token `t`, multiplied by `R_i^T L_j`. Solving the resulting unit-lower-triangular system of order `2C` yields all read coefficients at once. The same solve includes earlier value writes and directly produces `(a,U,Z,E)` for `S_out=a*S_in+U*(Z^T*S_in)+E`.
+
+This preprocessing is differentiable, uses batched tensor operations, and never materializes a `K×K` transition. FP64 tests cover DT/JQC state parity across one and multiple chunks and gradient parity for every recurrence input. GPU state propagation, token outputs and a custom backward remain the next production-kernel stages.

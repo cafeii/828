@@ -54,6 +54,18 @@
           "all-input and initial-state gradient parity"
         ],
         "production_gpu_kernel": "pending"
+      },
+      "block_wy_preprocessing": {
+        "status": "passed_cpu_fp64",
+        "implementation": "vectorized strict-token-causal rank-2C triangular solve",
+        "tests": 8,
+        "properties": [
+          "no Python token loop",
+          "no virtual 2T sequence",
+          "no dense KxK transition",
+          "simultaneous within-token rank-two update"
+        ],
+        "gpu_validation": "pending"
       }
     },
     "gpu": {
@@ -84,7 +96,7 @@
     },
     "rank2_algebra": {
       "status": "passed",
-      "tests": 16,
+      "tests": 24,
       "time_axis_expansion": false,
       "rank": 2,
       "coverage": [
@@ -94,18 +106,17 @@
         "affine composition associativity",
         "DT near-collinear finite parity at beta=gamma=0.999",
         "compact rank-2C physical-chunk transform versus token recurrence for four chunk sizes",
-        "compact chunk all-input and initial-state gradient parity"
+        "compact chunk all-input and initial-state gradient parity",
+        "vectorized block-WY multi-chunk terminal-state parity",
+        "vectorized block-WY all-input gradient parity"
       ]
     }
   },
   "cluster_snapshot": {
-    "whole_idle_nodes": 2,
-    "nodes": [
-      "tko-b3-nv-dgx26",
-      "tko-b3-nv-dgx43"
-    ],
+    "whole_idle_nodes": 0,
+    "nodes": [],
     "action": "no_submission",
-    "reason": "Production GPU chunk kernel and backward are not yet implemented; formal runs remain validation-blocked"
+    "reason": "No whole H800 node is idle and production GPU state/output/backward kernels remain incomplete"
   },
   "formal_runs": {
     "dt_gdn_3407": "blocked_by_validation",
@@ -133,7 +144,12 @@
       "commit": "a8e9d850d3cc3fe3145de4703363b30ec40d8c5a",
       "milestone": "compact rank-2C physical-chunk algebra and gradient oracle",
       "tests": "20 targeted CPU FP64 checks passed"
+    },
+    {
+      "commit": "852faeec156917177a8400125a50a2a2ce7c2a64",
+      "milestone": "vectorized strict-token-causal rank-two block-WY preprocessing",
+      "tests": "28 targeted CPU FP64 checks passed"
     }
   ],
-  "last_heartbeat": "2026-09-02T08:47:08.009Z"
+  "last_heartbeat": "2026-09-02T09:26:38.152Z"
 }
