@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "MODEL_INTEGRATION",
-  "current_stage": "model_integration_and_parallel_kernel_design",
+  "current_stage": "parallel_rank2_vector_decay_design",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -64,6 +64,14 @@
         "split continuation parity"
       ]
     },
+    "model_integration": {
+      "status": "passed",
+      "cpu_tests": 27,
+      "shared_parameter_parity": "bitwise",
+      "zero_read_output_parity": "bitwise",
+      "qr_read_gradient": "nonzero_and_finite",
+      "gate_moments": "raw_fp64_sum_sumsq_count"
+    },
     "parallel_kernel": "pending",
     "gpu": "pending",
     "ddp_8gpu": "pending",
@@ -81,6 +89,10 @@
     {
       "stage": "fp64_reference",
       "commit": "2cf36020eec5438cda33b8b57d5d43ca7386f195"
+    },
+    {
+      "stage": "model_integration",
+      "commit": "193306906e29621507e27146c28142e4b1b879dd"
     }
   ],
   "last_heartbeat": "2026-09-02T15:48:37.447Z"
