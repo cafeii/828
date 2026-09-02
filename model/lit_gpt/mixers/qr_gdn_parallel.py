@@ -2,10 +2,10 @@
 
 The block-lower-triangular dependency is evaluated in causal order: first the
 KV channel, then the QR channel whose targets are pre-update KV reads. The KV
-call exposes its effective delta values, which lets us recover the pre-update
-read algebraically and avoid a second KV state scan. The QR channel uses one
-more production FLA GDN chunk operator. No token loop, virtual 2T sequence, or
-dense 2K transition appears here.
+call reuses its chunk starts and effective updates for one shifted-query output
+kernel, avoiding a second KV state scan without dividing by the forget gate.
+The QR channel uses one more production FLA GDN chunk operator. No token loop,
+virtual 2T sequence, or dense 2K transition appears here.
 """
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def qr_gdn_parallel(
         chunk_size=chunk_size,
     )
     # This call is intentionally identical to native GDN's production path.
-    output_kv, final_kv, kv_update = rule(
+    output_kv, final_kv, recall = rule(
         q=q,
         k=k,
         v=v,
@@ -80,21 +80,10 @@ def qr_gdn_parallel(
         beta=beta_kv,
         initial_state=initial_kv,
         output_final_state=output_final_state,
-        output_update=True,
+        output_pre_read=True,
         **common,
     )
-
-    # Native GDN writes M_t = alpha_t M_{t-1} + k_t delta_t^T and returns
-    # scale * M_t^T q_t. Its effective delta_t is already materialized by the
-    # state scan, so the desired pre-update recall follows without another
-    # recurrent scan:
-    #   M_{t-1}^T q_t = (M_t^T q_t - <q_t,k_t> delta_t) / alpha_t.
-    qn = F.normalize(q.float(), dim=-1)
-    kn = F.normalize(k.float(), dim=-1)
-    qk = (qn * kn).sum(dim=-1)
     scale = q.shape[-1] ** -0.5
-    recall = (output_kv.float() / scale - qk[..., None] * kv_update.float())
-    recall = recall / g_kv.float().exp()[..., None]
 
     q_prev, recall_prev, g_qr_prev, beta_qr_prev = _shift_updates(
         q, recall, g_qr, beta_qr

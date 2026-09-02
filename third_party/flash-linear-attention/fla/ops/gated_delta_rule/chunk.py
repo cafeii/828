@@ -47,6 +47,7 @@ def chunk_gated_delta_rule_fwd(
     A_log: torch.Tensor | None = None,
     dt_bias: torch.Tensor | None = None,
     chunk_size: int = 64,
+    output_pre_read: bool = False,
 ):
     g_input = g if use_gate_in_kernel else None
     if use_gate_in_kernel:
@@ -120,7 +121,38 @@ def chunk_gated_delta_rule_fwd(
         state_v_first=state_v_first,
         chunk_size=chunk_size,
     )
-    return g, o, v_new, A, final_state, initial_state, g_input
+    pre_read = None
+    if output_pre_read:
+        if cu_seqlens is not None or cp_context is not None:
+            raise NotImplementedError("pre-update reads currently require equal-length local sequences")
+        # Read M_t with q_{t+1}, then shift the result right. This reuses the
+        # already materialized chunk starts and effective update values, so it
+        # adds only an output kernel rather than another recurrent state scan.
+        q_next = torch.cat((q[:, 1:], torch.zeros_like(q[:, :1])), dim=1)
+        next_read = chunk_fwd_o(
+            q=q_next,
+            k=k,
+            v=v_new,
+            h=h,
+            g=g,
+            scale=1.0,
+            cu_seqlens=None,
+            chunk_indices=None,
+            state_v_first=state_v_first,
+            chunk_size=chunk_size,
+        )
+        if initial_state is None:
+            first_read = torch.zeros_like(next_read[:, :1])
+        elif state_v_first:
+            first_read = torch.einsum(
+                "bhvk,bhk->bhv", initial_state.float(), q[:, 0].float()
+            )[:, None].to(next_read.dtype)
+        else:
+            first_read = torch.einsum(
+                "bhk,bhkv->bhv", q[:, 0].float(), initial_state.float()
+            )[:, None].to(next_read.dtype)
+        pre_read = torch.cat((first_read, next_read[:, :-1]), dim=1)
+    return g, o, pre_read, A, final_state, initial_state, g_input
 
 
 def chunk_gated_delta_rule_bwd(
@@ -134,7 +166,6 @@ def chunk_gated_delta_rule_bwd(
     initial_state: torch.Tensor,
     do: torch.Tensor,
     dht: torch.Tensor,
-    dv_new_external: torch.Tensor | None = None,
     state_v_first: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     cp_context: FLACPContext | None = None,
@@ -180,12 +211,6 @@ def chunk_gated_delta_rule_bwd(
         chunk_indices=chunk_indices,
         chunk_size=chunk_size,
     )
-    # Optional consumers may reuse the effective per-token state update
-    # produced by the forward state scan. Its gradient enters at the same
-    # point as the output-local gradient before the recurrent-state backward.
-    if dv_new_external is not None:
-        dv = dv + dv_new_external.to(dv.dtype)
-
     if cp_context is not None:
         # initial_state is None in the CP mode
         # We only need to compute dht of current rank and pass it to the backward kernel
@@ -283,7 +308,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         allow_neg_eigval: bool = False,
         cp_context: FLACPContext | None = None,
         chunk_size: int = 64,
-        output_update: bool = False,
+        output_pre_read: bool = False,
     ):
         q_rstd, k_rstd = None, None
         if use_qk_l2norm_in_kernel:
@@ -296,7 +321,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
 
         if chunk_indices is None and cu_seqlens is not None:
             chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size, cu_seqlens_cpu=cu_seqlens_cpu)
-        g, o, v_new, A, final_state, initial_state, g_input = chunk_gated_delta_rule_fwd(
+        g, o, pre_read, A, final_state, initial_state, g_input = chunk_gated_delta_rule_fwd(
             q=q,
             k=k,
             v=v,
@@ -313,6 +338,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             A_log=A_log,
             dt_bias=dt_bias,
             chunk_size=chunk_size,
+            output_pre_read=output_pre_read,
         )
         ctx.save_for_backward(
             q,
@@ -339,10 +365,10 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         ctx.cp_context = cp_context
         ctx.state_v_first = state_v_first
         ctx.use_gate_in_kernel = use_gate_in_kernel
-        ctx.output_update = output_update
+        ctx.output_pre_read = output_pre_read
         outputs = (o.to(q.dtype), final_state)
-        if output_update:
-            outputs += (v_new.to(q.dtype),)
+        if output_pre_read:
+            outputs += (pre_read.to(q.dtype),)
         return outputs
 
     @staticmethod
@@ -352,7 +378,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         ctx,
         do: torch.Tensor,
         dht: torch.Tensor,
-        dv_new_external: torch.Tensor | None = None,
+        dpre_read: torch.Tensor | None = None,
     ):
         (
             q,
@@ -382,7 +408,6 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             initial_state=initial_state,
             do=do,
             dht=dht,
-            dv_new_external=dv_new_external,
             cu_seqlens=cu_seqlens,
             cp_context=ctx.cp_context,
             chunk_indices=chunk_indices,
@@ -393,6 +418,53 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             dt_bias=dt_bias,
             chunk_size=ctx.chunk_size,
         )
+        if dpre_read is not None:
+            # pre_read[:, 1:] is the inclusive state read at positions :-1
+            # using q[:, 1:]. Reuse the proven GDN backward on that shifted
+            # query stream, then map its query gradient back by one position.
+            q_next = torch.cat((q[:, 1:], torch.zeros_like(q[:, :1])), dim=1)
+            do_next = torch.cat((dpre_read[:, 1:], torch.zeros_like(dpre_read[:, :1])), dim=1)
+            dq2, dk2, dv2, db2, dg2, dh02, dA_log2, ddt_bias2 = chunk_gated_delta_rule_bwd(
+                q=q_next,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                A=A,
+                scale=1.0,
+                initial_state=initial_state,
+                do=do_next,
+                dht=None,
+                cu_seqlens=cu_seqlens,
+                cp_context=ctx.cp_context,
+                chunk_indices=chunk_indices,
+                state_v_first=ctx.state_v_first,
+                use_gate_in_kernel=ctx.use_gate_in_kernel,
+                g_input=g_input,
+                A_log=A_log,
+                dt_bias=dt_bias,
+                chunk_size=ctx.chunk_size,
+            )
+            dq_shifted = torch.zeros_like(dq)
+            dq_shifted[:, 1:] = dq2[:, :-1]
+            dq = dq + dq_shifted
+            dk, dv, db, dg = dk + dk2, dv + dv2, db + db2, dg + dg2
+            if dh02 is not None:
+                dh0 = dh02 if dh0 is None else dh0 + dh02
+            if dA_log2 is not None:
+                dA_log = dA_log2 if dA_log is None else dA_log + dA_log2
+            if ddt_bias2 is not None:
+                ddt_bias = ddt_bias2 if ddt_bias is None else ddt_bias + ddt_bias2
+
+            if initial_state is not None:
+                dfirst = dpre_read[:, 0].float()
+                if ctx.state_v_first:
+                    dq[:, 0] += torch.einsum("bhvk,bhv->bhk", initial_state.float(), dfirst)
+                    direct_dh0 = torch.einsum("bhv,bhk->bhvk", dfirst, q[:, 0].float())
+                else:
+                    dq[:, 0] += torch.einsum("bhkv,bhv->bhk", initial_state.float(), dfirst)
+                    direct_dh0 = torch.einsum("bhk,bhv->bhkv", q[:, 0].float(), dfirst)
+                dh0 = direct_dh0 if dh0 is None else dh0 + direct_dh0
         if ctx.use_qk_l2norm_in_kernel:
             dq = l2norm_bwd(q, q_rstd, dq)
             dk = l2norm_bwd(k, k_rstd, dk)
@@ -416,7 +488,7 @@ def chunk_gated_delta_rule(
     scale: float | None = None,
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
-    output_update: bool = False,
+    output_pre_read: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
     use_beta_sigmoid_in_kernel: bool = False,
     allow_neg_eigval: bool = False,
@@ -452,11 +524,10 @@ def chunk_gated_delta_rule(
             Default: `None`.
         output_final_state (Optional[bool]):
             Whether to output the final state of shape `[N, HV, K, V]`. Default: `False`.
-        output_update (Optional[bool]):
-            Whether to also return the effective per-token delta value used by
-            the recurrent state update. This is intended for fused composed
-            recurrences that need the pre-update read without a second state
-            scan. Default: `False`.
+        output_pre_read (Optional[bool]):
+            Whether to also return the state read immediately before each
+            token update. The implementation reuses the main chunk state scan
+            and launches one additional output kernel. Default: `False`.
         use_qk_l2norm_in_kernel (bool):
             Whether to apply L2norm to the q/k tensor internally. Default: `False`.
         use_gate_in_kernel (bool):
@@ -608,7 +679,7 @@ def chunk_gated_delta_rule(
         allow_neg_eigval,
         cp_context,
         chunk_size,
-        output_update,
+        output_pre_read,
     )
     return outputs
 
