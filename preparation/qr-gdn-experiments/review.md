@@ -206,3 +206,9 @@
 - 同卡 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点：GDN 18,314.69 token/s，QR-GDN 12,462.27 token/s，比例 68.05%，仍低于 80% 门槛。
 - 相比三调用原型的 62.99%，吞吐比例提高 5.05 个百分点，但第二次完整 QR 状态扫描及附加反向仍过重。峰值显存 GDN/QR-GDN 为 6.6846/6.6713 GB，没有异常增长；递归状态字节仍严格为两倍。
 - 正式训练继续阻止。下一步实现联合双状态融合 kernel，避免两套独立 chunk 调用及其重复调度/中间量；完成数值回归后再在后续心跳提交一次 GPU 复测。
+
+## Rank-2 融合前向可行性诊断提交
+
+- 工具 commit eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b；实验 20260903-070207-qr-gdn-fused-forward-profile-581312；Slurm job 34918。
+- 在 B1、T4096、H16、K64、V64、BF16、chunk 64 下，分别测量原生 GDN、当前两调用 QR、rank-2 变换构造加融合 kernel、预先构造后的融合 kernel 本体，并核对融合输出与当前路径误差。
+- 资源为 best-fit 碎片节点 tko-b3-nv-dgx04 的 1 GPU、4 CPU、32G、30 分钟；提交前开发树干净，唯一任务名、job-id 和 submission.lock 均无重复。本轮只执行这一项 sbatch。

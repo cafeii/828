@@ -1,0 +1,21 @@
+{
+  "kind": "rank2_fused_forward_profile",
+  "exp_id": "20260903-070207-qr-gdn-fused-forward-profile-581312",
+  "job_id": "34918",
+  "job_name": "王正仁-Metis-20260903-070207-qr-gdn-fused-forward-profile-581312",
+  "commit": "eff4c3f0ce4389dde0c7b59c7c9fd1350d9a7c7b",
+  "node": "tko-b3-nv-dgx04",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-02T22:58:11.107Z",
+  "review_status": "running",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 4,
+    "memory": "32G",
+    "time": "00:30:00"
+  },
+  "purpose": "separate rank2 transform-preparation cost from fused dual-state forward-kernel cost at B1 T4096 H16 K64 V64"
+}
