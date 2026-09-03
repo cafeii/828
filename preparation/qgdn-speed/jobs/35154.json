@@ -1,0 +1,12 @@
+{
+  "job_id": "35154",
+  "exp_id": "20260903-143711-qgdn-compiled-inputs-long-1c9fed",
+  "job_name": "王正仁-Metis-20260903-143711-qgdn-compiled-inputs-long-1c9fed",
+  "scope": "long process-isolated 340M QGDN compiled virtual-input confirmation",
+  "commit": "d68b53d38302e6e02c36b09fc923d37439345cab",
+  "state": "PENDING",
+  "node": "tko-b3-nv-dgx04",
+  "resources": "1 GPU / 8 CPU / 64G / 1h",
+  "required_output": "outputs/qgdn-compiled-inputs-long.json",
+  "submitted_at": "2026-09-03T06:38:42.089682+00:00"
+}
