@@ -162,3 +162,113 @@ def qgdn_rank2_reference(
         state = state + write[:, t, :, :, None] * v[:, t, :, None, :]
         outputs.append(scale * torch.einsum("bhk,bhkv->bhv", qn[:, t], state))
     return torch.stack(outputs, dim=1), state
+
+
+def _apply_compact_affine(scale, left, right, bias, state):
+    """Apply ``scale * I + left @ right.T`` plus an affine bias."""
+    reads = torch.einsum("bhrk,bhkv->bhrv", right, state)
+    return (
+        scale[..., None, None] * state
+        + torch.einsum("bhrk,bhrv->bhkv", left, reads)
+        + bias
+    )
+
+
+def _compose_compact_affine(later, earlier):
+    """Compose two compact block-WY affine maps without a dense K-by-K matrix.
+
+    Each tuple represents ``scale * state + left @ (right.T @ state) + bias``.
+    The returned map is ``later(earlier(state))``.  Rank dimensions concatenate,
+    so a chunk of C physical QGDN tokens has rank at most 2C.
+    """
+    later_scale, later_left, later_right, later_bias = later
+    earlier_scale, earlier_left, earlier_right, earlier_bias = earlier
+    coupling = torch.einsum(
+        "bhrk,bhsk->bhrs", later_right, earlier_left
+    )
+    earlier_block = (
+        later_scale[..., None, None] * earlier_left
+        + torch.einsum("bhrk,bhrs->bhsk", later_left, coupling)
+    )
+    later_block = earlier_scale[..., None, None] * later_left
+    left = torch.cat((earlier_block, later_block), dim=-2)
+    right = torch.cat((earlier_right, later_right), dim=-2)
+    bias_reads = torch.einsum(
+        "bhrk,bhkv->bhrv", later_right, earlier_bias
+    )
+    bias = (
+        later_scale[..., None, None] * earlier_bias
+        + torch.einsum("bhrk,bhrv->bhkv", later_left, bias_reads)
+        + later_bias
+    )
+    return later_scale * earlier_scale, left, right, bias
+
+
+def qgdn_rank2_chunk_wy_reference(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    gamma,
+    *,
+    recall_mode="query",
+    update_order="recall_then_delta",
+    scale=None,
+    initial_state=None,
+    chunk_size=16,
+):
+    """Apply physical-T QGDN through compact rank-two chunk transforms.
+
+    This is the differentiable CPU/FP64 contract for a future parallel CUDA
+    kernel.  It keeps one time row per real token and composes each chunk as a
+    block-WY-style ``scalar * I + U @ V.T`` affine map.  The Python reference
+    deliberately favors transparent algebra over speed; a CUDA implementation
+    can evaluate the same associative compositions with a parallel scan.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    qn, alpha, left, right, write = qgdn_rank2_factors(
+        q,
+        k,
+        g,
+        beta,
+        gamma,
+        recall_mode=recall_mode,
+        update_order=update_order,
+    )
+    v = v.to(qn.dtype)
+    batch, length, heads, key_dim = qn.shape
+    expected = (batch, heads, key_dim, v.shape[-1])
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    scale = key_dim**-0.5 if scale is None else scale
+    outputs = []
+
+    for chunk_start in range(0, length, chunk_size):
+        chunk_state = state
+        empty = qn.new_empty(batch, heads, 0, key_dim)
+        prefix = (
+            qn.new_ones(batch, heads),
+            empty,
+            empty,
+            qn.new_zeros(expected),
+        )
+        chunk_end = min(chunk_start + chunk_size, length)
+        for t in range(chunk_start, chunk_end):
+            token_bias = (
+                write[:, t, :, :, None] * v[:, t, :, None, :]
+            )
+            token = (
+                alpha[:, t],
+                left[:, t],
+                right[:, t],
+                token_bias,
+            )
+            prefix = _compose_compact_affine(token, prefix)
+            state = _apply_compact_affine(*prefix, chunk_state)
+            outputs.append(
+                scale * torch.einsum("bhk,bhkv->bhv", qn[:, t], state)
+            )
+    return torch.stack(outputs, dim=1), state

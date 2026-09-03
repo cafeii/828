@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))
 from lit_gpt.config import Config
 from lit_gpt.model import GPT
 from lit_gpt.mixers.qgdn_reference import (
+    _apply_compact_affine,
+    _compose_compact_affine,
+    qgdn_rank2_chunk_wy_reference,
     qgdn_rank2_factors,
     qgdn_rank2_reference,
     qgdn_reference,
@@ -149,6 +152,73 @@ def test_physical_time_rank2_matches_qgdn_outputs_state_and_gradients(recall_mod
     )
     assert left.shape[1] == args[0].shape[1]
     assert left.shape[-2] == 2 and right.shape == left.shape
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, 8])
+@pytest.mark.parametrize("recall_mode", ["query", "key"])
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+def test_rank2_chunk_wy_matches_qgdn_outputs_state_and_all_gradients(
+    chunk_size, recall_mode, update_order
+):
+    args = inputs(T=7)
+    expected = qgdn_reference(
+        *args[:6],
+        initial_state=args[6],
+        recall_mode=recall_mode,
+        update_order=update_order,
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        args,
+    )
+
+    cloned = [value.detach().clone().requires_grad_() for value in args]
+    actual = qgdn_rank2_chunk_wy_reference(
+        *cloned[:6],
+        initial_state=cloned[6],
+        recall_mode=recall_mode,
+        update_order=update_order,
+        chunk_size=chunk_size,
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        cloned,
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=3e-12, atol=3e-12)
+    for value, reference in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(value, reference, rtol=8e-11, atol=8e-11)
+
+
+def test_compact_affine_composition_is_associative_and_rank_additive():
+    q, k, v, g, beta, gamma, state = inputs(T=3)
+    _, alpha, left, right, write = qgdn_rank2_factors(q, k, g, beta, gamma)
+
+    def token(t):
+        return (
+            alpha[:, t],
+            left[:, t],
+            right[:, t],
+            write[:, t, :, :, None] * v[:, t, :, None, :],
+        )
+
+    left_grouped = _compose_compact_affine(
+        token(2), _compose_compact_affine(token(1), token(0))
+    )
+    right_grouped = _compose_compact_affine(
+        _compose_compact_affine(token(2), token(1)), token(0)
+    )
+    assert left_grouped[1].shape[-2] == 2 * q.shape[1]
+    assert right_grouped[1].shape == left_grouped[1].shape
+    for actual, expected in zip(left_grouped, right_grouped):
+        torch.testing.assert_close(actual, expected, rtol=4e-12, atol=4e-12)
+    torch.testing.assert_close(
+        _apply_compact_affine(*left_grouped, state),
+        _apply_compact_affine(*right_grouped, state),
+        rtol=4e-12,
+        atol=4e-12,
+    )
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
