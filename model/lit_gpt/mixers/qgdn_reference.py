@@ -416,9 +416,9 @@ def qgdn_rank2_parallel_wy_reference(
     from the rank-two history, without constructing a 2C-by-2C coupling matrix.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
-    ``wy_backend="triton"`` selects a forward-only diagnostic kernel for that
-    streaming algebra.  It is intentionally unavailable to autograd until its
-    backward and full-model speed advantage have both been verified.
+    ``wy_backend="triton"`` selects a diagnostic Triton forward plus a manual
+    recompute backward for that streaming algebra.  It remains opt-in until its
+    full-model speed advantage has been verified.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
@@ -527,11 +527,6 @@ def qgdn_rank2_parallel_wy_reference(
             batch, heads, chunks, system_size, value_dim
         )
     elif wy_backend == "triton":
-        if torch.is_grad_enabled() and any(
-            x.requires_grad
-            for x in (normalized_left, right_chunks, normalized_write, value_chunks)
-        ):
-            raise RuntimeError("the Triton WY diagnostic is forward-only")
         from lit_gpt.mixers.qgdn_wy_kernel import qgdn_streaming_wy_fwd
 
         effective_right, write_reads = qgdn_streaming_wy_fwd(

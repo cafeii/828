@@ -1,4 +1,4 @@
-"""Forward-only Triton primitive for physical-T rank-two WY preparation."""
+"""Triton forward and recompute backward for physical-T rank-two WY."""
 from __future__ import annotations
 
 import torch
@@ -110,17 +110,153 @@ def _qgdn_streaming_wy_fwd_kernel(
     )
 
 
-def qgdn_streaming_wy_fwd(
+def _qgdn_streaming_wy_torch_fwd(
     normalized_left: torch.Tensor,
     right: torch.Tensor,
     normalized_write: torch.Tensor,
     values: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return effective-right factors and zero-state write reads.
+    """Recompute the streaming algebra without a dense coupling system."""
+    chunk_size = right.shape[3]
+    effective_parts = []
+    write_read_parts = []
+    write_state = right.new_zeros(*right.shape[:3], right.shape[-1], values.shape[-1])
+    for token in range(chunk_size):
+        right_token = right[:, :, :, token]
+        effective_token = right_token
+        for previous, effective_previous in enumerate(effective_parts):
+            coupling = torch.einsum(
+                "bhnrk,bhnuk->bhnru",
+                right_token,
+                normalized_left[:, :, :, previous],
+            )
+            effective_token = effective_token + torch.einsum(
+                "bhnru,bhnuk->bhnrk", coupling, effective_previous
+            )
+        write_read = torch.einsum(
+            "bhnrk,bhnkv->bhnrv", right_token, write_state
+        )
+        write_state = (
+            write_state
+            + torch.einsum(
+                "bhnrk,bhnrv->bhnkv",
+                normalized_left[:, :, :, token],
+                write_read,
+            )
+            + normalized_write[:, :, :, token, :, None]
+            * values[:, :, :, token, None, :]
+        )
+        effective_parts.append(effective_token)
+        write_read_parts.append(write_read)
+    return torch.stack(effective_parts, dim=3), torch.stack(write_read_parts, dim=3)
+
+
+def _qgdn_streaming_wy_recompute_bwd(
+    normalized_left: torch.Tensor,
+    right: torch.Tensor,
+    normalized_write: torch.Tensor,
+    values: torch.Tensor,
+    grad_effective: torch.Tensor,
+    grad_write_reads: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Manually differentiate WY preparation after recomputing its history."""
+    chunk_size = right.shape[3]
+    effective_parts, write_read_parts = _qgdn_streaming_wy_torch_fwd(
+        normalized_left, right, normalized_write, values
+    )
+    effective_parts = list(effective_parts.unbind(dim=3))
+    write_read_parts = list(write_read_parts.unbind(dim=3))
+    grad_effective_parts = [value.clone() for value in grad_effective.unbind(dim=3)]
+    grad_left = torch.zeros_like(normalized_left)
+    grad_right = torch.zeros_like(right)
+    grad_normalized_write = torch.zeros_like(normalized_write)
+    grad_values = torch.zeros_like(values)
+
+    # E_t = R_t + sum_{s<t} (R_t L_s^T) E_s.
+    for token in range(chunk_size - 1, -1, -1):
+        right_token = right[:, :, :, token]
+        grad_effective_token = grad_effective_parts[token]
+        grad_right_token = grad_effective_token.clone()
+        for previous in range(token):
+            left_previous = normalized_left[:, :, :, previous]
+            effective_previous = effective_parts[previous]
+            coupling = torch.einsum(
+                "bhnrk,bhnuk->bhnru", right_token, left_previous
+            )
+            grad_coupling = torch.einsum(
+                "bhnrk,bhnuk->bhnru",
+                grad_effective_token,
+                effective_previous,
+            )
+            grad_effective_parts[previous] = (
+                grad_effective_parts[previous]
+                + torch.einsum(
+                    "bhnru,bhnrk->bhnuk", coupling, grad_effective_token
+                )
+            )
+            grad_right_token = grad_right_token + torch.einsum(
+                "bhnru,bhnuk->bhnrk", grad_coupling, left_previous
+            )
+            grad_left[:, :, :, previous] += torch.einsum(
+                "bhnru,bhnrk->bhnuk", grad_coupling, right_token
+            )
+        grad_right[:, :, :, token] = grad_right_token
+
+    # Recompute only the C pre-token write states; nothing was saved by forward.
+    write_states = []
+    write_state = right.new_zeros(*right.shape[:3], right.shape[-1], values.shape[-1])
+    for token in range(chunk_size):
+        write_states.append(write_state)
+        write_state = (
+            write_state
+            + torch.einsum(
+                "bhnrk,bhnrv->bhnkv",
+                normalized_left[:, :, :, token],
+                write_read_parts[token],
+            )
+            + normalized_write[:, :, :, token, :, None]
+            * values[:, :, :, token, None, :]
+        )
+
+    grad_write_state = torch.zeros_like(write_state)
+    for token in range(chunk_size - 1, -1, -1):
+        left_token = normalized_left[:, :, :, token]
+        right_token = right[:, :, :, token]
+        write_read = write_read_parts[token]
+        write_state_before = write_states[token]
+        grad_left[:, :, :, token] += torch.einsum(
+            "bhnrv,bhnkv->bhnrk", write_read, grad_write_state
+        )
+        grad_write_read = grad_write_reads[:, :, :, token] + torch.einsum(
+            "bhnrk,bhnkv->bhnrv", left_token, grad_write_state
+        )
+        grad_normalized_write[:, :, :, token] = torch.einsum(
+            "bhnkv,bhnv->bhnk", grad_write_state, values[:, :, :, token]
+        )
+        grad_values[:, :, :, token] = torch.einsum(
+            "bhnk,bhnkv->bhnv",
+            normalized_write[:, :, :, token],
+            grad_write_state,
+        )
+        grad_right[:, :, :, token] += torch.einsum(
+            "bhnrv,bhnkv->bhnrk", grad_write_read, write_state_before
+        )
+        grad_write_state = grad_write_state + torch.einsum(
+            "bhnrk,bhnrv->bhnkv", right_token, grad_write_read
+        )
+    return grad_left, grad_right, grad_normalized_write, grad_values
+
+
+def _qgdn_streaming_wy_cuda_fwd(
+    normalized_left: torch.Tensor,
+    right: torch.Tensor,
+    normalized_write: torch.Tensor,
+    values: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run the raw Triton forward after validating its diagnostic envelope.
 
     Inputs use ``[B,H,N,C,2,K]``, ``[B,H,N,C,K]`` and
-    ``[B,H,N,C,V]`` layouts.  This primitive is intentionally forward-only;
-    it must not be connected to training until a verified backward exists.
+    ``[B,H,N,C,V]`` layouts.
     """
     if not all(x.is_cuda for x in (normalized_left, right, normalized_write, values)):
         raise ValueError("the Triton WY primitive requires CUDA tensors")
@@ -170,3 +306,42 @@ def qgdn_streaming_wy_fwd(
         num_stages=2,
     )
     return effective_right, write_reads
+
+
+class _QGDNStreamingWY(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, normalized_left, right, normalized_write, values):
+        ctx.save_for_backward(normalized_left, right, normalized_write, values)
+        return _qgdn_streaming_wy_cuda_fwd(
+            normalized_left, right, normalized_write, values
+        )
+
+    @staticmethod
+    def backward(ctx, grad_effective, grad_write_reads):
+        normalized_left, right, normalized_write, values = ctx.saved_tensors
+        if grad_effective is None:
+            grad_effective = torch.zeros_like(right)
+        if grad_write_reads is None:
+            grad_write_reads = values.new_zeros(
+                *right.shape[:-1], values.shape[-1]
+            )
+        return _qgdn_streaming_wy_recompute_bwd(
+            normalized_left,
+            right,
+            normalized_write,
+            values,
+            grad_effective,
+            grad_write_reads,
+        )
+
+
+def qgdn_streaming_wy_fwd(
+    normalized_left: torch.Tensor,
+    right: torch.Tensor,
+    normalized_write: torch.Tensor,
+    values: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return WY factors using Triton forward and recomputed manual backward."""
+    return _QGDNStreamingWY.apply(
+        normalized_left, right, normalized_write, values
+    )

@@ -19,6 +19,10 @@ from lit_gpt.mixers.qgdn_reference import (
     qgdn_rank2_reference,
     qgdn_reference,
 )
+from lit_gpt.mixers.qgdn_wy_kernel import (
+    _qgdn_streaming_wy_recompute_bwd,
+    _qgdn_streaming_wy_torch_fwd,
+)
 from lit_gpt.mixers.qgdn_rule import dplr_inputs, qgdn_rule
 from lit_gpt.mixers.naive import naive_gdn2_recurrence
 
@@ -303,6 +307,29 @@ def test_compact_affine_composition_is_associative_and_rank_additive():
     )
 
 
+@pytest.mark.parametrize("chunk_size", [1, 3, 8])
+def test_rank2_streaming_wy_manual_backward_matches_fp64_autograd(chunk_size):
+    torch.manual_seed(1701)
+    prefix = (1, 2, 2, chunk_size)
+    left = (0.1 * torch.randn(*prefix, 2, 4, dtype=torch.float64)).requires_grad_()
+    right = (0.1 * torch.randn_like(left)).requires_grad_()
+    write = (0.1 * torch.randn(*prefix, 4, dtype=torch.float64)).requires_grad_()
+    values = torch.randn(*prefix, 3, dtype=torch.float64).requires_grad_()
+    inputs = (left, right, write, values)
+    outputs = _qgdn_streaming_wy_torch_fwd(*inputs)
+    output_grads = tuple(torch.randn_like(value) for value in outputs)
+    expected = torch.autograd.grad(outputs, inputs, output_grads, allow_unused=True)
+    expected = tuple(
+        torch.zeros_like(source) if value is None else value
+        for value, source in zip(expected, inputs)
+    )
+    actual = _qgdn_streaming_wy_recompute_bwd(
+        *(value.detach() for value in inputs), *output_grads
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=2e-12, atol=2e-12)
+
+
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="rank-two chunk CUDA parity requires a GPU"
@@ -395,29 +422,36 @@ def test_cuda_rank2_parallel_wy_output_state_and_backward(update_order, wy_backe
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="Triton WY CUDA parity requires a GPU"
 )
-def test_cuda_rank2_triton_wy_forward(update_order, chunk_size, length):
+def test_cuda_rank2_triton_wy_output_state_and_backward(
+    update_order, chunk_size, length
+):
     # Both cases exercise a full chunk followed by identity padding.
-    args = [
-        value.detach()
-        for value in inputs(
-            T=length, K=64, V=64, dtype=torch.float32, device="cuda"
-        )
-    ]
-    with torch.no_grad():
-        expected = qgdn_rank2_parallel_wy_reference(
-            *args[:6],
-            initial_state=args[6],
-            update_order=update_order,
-            chunk_size=chunk_size,
-            wy_backend="triangular",
-        )
-        actual = qgdn_rank2_parallel_wy_reference(
-            *args[:6],
-            initial_state=args[6],
-            update_order=update_order,
-            chunk_size=chunk_size,
-            wy_backend="triton",
-        )
+    args = inputs(T=length, K=64, V=64, dtype=torch.float32, device="cuda")
+    expected = qgdn_rank2_parallel_wy_reference(
+        *args[:6],
+        initial_state=args[6],
+        update_order=update_order,
+        chunk_size=chunk_size,
+        wy_backend="triangular",
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        args,
+    )
+
+    cloned = [value.detach().clone().requires_grad_() for value in args]
+    actual = qgdn_rank2_parallel_wy_reference(
+        *cloned[:6],
+        initial_state=cloned[6],
+        update_order=update_order,
+        chunk_size=chunk_size,
+        wy_backend="triton",
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        cloned,
+    )
     for value, reference in zip(actual, expected):
         assert value.isfinite().all()
         relative_rmse = (
@@ -425,6 +459,13 @@ def test_cuda_rank2_triton_wy_forward(update_order, chunk_size, length):
             / reference.square().mean().sqrt().clamp_min(1e-7)
         )
         assert relative_rmse < 2e-5
+    for value, reference in zip(actual_grads, expected_grads):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 1e-4
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)

@@ -1,4 +1,4 @@
-"""Validate and benchmark the forward-only physical-T Triton WY primitive."""
+"""Validate and benchmark Triton-forward/recompute-backward physical-T WY."""
 from __future__ import annotations
 
 import argparse
@@ -44,17 +44,23 @@ def make_inputs(args):
         args.value_dim,
         device="cuda",
     )
-    return q, k, v, g, beta, gamma, state
+    return tuple(
+        value.requires_grad_() for value in (q, k, v, g, beta, gamma, state)
+    )
 
 
-def run_forward(tensors, update_order, chunk_size, backend):
-    return qgdn_rank2_parallel_wy_reference(
+def run_step(tensors, update_order, chunk_size, backend, output_grads=None):
+    outputs = qgdn_rank2_parallel_wy_reference(
         *tensors[:6],
         initial_state=tensors[6],
         update_order=update_order,
         chunk_size=chunk_size,
         wy_backend=backend,
     )
+    if output_grads is None:
+        output_grads = tuple(torch.randn_like(value) for value in outputs)
+    gradients = torch.autograd.grad(outputs, tensors, output_grads)
+    return outputs, gradients, output_grads
 
 
 def relative_rmse(actual, expected):
@@ -67,10 +73,18 @@ def relative_rmse(actual, expected):
 
 
 def benchmark(tensors, update_order, backend, args):
+    output_grads = None
     for _ in range(args.warmup):
-        outputs = run_forward(tensors, update_order, args.chunk_size, backend)
+        outputs, gradients, output_grads = run_step(
+            tensors,
+            update_order,
+            args.chunk_size,
+            backend,
+            output_grads,
+        )
         assert all(bool(value.isfinite().all().item()) for value in outputs)
-    del outputs
+        assert all(bool(value.isfinite().all().item()) for value in gradients)
+    del outputs, gradients
     torch.cuda.synchronize()
 
     times_ms = []
@@ -83,25 +97,32 @@ def benchmark(tensors, update_order, backend, args):
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record()
-        outputs = run_forward(tensors, update_order, args.chunk_size, backend)
+        outputs, gradients, _ = run_step(
+            tensors,
+            update_order,
+            args.chunk_size,
+            backend,
+            output_grads,
+        )
         end.record()
         torch.cuda.synchronize()
         assert all(bool(value.isfinite().all().item()) for value in outputs)
+        assert all(bool(value.isfinite().all().item()) for value in gradients)
         times_ms.append(start.elapsed_time(end))
         peak = torch.cuda.max_memory_allocated()
         peak_bytes.append(peak)
         incremental_peak_bytes.append(peak - allocated_before)
-        del outputs
+        del outputs, gradients
 
     median_ms = statistics.median(times_ms)
     return {
-        "median_forward_ms": median_ms,
+        "median_forward_backward_ms": median_ms,
         "physical_tokens_per_second": (
             args.batch_size * args.sequence_length * 1000 / median_ms
         ),
         "peak_allocated_gb": max(peak_bytes) / 1e9,
         "incremental_peak_allocated_gb": max(incremental_peak_bytes) / 1e9,
-        "all_outputs_and_states_finite": True,
+        "all_outputs_states_and_gradients_finite": True,
         "times_ms": times_ms,
     }
 
@@ -112,39 +133,57 @@ def main():
         raise RuntimeError("CUDA is required")
     tensors = make_inputs(args)
     results = {}
-    with torch.no_grad():
-        for update_order in UPDATE_ORDERS:
-            expected = run_forward(
-                tensors, update_order, args.chunk_size, "triangular"
+    for update_order in UPDATE_ORDERS:
+        expected_inputs = tuple(
+            value.detach().clone().requires_grad_() for value in tensors
+        )
+        expected, expected_grads, output_grads = run_step(
+            expected_inputs, update_order, args.chunk_size, "triangular"
+        )
+        actual_inputs = tuple(
+            value.detach().clone().requires_grad_() for value in tensors
+        )
+        actual, actual_grads, _ = run_step(
+            actual_inputs,
+            update_order,
+            args.chunk_size,
+            "triton",
+            output_grads,
+        )
+        errors = {
+            "output": relative_rmse(actual[0], expected[0]),
+            "final_state": relative_rmse(actual[1], expected[1]),
+            "input_gradients": [
+                relative_rmse(value, reference)
+                for value, reference in zip(actual_grads, expected_grads)
+            ],
+        }
+        if max(errors["output"], errors["final_state"]) >= 2e-5:
+            raise AssertionError(
+                f"{update_order} Triton WY forward RMSE failed: {errors}"
             )
-            actual = run_forward(tensors, update_order, args.chunk_size, "triton")
-            errors = {
-                "output": relative_rmse(actual[0], expected[0]),
-                "final_state": relative_rmse(actual[1], expected[1]),
-            }
-            if max(errors.values()) >= 2e-5:
-                raise AssertionError(
-                    f"{update_order} Triton WY relative RMSE failed: {errors}"
-                )
-            baseline = benchmark(
-                tensors, update_order, "triangular", args
+        if max(errors["input_gradients"]) >= 1e-4:
+            raise AssertionError(
+                f"{update_order} Triton WY gradient RMSE failed: {errors}"
             )
-            candidate = benchmark(tensors, update_order, "triton", args)
-            candidate["speedup_vs_triangular"] = (
-                baseline["median_forward_ms"] / candidate["median_forward_ms"]
-            )
-            candidate["peak_memory_ratio_vs_triangular"] = (
-                candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
-            )
-            candidate["incremental_peak_memory_ratio_vs_triangular"] = (
-                candidate["incremental_peak_allocated_gb"]
-                / baseline["incremental_peak_allocated_gb"]
-            )
-            results[update_order] = {
-                "relative_rmse": errors,
-                "triangular": baseline,
-                "triton": candidate,
-            }
+        baseline = benchmark(tensors, update_order, "triangular", args)
+        candidate = benchmark(tensors, update_order, "triton", args)
+        candidate["speedup_vs_triangular"] = (
+            baseline["median_forward_backward_ms"]
+            / candidate["median_forward_backward_ms"]
+        )
+        candidate["peak_memory_ratio_vs_triangular"] = (
+            candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+        )
+        candidate["incremental_peak_memory_ratio_vs_triangular"] = (
+            candidate["incremental_peak_allocated_gb"]
+            / baseline["incremental_peak_allocated_gb"]
+        )
+        results[update_order] = {
+            "relative_rmse": errors,
+            "triangular": baseline,
+            "triton_recompute": candidate,
+        }
 
     payload = {
         "device": torch.cuda.get_device_name(),
@@ -159,7 +198,7 @@ def main():
         },
         "warmup": args.warmup,
         "repeats": args.repeats,
-        "scope": "forward-only operator oracle; not a training or full-model benchmark",
+        "scope": "operator forward+backward; not a full-model benchmark",
         "results": results,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
