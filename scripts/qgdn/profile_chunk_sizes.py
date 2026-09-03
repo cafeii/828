@@ -72,7 +72,8 @@ def timed_step(call, base_inputs, warmup: int, measured: int):
         inputs = clone_for_grad(base_inputs)
         output, _ = call(inputs, output_final_state=False)
         loss = output.float().square().mean()
-        torch.autograd.grad(loss, inputs)
+        # GDN intentionally does not consume the QGDN-only gamma input.
+        torch.autograd.grad(loss, inputs, allow_unused=True)
 
     for _ in range(warmup):
         run()

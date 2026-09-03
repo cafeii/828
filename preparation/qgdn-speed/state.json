@@ -1,18 +1,9 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:01:59.535070+00:00",
-  "current_stage": "chunk_size_gpu_profile_running",
-  "active_jobs": {
-    "35096": {
-      "exp_id": "20260903-140031-qgdn-chunk-size-profile-a21165",
-      "job_name": "王正仁-Metis-20260903-140031-qgdn-chunk-size-profile-a21165",
-      "scope": "QGDN DPLR chunk-size 16/32/64 numerical and speed profile",
-      "commit": "ec560e4c1a06965b7b3c77d16de379d04d7a686a",
-      "state": "RUNNING",
-      "node": "tko-b3-nv-dgx04"
-    }
-  },
+  "updated_at": "2026-09-03T06:12:04.254191+00:00",
+  "current_stage": "chunk_size_gpu_profile_retry_ready",
+  "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -46,6 +37,14 @@
       "validation": "python bytecode compilation passed"
     }
   ],
-  "last_review": null,
-  "next_action": "review job 35096 output; adopt only a finite numerically acceptable faster chunk size"
+  "last_review": {
+    "job_id": "35096",
+    "state": "FAILED",
+    "exit_code": "1:0",
+    "first_error": "GDN baseline does not use gamma; profiler required every differentiated input to be used",
+    "impact": "QGDN candidate measurements completed in memory but report was not written",
+    "remediation": "allow unused gamma only in GDN benchmark autograd call",
+    "retry_count_for_cause": 1
+  },
+  "next_action": "commit profiler-only fix and retry the same diagnostic once"
 }
