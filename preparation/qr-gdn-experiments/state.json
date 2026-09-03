@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "fused_dual_read_local_gradients_gpu_validation_pending",
+  "current_stage": "fused_dual_read_local_gradients_gpu_validation_running",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,8 +38,31 @@
     3407,
     42
   ],
-  "active_jobs": [],
-  "submission_count_this_wake": 0,
+  "active_jobs": [
+    {
+      "kind": "fused_local_gradients_gpu_performance_diagnostic",
+      "exp_id": "20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
+      "job_id": "34936",
+      "job_name": "王正仁-Metis-20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
+      "implementation_commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
+      "snapshot_commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
+      "node": "tko-b3-nv-dgx07",
+      "slurm_state": "RUNNING",
+      "required_outputs": [
+        "result.json"
+      ],
+      "submitted_at": "2026-09-03T08:35:00+08:00",
+      "review_status": "pending",
+      "resource_request": {
+        "gpu": 1,
+        "cpu": 8,
+        "memory": "64G",
+        "time": "01:00:00"
+      },
+      "purpose": "H800 FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate after fusing dual-read local gradients"
+    }
+  ],
+  "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
     "status": "prepared_never_submitted",
@@ -192,7 +215,7 @@
           "keep_native_kv_forward": true,
           "change": "fuse the native and shifted read streams inside local dv and dq/k/g kernels, eliminating the remaining auxiliary kernel launches and zero-dh materialization",
           "reason": "job 34925 showed that sharing only the reverse state scan improved throughput by just 0.65 percentage points; the remaining local-gradient work and the second QR state call dominate",
-          "status": "implemented_cpu_passed_gpu_pending",
+          "status": "gpu_diagnostic_running_job_34936",
           "constraint": "must preserve exact gradients and the 80 percent gate; do not submit formal training yet"
         },
         "specialized_dual_read_backward": {
@@ -219,11 +242,15 @@
         },
         "fused_local_gradients": {
           "commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
-          "status": "cpu_passed_gpu_pending",
+          "status": "gpu_diagnostic_running",
           "change": "combine native and shifted-read local dv plus dq/k/g contributions in one invocation per kernel; remove the auxiliary dq/k/g invocation and zero-dh tensor",
           "gradient_identity": "shared recurrent state term counted once; main and auxiliary read terms accumulated before common k and decay-gate reductions",
           "cpu_regression": "16_passed_8_gpu_skipped",
-          "formal_training": "blocked_pending_gpu_correctness_throughput_and_ddp"
+          "formal_training": "blocked_pending_gpu_correctness_throughput_and_ddp",
+          "job_id": "34936",
+          "exp_id": "20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
+          "snapshot_commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
+          "node": "tko-b3-nv-dgx07"
         }
       }
     },

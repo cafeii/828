@@ -244,3 +244,10 @@
 - 核心实现 commit `06a2e931420d29f6e189b862789a2f8d2fe80040`：在现有共享逆向状态扫描之上，将主 KV 正常读出与移位 QR 更新前读出的局部 `dv`、`dq/k/g` 贡献分别合并到一次 kernel 调用，删除第二次局部梯度 kernel 和全零 `dh` 张量。
 - 梯度恒等关系保持不变：公共状态递推的 `dh` 项只计一次；主/QR 两路读出各自的查询梯度独立输出，它们对 `k` 和衰减门的贡献在同一 kernel 内相加。未改变前向、QR 因果时序或普通 GDN 默认路径。
 - Python 编译、`git diff --check` 和 CPU/静态回归通过：16 passed，8 个 CUDA 测试按预期 skipped。H800 编译、FP32/BF16 数值与 340M 吞吐尚待本轮唯一 GPU 诊断；正式训练继续阻止。
+
+## 双读局部梯度融合 GPU 性能诊断提交
+
+- 实验 `20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c`；Slurm job `34936`；源码实现 commit `06a2e931420d29f6e189b862789a2f8d2fe80040`，实验快照 commit `ce5eff548c8e871ddc202dad8f26c549819bc8fd`。
+- 按集群 best-fit 规则定向到碎片节点 `tko-b3-nv-dgx07`（提交时 7/8 GPU 已占用；剩余 CPU/内存足够），申请 1 GPU、8 CPU、64G、1 小时。
+- 作业先运行 H800 FP32/BF16、近极端门控、完整反向、初末状态与分段续算检查，再在相同 340M、sequence 4096、micro batch 1、BF16 mixed、激活检查点配置下测量 GDN/QR-GDN 吞吐与峰值显存。
+- 提交前实验快照干净，完整唯一任务名、`job-id` 和 `submission.lock` 均无重复；已原子加锁并登记 job-id。本轮只提交 job 34936，正式训练继续受 80% 吞吐与 8 卡 DDP 门槛阻止。

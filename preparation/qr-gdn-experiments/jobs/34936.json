@@ -1,0 +1,22 @@
+{
+  "kind": "fused_local_gradients_gpu_performance_diagnostic",
+  "exp_id": "20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
+  "job_id": "34936",
+  "job_name": "王正仁-Metis-20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
+  "implementation_commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
+  "snapshot_commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
+  "node": "tko-b3-nv-dgx07",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-03T08:35:00+08:00",
+  "review_status": "pending",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 8,
+    "memory": "64G",
+    "time": "01:00:00"
+  },
+  "purpose": "H800 FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate after fusing dual-read local gradients"
+}
