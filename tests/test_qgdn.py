@@ -346,10 +346,11 @@ def test_cuda_rank2_batched_chunk_output_state_and_backward(update_order):
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.parametrize("wy_backend", ["triangular", "streaming"])
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="parallel WY CUDA parity requires a GPU"
 )
-def test_cuda_rank2_parallel_wy_output_state_and_backward(update_order):
+def test_cuda_rank2_parallel_wy_output_state_and_backward(update_order, wy_backend):
     # T=17 exercises the identity-padded final chunk as well as a full chunk.
     args = inputs(T=17, K=64, V=64, dtype=torch.float32, device="cuda")
     expected = qgdn_reference(
@@ -367,6 +368,7 @@ def test_cuda_rank2_parallel_wy_output_state_and_backward(update_order):
         initial_state=cloned[6],
         update_order=update_order,
         chunk_size=8,
+        wy_backend=wy_backend,
     )
     actual_grads = torch.autograd.grad(
         sum((value * weight).sum() for value, weight in zip(actual, weights)),
