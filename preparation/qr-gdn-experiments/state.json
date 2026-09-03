@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "fused_dual_read_local_gradients_gpu_validation_running",
+  "current_stage": "coupled_dual_state_kernel_architecture_reassessment",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,30 +38,7 @@
     3407,
     42
   ],
-  "active_jobs": [
-    {
-      "kind": "fused_local_gradients_gpu_performance_diagnostic",
-      "exp_id": "20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
-      "job_id": "34936",
-      "job_name": "王正仁-Metis-20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
-      "implementation_commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
-      "snapshot_commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
-      "node": "tko-b3-nv-dgx07",
-      "slurm_state": "RUNNING",
-      "required_outputs": [
-        "result.json"
-      ],
-      "submitted_at": "2026-09-03T08:35:00+08:00",
-      "review_status": "pending",
-      "resource_request": {
-        "gpu": 1,
-        "cpu": 8,
-        "memory": "64G",
-        "time": "01:00:00"
-      },
-      "purpose": "H800 FP32/BF16/extreme-gate/autograd regression plus 340M sequence-4096 throughput and peak-memory gate after fusing dual-read local gradients"
-    }
-  ],
+  "active_jobs": [],
   "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
@@ -211,12 +188,16 @@
           "result": "experiments/20260903-070207-qr-gdn-fused-forward-profile-581312/outputs/result.json"
         },
         "next_candidate": {
-          "name": "fused_dual_read_local_gradients",
-          "keep_native_kv_forward": true,
-          "change": "fuse the native and shifted read streams inside local dv and dq/k/g kernels, eliminating the remaining auxiliary kernel launches and zero-dh materialization",
-          "reason": "job 34925 showed that sharing only the reverse state scan improved throughput by just 0.65 percentage points; the remaining local-gradient work and the second QR state call dominate",
-          "status": "gpu_diagnostic_running_job_34936",
-          "constraint": "must preserve exact gradients and the 80 percent gate; do not submit formal training yet"
+          "name": "specialized_coupled_dual_state_kernel",
+          "status": "architecture_design_pending",
+          "change": "co-schedule KV and QR state preparation/scan in a purpose-built coupled kernel while preserving the block-lower-triangular recurrence and stable pre-update recall",
+          "reason": "sharing the reverse scan and local-gradient launches raised the ratio only from 68.70% to 69.75%; the second full QR state path remains dominant",
+          "constraints": [
+            "no generic rank-2 block-WY path (job 34918 was slower)",
+            "no alpha division or cancellation recovery",
+            "retain physical T, exact gradients, and strict GDN degeneration",
+            "re-run CPU/GPU numerics and throughput before DDP or formal training"
+          ]
         },
         "specialized_dual_read_backward": {
           "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
@@ -242,7 +223,7 @@
         },
         "fused_local_gradients": {
           "commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
-          "status": "gpu_diagnostic_running",
+          "status": "numerically_accepted_performance_gate_failed",
           "change": "combine native and shifted-read local dv plus dq/k/g contributions in one invocation per kernel; remove the auxiliary dq/k/g invocation and zero-dh tensor",
           "gradient_identity": "shared recurrent state term counted once; main and auxiliary read terms accumulated before common k and decay-gate reductions",
           "cpu_regression": "16_passed_8_gpu_skipped",
@@ -250,7 +231,25 @@
           "job_id": "34936",
           "exp_id": "20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c",
           "snapshot_commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
-          "node": "tko-b3-nv-dgx07"
+          "node": "tko-b3-nv-dgx07",
+          "slurm_state": "COMPLETED",
+          "exit_code": 0,
+          "elapsed": "00:08:45",
+          "run_exitcode": 0,
+          "required_output_present": true,
+          "tests_passed": 8,
+          "tests_failed": 0,
+          "gdn_tokens_per_second": 18411.984303773545,
+          "qr_gdn_tokens_per_second": 12841.61064428545,
+          "qr_to_gdn_ratio": 0.6974593521488912,
+          "throughput_gate": 0.8,
+          "throughput_gate_passed": false,
+          "peak_memory_gb": {
+            "gdn": 6.68460544,
+            "qr_gdn": 6.682330112
+          },
+          "result": "experiments/20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c/outputs/result.json",
+          "decision": "numerically_accepted_but_performance_gate_failed"
         }
       }
     },
@@ -278,27 +277,27 @@
     },
     "ddp_8gpu": "pending",
     "throughput_and_memory": {
-      "status": "stable_pre_read_measured_gate_failed",
-      "job_id": "34914",
-      "commit": "40f0c7d98059a885871a4c9a0ca0aceca5b62042",
-      "implementation_commit": "60db87b1ac67e34d33b973e0ad8240a0fc6f3fd2",
+      "status": "fused_local_gradients_measured_gate_failed",
+      "job_id": "34936",
+      "commit": "ce5eff548c8e871ddc202dad8f26c549819bc8fd",
+      "implementation_commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
       "slurm_state": "COMPLETED",
       "exit_code": 0,
-      "elapsed": "00:03:23",
+      "elapsed": "00:08:45",
       "sequence_length": 4096,
       "micro_batch_size": 1,
       "precision": "bf16-mixed",
       "activation_checkpointing": true,
-      "gdn_tokens_per_second": 18314.69371844823,
-      "qr_gdn_tokens_per_second": 12462.265617772986,
-      "qr_to_gdn_ratio": 0.6804517623584311,
+      "gdn_tokens_per_second": 18411.984303773545,
+      "qr_gdn_tokens_per_second": 12841.61064428545,
+      "qr_to_gdn_ratio": 0.6974593521488912,
       "required_ratio": 0.8,
       "gate_passed": false,
       "gdn_peak_memory_gb": 6.68460544,
-      "qr_gdn_peak_memory_gb": 6.671320064,
+      "qr_gdn_peak_memory_gb": 6.682330112,
       "gdn_state_bytes_fp32": 5242880,
       "qr_gdn_state_bytes_fp32": 10485760,
-      "result": "experiments/20260903-062036-qr-gdn-stable-preread-gpu-perf-0c76bd/outputs/result.json"
+      "result": "experiments/20260903-083340-qr-gdn-fused-local-grad-gpu-perf-67c06c/outputs/result.json"
     },
     "stability_and_performance_harness": {
       "commit": "1ae71f28271d84a1ae13e4015b69ac267916fad3",
