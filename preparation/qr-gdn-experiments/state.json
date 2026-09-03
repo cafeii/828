@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "shared_normalization_adjacent_view_schedule_gpu_validation_pending",
+  "current_stage": "shared_normalization_adjacent_view_schedule_gpu_validation_running",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -38,8 +38,31 @@
     3407,
     42
   ],
-  "active_jobs": [],
-  "submission_count_this_wake": 0,
+  "active_jobs": [
+    {
+      "kind": "shared_normalization_adjacent_view_gpu_performance_diagnostic",
+      "exp_id": "20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c",
+      "job_id": "34947",
+      "job_name": "王正仁-Metis-20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c",
+      "implementation_commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307",
+      "snapshot_commit": "2e9f79e31aef3ab7964d426af4eeeb8eddc824d7",
+      "node": "tko-b3-nv-dgx09",
+      "slurm_state": "RUNNING",
+      "required_outputs": [
+        "result.json"
+      ],
+      "submitted_at": "2026-09-03T09:25:34+08:00",
+      "review_status": "running",
+      "resource_request": {
+        "gpu": 1,
+        "cpu": 8,
+        "memory": "64G",
+        "time": "01:00:00"
+      },
+      "purpose": "validate shared-q-normalization and length-(T-1) adjacent-view QR schedule, then compare 340M sequence-4096 throughput and peak memory against current QR-GDN and GDN"
+    }
+  ],
+  "submission_count_this_wake": 1,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
     "status": "prepared_never_submitted",
@@ -190,11 +213,15 @@
         "next_candidate": {
           "name": "shared_normalization_adjacent_view_schedule",
           "commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307",
-          "status": "isolated_profiler_cpu_static_passed_gpu_pending",
+          "status": "gpu_validation_running",
           "change": "normalize q once for both channels and replace four materialized shifted tensors with a length-(T-1) adjacent-view QR scan",
           "semantics": "physical update t is read by q[t+1]; recurrence and causal pre-update QR read are unchanged",
           "risk": "equivalent chunk regrouping changes BF16 reduction order; must pass forward, final-state, backward, BF16, and zero-read exact-GDN checks",
-          "purpose": "measure whether scheduling overhead is material before implementing a larger coupled kernel"
+          "purpose": "measure whether scheduling overhead is material before implementing a larger coupled kernel",
+          "exp_id": "20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c",
+          "job_id": "34947",
+          "snapshot_commit": "2e9f79e31aef3ab7964d426af4eeeb8eddc824d7",
+          "node": "tko-b3-nv-dgx09"
         },
         "specialized_dual_read_backward": {
           "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
@@ -392,5 +419,5 @@
       "commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307"
     }
   ],
-  "last_heartbeat": "2026-09-03T01:16:41.737Z"
+  "last_heartbeat": "2026-09-03T09:25:34+08:00"
 }

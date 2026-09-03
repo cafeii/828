@@ -1,0 +1,22 @@
+{
+  "kind": "shared_normalization_adjacent_view_gpu_performance_diagnostic",
+  "exp_id": "20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c",
+  "job_id": "34947",
+  "job_name": "王正仁-Metis-20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c",
+  "implementation_commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307",
+  "snapshot_commit": "2e9f79e31aef3ab7964d426af4eeeb8eddc824d7",
+  "node": "tko-b3-nv-dgx09",
+  "slurm_state": "RUNNING",
+  "required_outputs": [
+    "result.json"
+  ],
+  "submitted_at": "2026-09-03T09:25:34+08:00",
+  "review_status": "running",
+  "resource_request": {
+    "gpu": 1,
+    "cpu": 8,
+    "memory": "64G",
+    "time": "01:00:00"
+  },
+  "purpose": "validate shared-q-normalization and length-(T-1) adjacent-view QR schedule, then compare 340M sequence-4096 throughput and peak memory against current QR-GDN and GDN"
+}

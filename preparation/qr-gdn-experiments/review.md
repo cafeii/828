@@ -265,3 +265,11 @@
 - 工具 commit `6b81b11871c0b6f032a2b03bba78a36b7d44a307`。候选只改变等价调度：$q$ 用同一 FLA kernel 归一化一次并供 KV/QR 两路使用；QR 扫描直接以长度 $T-1$ 的相邻视图执行“更新 $t$、由 $q_{t+1}$ 读取”，删除四个完整移位张量。
 - 递推、更新前 QR 读取和最终状态语义不变；QR 关闭时仍要求与原生 GDN 输出逐位一致。因 chunk 边界平移一位会改变 BF16 归约次序，GPU 诊断将显式核对前向、最终状态、完整梯度、BF16 有限性和严格退化。
 - 隔离工具还在同一 H800 上顺序测量原 GDN、当前 QR-GDN 与候选 340M 完整训练步。当前只完成 Python 编译与 diff 检查，未修改生产模型路径，正式训练继续阻止。
+
+
+## 共享归一化与相邻视图调度 GPU 诊断提交（job 34947）
+
+- 实验 `20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c`；实现 commit `6b81b11871c0b6f032a2b03bba78a36b7d44a307`；干净快照 commit `2e9f79e31aef3ab7964d426af4eeeb8eddc824d7`。
+- 按 best-fit 规则定向到碎片节点 `tko-b3-nv-dgx09`（提交时 4/8 GPU 已占用，CPU 和内存余量充足），申请 1 GPU、8 CPU、64G、1 小时。
+- 作业核对 FP32 前向、终态与完整梯度，BF16 有限性及 QR 关闭时的原生 GDN 严格退化；随后同卡比较 340M、sequence 4096 的 GDN、当前 QR-GDN 和候选完整训练步。
+- `submission.lock` 与 job-id 已登记。本次心跳唯一一次 `sbatch` 为 job 34947；正式训练仍受 80% 吞吐和 8 卡 DDP 门槛阻止。
