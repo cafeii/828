@@ -1,22 +1,9 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:20:19.876629+00:00",
-  "current_stage": "dplr_no_recompute_confirmation",
-  "active_jobs": {
-    "35171": {
-      "job_id": "35171",
-      "exp_id": "20260903-151830-qgdn-no-recompute-long-pair-80a5be",
-      "job_name": "王正仁-Metis-20260903-151830-qgdn-no-recompute-long-pair-80a5be",
-      "scope": "long isolated 340M QGDN recompute/no-recompute pair",
-      "commit": "69ce8f394a2aa9d3c0513a745fd8361fe1fe2b96",
-      "state": "RUNNING",
-      "node": "tko-b3-nv-dgx16",
-      "resources": "1 GPU / 8 CPU / 64G / 1h",
-      "required_output": "qgdn-no-recompute-long-pair.json",
-      "submitted_at": "2026-09-03T07:20:19.876629+00:00"
-    }
-  },
+  "updated_at": "2026-09-03T07:22:02.248921+00:00",
+  "current_stage": "dplr_no_recompute_reverse_confirmation",
+  "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -81,20 +68,19 @@
     }
   ],
   "last_review": {
-    "job_id": "35161",
+    "job_id": "35171",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "no-recompute candidate positive but control unstable; long pair required",
+    "result": "no-recompute positive; reverse-order confirmation required",
     "metrics": {
-      "compiled_tokens_per_second": 11008.714965964948,
-      "no_recompute_tokens_per_second": 16551.51794626512,
-      "reported_speedup": 1.5034922783845852,
-      "compiled_median_step_seconds": 0.32634778501233086,
-      "no_recompute_median_step_seconds": 0.24738629354396835,
-      "compiled_peak_memory_gb": 6.794485248,
+      "normal_tokens_per_second": 12329.530067416159,
+      "no_recompute_tokens_per_second": 13520.964694173676,
+      "mean_speedup": 1.0966326064531995,
+      "median_speedup": 1.074540222776707,
+      "normal_peak_memory_gb": 6.785572352,
       "no_recompute_peak_memory_gb": 6.781902336,
       "final_loss_absolute_difference": 0.0
     }
   },
-  "next_action": "monitor long pair job 35171 and accept/reject no-recompute production default"
+  "next_action": "run reverse-order long recompute pair; enable no-recompute only if non-regressive"
 }
