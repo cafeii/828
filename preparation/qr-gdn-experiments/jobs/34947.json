@@ -6,17 +6,46 @@
   "implementation_commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307",
   "snapshot_commit": "2e9f79e31aef3ab7964d426af4eeeb8eddc824d7",
   "node": "tko-b3-nv-dgx09",
-  "slurm_state": "RUNNING",
+  "slurm_state": "COMPLETED",
   "required_outputs": [
     "result.json"
   ],
   "submitted_at": "2026-09-03T09:25:34+08:00",
-  "review_status": "running",
+  "review_status": "reviewed_gate_failed",
   "resource_request": {
     "gpu": 1,
     "cpu": 8,
     "memory": "64G",
     "time": "01:00:00"
   },
-  "purpose": "validate shared-q-normalization and length-(T-1) adjacent-view QR schedule, then compare 340M sequence-4096 throughput and peak memory against current QR-GDN and GDN"
+  "purpose": "validate shared-q-normalization and length-(T-1) adjacent-view QR schedule, then compare 340M sequence-4096 throughput and peak memory against current QR-GDN and GDN",
+  "exit_code": 0,
+  "elapsed": "00:03:42",
+  "run_exitcode_present": true,
+  "run_json_present": true,
+  "required_output_present": true,
+  "gpu_numerics": "passed_with_expected_chunk_regrouping_roundoff",
+  "validation": {
+    "fp32_output_max_abs": 0.0002484917640686035,
+    "fp32_state_max_abs": 1.9297003746032715e-05,
+    "fp32_gradient_max_abs": 0.0010225772857666016,
+    "zero_read_native_bitwise": true,
+    "bf16_forward_backward_finite": true
+  },
+  "gdn_tokens_per_second": 18281.762542994213,
+  "current_qr_tokens_per_second": 12814.70479352356,
+  "candidate_qr_tokens_per_second": 13163.95274178522,
+  "current_qr_to_gdn_ratio": 0.700955652573789,
+  "candidate_qr_to_gdn_ratio": 0.7200592782466592,
+  "candidate_to_current_ratio": 1.0272536865958994,
+  "required_ratio": 0.8,
+  "throughput_gate_passed": false,
+  "peak_memory_gb": {
+    "gdn": 6.679886848,
+    "current_qr": 6.717981696,
+    "candidate_qr": 6.6959616
+  },
+  "logs_collected": true,
+  "result": "experiments/20260903-092300-qr-gdn-shared-norm-sliced-profile-97793c/outputs/result.json",
+  "decision": "isolated_schedule_numerically_acceptable_but_performance_gate_failed_not_productionized"
 }
