@@ -260,6 +260,48 @@ def test_compact_affine_composition_is_associative_and_rank_additive():
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="rank-two chunk CUDA parity requires a GPU"
+)
+def test_cuda_rank2_batched_chunk_output_state_and_backward(update_order):
+    args = inputs(T=16, K=64, V=64, dtype=torch.float32, device="cuda")
+    expected = qgdn_reference(
+        *args[:6], initial_state=args[6], update_order=update_order
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        args,
+    )
+
+    cloned = [value.detach().clone().requires_grad_() for value in args]
+    actual = qgdn_rank2_chunk_batched_reference(
+        *cloned[:6],
+        initial_state=cloned[6],
+        update_order=update_order,
+        chunk_size=8,
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        cloned,
+    )
+    for value, reference in zip(actual, expected):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 2e-5
+    for value, reference in zip(actual_grads, expected_grads):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 1e-4
+
+
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
 def test_rank2_factors_remain_finite_at_collinear_extreme_gates(update_order):
     q, _, v, g, _, _, state = inputs(T=3)
     q = F.normalize(q, dim=-1)
