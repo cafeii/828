@@ -18,6 +18,7 @@ import torch.nn.functional as F
 # speed and numerical regressions cannot silently follow an upstream default.
 QGDN_TRAIN_CHUNK_SIZE = 32
 QGDN_COMPILE_DPLR_INPUTS = False
+QGDN_DISABLE_DPLR_RECOMPUTE = False
 
 
 def _normalized(x):
@@ -188,7 +189,14 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
         q, k, v, g, beta, gamma, recall_mode,
         compiled=QGDN_COMPILE_DPLR_INPUTS,
     )
-    chunk_kwargs = {"chunk_size": QGDN_TRAIN_CHUNK_SIZE} if mode == "chunk" else {}
+    chunk_kwargs = (
+        {
+            "chunk_size": QGDN_TRAIN_CHUNK_SIZE,
+            "disable_recompute": QGDN_DISABLE_DPLR_RECOMPUTE,
+        }
+        if mode == "chunk"
+        else {}
+    )
     o, state = op(**inputs, scale=scale, initial_state=initial_state,
                   output_final_state=output_final_state,
                   cu_seqlens=None if cu_seqlens is None else cu_seqlens * 2,

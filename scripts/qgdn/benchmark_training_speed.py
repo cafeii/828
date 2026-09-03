@@ -78,14 +78,17 @@ def benchmark_model(
     *,
     qgdn_chunk_size: int | None = None,
     compile_qgdn_inputs: bool = False,
+    disable_qgdn_recompute: bool = False,
 ) -> dict:
     from lit_gpt.mixers import qgdn_rule
 
     original_chunk_size = qgdn_rule.QGDN_TRAIN_CHUNK_SIZE
     original_compile_inputs = qgdn_rule.QGDN_COMPILE_DPLR_INPUTS
+    original_disable_recompute = qgdn_rule.QGDN_DISABLE_DPLR_RECOMPUTE
     if qgdn_chunk_size is not None:
         qgdn_rule.QGDN_TRAIN_CHUNK_SIZE = qgdn_chunk_size
         qgdn_rule.QGDN_COMPILE_DPLR_INPUTS = compile_qgdn_inputs
+        qgdn_rule.QGDN_DISABLE_DPLR_RECOMPUTE = disable_qgdn_recompute
     try:
         torch.manual_seed(3407)
         config = Config.from_name(name, block_size=tokens.shape[1])
@@ -116,6 +119,7 @@ def benchmark_model(
             "model": name,
             "qgdn_chunk_size": qgdn_chunk_size,
             "compile_qgdn_inputs": compile_qgdn_inputs,
+            "disable_qgdn_recompute": disable_qgdn_recompute,
             "step_seconds": durations,
             "mean_step_seconds": statistics.mean(durations),
             "median_step_seconds": statistics.median(durations),
@@ -130,6 +134,7 @@ def benchmark_model(
     finally:
         qgdn_rule.QGDN_TRAIN_CHUNK_SIZE = original_chunk_size
         qgdn_rule.QGDN_COMPILE_DPLR_INPUTS = original_compile_inputs
+        qgdn_rule.QGDN_DISABLE_DPLR_RECOMPUTE = original_disable_recompute
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -156,7 +161,13 @@ def main() -> None:
         help="measure each model in a fresh Python/CUDA process",
     )
     parser.add_argument(
-        "--only", choices=("gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs"),
+        "--only", choices=(
+            "gdn",
+            "qgdn_chunk16",
+            "qgdn_chunk32",
+            "qgdn_compiled_inputs",
+            "qgdn_compiled_no_recompute",
+        ),
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
@@ -164,9 +175,9 @@ def main() -> None:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
 
     order = (
-        ["qgdn_compiled_inputs", "qgdn_chunk32", "qgdn_chunk16", "gdn"]
+        ["qgdn_compiled_no_recompute", "qgdn_compiled_inputs", "qgdn_chunk32", "qgdn_chunk16", "gdn"]
         if args.reverse_order
-        else ["gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs"]
+        else ["gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs", "qgdn_compiled_no_recompute"]
     )
     if args.isolated:
         if args.only is not None:
@@ -191,6 +202,7 @@ def main() -> None:
         old = models["qgdn_chunk16"]["tokens_per_second"]
         chunk32 = models["qgdn_chunk32"]["tokens_per_second"]
         new = models["qgdn_compiled_inputs"]["tokens_per_second"]
+        no_recompute = models["qgdn_compiled_no_recompute"]["tokens_per_second"]
         report = {
             "status": "measured_isolated",
             "commit": child_reports[order[0]]["commit"],
@@ -211,12 +223,15 @@ def main() -> None:
             "models": models,
             "chunk32_speedup_vs_chunk16": chunk32 / old,
             "compiled_input_speedup_vs_chunk32": new / chunk32,
+            "no_recompute_speedup_vs_compiled_inputs": no_recompute / new,
             "candidate_speedup_vs_chunk16": new / old,
+            "no_recompute_speedup_vs_chunk16": no_recompute / old,
             "chunk16_to_gdn_ratio": old / gdn,
             "chunk32_to_gdn_ratio": chunk32 / gdn,
             "compiled_input_to_gdn_ratio": new / gdn,
+            "no_recompute_to_gdn_ratio": no_recompute / gdn,
             "throughput_target": 0.9,
-            "throughput_target_passed": new / gdn >= 0.9,
+            "throughput_target_passed": no_recompute / gdn >= 0.9,
         }
         write_json(args.output, report)
         print(json.dumps(report, ensure_ascii=False), flush=True)
@@ -245,6 +260,11 @@ def main() -> None:
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             qgdn_chunk_size=32, compile_qgdn_inputs=True,
         ),
+        "qgdn_compiled_no_recompute": lambda: benchmark_model(
+            "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            qgdn_chunk_size=32, compile_qgdn_inputs=True,
+            disable_qgdn_recompute=True,
+        ),
     }
     if args.only is not None:
         report = {
@@ -267,6 +287,7 @@ def main() -> None:
     old = models["qgdn_chunk16"]["tokens_per_second"]
     chunk32 = models["qgdn_chunk32"]["tokens_per_second"]
     new = models["qgdn_compiled_inputs"]["tokens_per_second"]
+    no_recompute = models["qgdn_compiled_no_recompute"]["tokens_per_second"]
     report = {
         "status": "measured",
         "commit": subprocess.check_output(
@@ -285,12 +306,15 @@ def main() -> None:
         "models": models,
         "chunk32_speedup_vs_chunk16": chunk32 / old,
         "compiled_input_speedup_vs_chunk32": new / chunk32,
+        "no_recompute_speedup_vs_compiled_inputs": no_recompute / new,
         "candidate_speedup_vs_chunk16": new / old,
+        "no_recompute_speedup_vs_chunk16": no_recompute / old,
         "chunk16_to_gdn_ratio": old / gdn,
         "chunk32_to_gdn_ratio": chunk32 / gdn,
         "compiled_input_to_gdn_ratio": new / gdn,
+        "no_recompute_to_gdn_ratio": no_recompute / gdn,
         "throughput_target": 0.9,
-        "throughput_target_passed": new / gdn >= 0.9,
+        "throughput_target_passed": no_recompute / gdn >= 0.9,
     }
     write_json(args.output, report)
     print(json.dumps(report, ensure_ascii=False), flush=True)
