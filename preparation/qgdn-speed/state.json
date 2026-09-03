@@ -1,22 +1,9 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:00:23.317708+00:00",
-  "current_stage": "compiled_virtual_input_cuda_validation",
-  "active_jobs": {
-    "35159": {
-      "job_id": "35159",
-      "exp_id": "20260903-145847-qgdn-compiled-cuda-parity-13a336",
-      "job_name": "王正仁-Metis-20260903-145847-qgdn-compiled-cuda-parity-13a336",
-      "scope": "CUDA compiled/eager virtual-input output and gradient parity",
-      "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
-      "state": "RUNNING",
-      "node": "tko-b3-nv-dgx16",
-      "resources": "1 GPU / 8 CPU / 64G / 1h",
-      "required_output": "qgdn-compiled-cuda.xml",
-      "submitted_at": "2026-09-03T07:00:23.317708+00:00"
-    }
-  },
+  "updated_at": "2026-09-03T07:01:58.131375+00:00",
+  "current_stage": "dplr_no_recompute_benchmark",
+  "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -72,26 +59,19 @@
     {
       "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
       "milestone": "production compiled QGDN virtual-input construction",
-      "validation": "15 non-CUDA QGDN tests passed; CUDA parity job 35159 running"
+      "validation": "15 non-CUDA and 2 CUDA compiled/eager parity tests passed"
     }
   ],
   "last_review": {
-    "job_id": "35154",
+    "job_id": "35159",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "compiled input builder accepted",
+    "result": "production compiled input CUDA parity passed",
     "metrics": {
-      "gdn_tokens_per_second": 17761.2580285784,
-      "chunk32_tokens_per_second": 15840.385898679842,
-      "compiled_tokens_per_second": 16140.211169636375,
-      "compiled_speedup_vs_chunk32": 1.018927901938394,
-      "compiled_median_speedup_vs_chunk32": 1.0287506768294314,
-      "compiled_to_gdn_ratio": 0.9087313040363633,
-      "chunk32_peak_memory_gb": 6.844292608,
-      "compiled_peak_memory_gb": 6.794485248,
-      "final_loss_absolute_difference": 5.462788976728916e-08,
-      "max_builder_gradient_relative_rmse": 3.7721204080298776e-06
+      "tests_passed": 2,
+      "tests_deselected": 27,
+      "seconds": 75.92
     }
   },
-  "next_action": "review CUDA parity job 35159, then benchmark no-recompute candidate"
+  "next_action": "benchmark compiled chunk32 with and without DPLR backward recomputation"
 }

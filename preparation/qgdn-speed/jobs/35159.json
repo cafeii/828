@@ -4,9 +4,13 @@
   "job_name": "王正仁-Metis-20260903-145847-qgdn-compiled-cuda-parity-13a336",
   "scope": "CUDA compiled/eager virtual-input output and gradient parity",
   "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
-  "state": "RUNNING",
+  "state": "COMPLETED",
   "node": "tko-b3-nv-dgx16",
   "resources": "1 GPU / 8 CPU / 64G / 1h",
   "required_output": "qgdn-compiled-cuda.xml",
-  "submitted_at": "2026-09-03T07:00:23.317708+00:00"
+  "submitted_at": "2026-09-03T07:00:23.317708+00:00",
+  "exit_code": "0",
+  "elapsed": "00:01:31",
+  "reviewed_at": "2026-09-03T07:01:58.131375+00:00",
+  "tests": "2 passed, 27 deselected in 75.92s"
 }
