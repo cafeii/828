@@ -393,7 +393,7 @@ def qgdn_rank2_parallel_wy_reference(
     scale=None,
     initial_state=None,
     chunk_size=16,
-    fuse_wy_rhs=True,
+    fuse_wy_rhs=False,
 ):
     """Prepare every physical-T chunk's exact rank-two WY map in parallel.
 
@@ -407,9 +407,10 @@ def qgdn_rank2_parallel_wy_reference(
 
     The final partial chunk is padded with identity transitions.  The padding
     is discarded from the output and cannot affect the returned final state.
-    By default, the effective-right factors and value-dependent write response
-    share one solve with concatenated right-hand sides.  ``fuse_wy_rhs=False``
-    retains the equivalent two-solve decomposition for isolated benchmarking.
+    The effective-right factors and value-dependent write response use separate
+    solves by default.  ``fuse_wy_rhs=True`` retains the equivalent combined
+    right-hand-side experiment, which is useful for isolated benchmarking but
+    was slower without reducing peak allocation on H800.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
     """
