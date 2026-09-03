@@ -20,6 +20,7 @@ def _qgdn_streaming_wy_fwd_kernel(
     BM: tl.constexpr,
     BK: tl.constexpr,
     BV: tl.constexpr,
+    BWT: tl.constexpr,
 ):
     lane = tl.program_id(0).to(tl.int64)
     rank: tl.constexpr = 2
@@ -27,7 +28,7 @@ def _qgdn_streaming_wy_fwd_kernel(
     o_m = tl.arange(0, BM)
     o_k = tl.arange(0, BK)
     o_v = tl.arange(0, BV)
-    o_t = tl.arange(0, BT)
+    o_t = tl.arange(0, BWT)
     m_rows = o_m < rows
 
     factor_base = lane * rows * K
@@ -72,11 +73,15 @@ def _qgdn_streaming_wy_fwd_kernel(
         normalized_write + write_base + o_t[:, None] * K + o_k[None, :]
     )
     b_write = tl.load(
-        p_write, mask=o_k[None, :] < K, other=0.0
+        p_write,
+        mask=(o_t[:, None] < BT) & (o_k[None, :] < K),
+        other=0.0,
     ).to(tl.float32)
     b_write_coupling = tl.dot(b_right, b_write.T, input_precision="ieee")
     b_write_coupling = tl.where(
-        (token[:, None] > o_t[None, :]) & m_rows[:, None],
+        (token[:, None] > o_t[None, :])
+        & m_rows[:, None]
+        & (o_t[None, :] < BT),
         b_write_coupling,
         0.0,
     )
@@ -84,7 +89,9 @@ def _qgdn_streaming_wy_fwd_kernel(
     value_base = lane * BT * V
     p_values = values + value_base + o_t[:, None] * V + o_v[None, :]
     b_values = tl.load(
-        p_values, mask=o_v[None, :] < V, other=0.0
+        p_values,
+        mask=(o_t[:, None] < BT) & (o_v[None, :] < V),
+        other=0.0,
     ).to(tl.float32)
     b_write_rhs = tl.dot(
         b_write_coupling, b_values, input_precision="ieee"
@@ -158,6 +165,7 @@ def qgdn_streaming_wy_fwd(
         BM=block_rows,
         BK=block_key,
         BV=block_value,
+        BWT=max(16, chunk_size),
         num_warps=8,
         num_stages=2,
     )
