@@ -89,7 +89,10 @@ def _dplr_input_values(q, k, v, g, beta, gamma, recall_from_query, update_order)
     )
 
 
-_compiled_dplr_input_values = torch.compile(_dplr_input_values, fullgraph=True, dynamic=False)
+# One graph per semantic branch, with a dynamic token dimension.  Training
+# still uses a fixed 4096-token shape, while the validation suite can cover
+# several lengths without exhausting Dynamo's global recompile cache.
+_compiled_dplr_input_values = torch.compile(_dplr_input_values, fullgraph=True, dynamic=True)
 
 
 def dplr_inputs(
