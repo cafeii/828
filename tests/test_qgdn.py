@@ -15,6 +15,7 @@ from lit_gpt.mixers.qgdn_reference import (
     qgdn_rank2_chunk_batched_reference,
     qgdn_rank2_chunk_wy_reference,
     qgdn_rank2_factors,
+    qgdn_rank2_parallel_wy_reference,
     qgdn_rank2_reference,
     qgdn_reference,
 )
@@ -227,6 +228,43 @@ def test_rank2_batched_chunk_matches_outputs_state_and_all_gradients(
         torch.testing.assert_close(value, reference, rtol=3e-12, atol=3e-12)
     for value, reference in zip(actual_grads, expected_grads):
         torch.testing.assert_close(value, reference, rtol=8e-11, atol=8e-11)
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, 8])
+@pytest.mark.parametrize("recall_mode", ["query", "key"])
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+def test_rank2_parallel_wy_matches_outputs_state_and_all_gradients(
+    chunk_size, recall_mode, update_order
+):
+    args = inputs(T=7)
+    expected = qgdn_reference(
+        *args[:6],
+        initial_state=args[6],
+        recall_mode=recall_mode,
+        update_order=update_order,
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        args,
+    )
+
+    cloned = [value.detach().clone().requires_grad_() for value in args]
+    actual = qgdn_rank2_parallel_wy_reference(
+        *cloned[:6],
+        initial_state=cloned[6],
+        recall_mode=recall_mode,
+        update_order=update_order,
+        chunk_size=chunk_size,
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        cloned,
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=4e-12, atol=4e-12)
+    for value, reference in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(value, reference, rtol=1e-10, atol=1e-10)
 
 
 def test_compact_affine_composition_is_associative_and_rank_additive():

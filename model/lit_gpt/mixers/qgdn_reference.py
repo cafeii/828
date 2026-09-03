@@ -378,3 +378,174 @@ def qgdn_rank2_chunk_batched_reference(
         state = states[:, :, -1]
 
     return torch.cat(outputs, dim=2).permute(0, 2, 1, 3), state
+
+
+def qgdn_rank2_parallel_wy_reference(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    gamma,
+    *,
+    recall_mode="query",
+    update_order="recall_then_delta",
+    scale=None,
+    initial_state=None,
+    chunk_size=16,
+):
+    """Prepare every physical-T chunk's exact rank-two WY map in parallel.
+
+    Compared with :func:`qgdn_rank2_chunk_batched_reference`, this variant
+    folds the chunk index into the batch dimensions of one triangular solve.
+    It therefore exposes the intended CUDA decomposition explicitly:
+
+    1. prepare all independent intra-chunk WY maps in parallel;
+    2. scan only the compact chunk-end state transitions;
+    3. recover every intra-chunk state and output in parallel from its start.
+
+    The final partial chunk is padded with identity transitions.  The padding
+    is discarded from the output and cannot affect the returned final state.
+    This remains a differentiable correctness oracle; the chunk-state loop is
+    the sole sequential component that a fused inter-chunk kernel must replace.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    qn, alpha, left, right, write = qgdn_rank2_factors(
+        q,
+        k,
+        g,
+        beta,
+        gamma,
+        recall_mode=recall_mode,
+        update_order=update_order,
+    )
+    v = v.to(qn.dtype)
+    batch, length, heads, key_dim = qn.shape
+    value_dim = v.shape[-1]
+    expected = (batch, heads, key_dim, value_dim)
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    output_scale = key_dim**-0.5 if scale is None else scale
+
+    pad = (-length) % chunk_size
+
+    def pad_time(x, value=0):
+        if pad == 0:
+            return x
+        padding = x.new_full((batch, pad, *x.shape[2:]), value)
+        return torch.cat((x, padding), dim=1)
+
+    padded_length = length + pad
+    chunks = padded_length // chunk_size
+    rank = left.shape[-2]
+    system_size = chunk_size * rank
+
+    q_chunks = pad_time(qn).reshape(
+        batch, chunks, chunk_size, heads, key_dim
+    ).permute(0, 3, 1, 2, 4)
+    alpha_chunks = pad_time(alpha, 1).reshape(
+        batch, chunks, chunk_size, heads
+    ).permute(0, 3, 1, 2)
+    left_chunks = pad_time(left).reshape(
+        batch, chunks, chunk_size, heads, rank, key_dim
+    ).permute(0, 3, 1, 2, 4, 5)
+    right_chunks = pad_time(right).reshape(
+        batch, chunks, chunk_size, heads, rank, key_dim
+    ).permute(0, 3, 1, 2, 4, 5)
+    write_chunks = pad_time(write).reshape(
+        batch, chunks, chunk_size, heads, key_dim
+    ).permute(0, 3, 1, 2, 4)
+    value_chunks = pad_time(v).reshape(
+        batch, chunks, chunk_size, heads, value_dim
+    ).permute(0, 3, 1, 2, 4)
+
+    decay_prefix = alpha_chunks.cumprod(dim=-1)
+    normalized_left = left_chunks / alpha_chunks[..., None, None]
+    normalized_write = write_chunks / decay_prefix[..., None]
+
+    # The chunk dimension is a batch dimension here, so all independent
+    # 2C-by-2C causal systems are built and solved in one call.
+    coupling = torch.einsum(
+        "bhntrk,bhnsuk->bhntrsu", right_chunks, normalized_left
+    )
+    causal = torch.tril(
+        torch.ones(
+            chunk_size, chunk_size, dtype=torch.bool, device=qn.device
+        ),
+        diagonal=-1,
+    )
+    coupling = coupling.masked_fill(
+        ~causal[None, None, None, :, None, :, None], 0
+    )
+    eye = torch.eye(system_size, dtype=qn.dtype, device=qn.device)
+    system = eye - coupling.reshape(
+        batch, heads, chunks, system_size, system_size
+    )
+    right_flat = right_chunks.reshape(
+        batch, heads, chunks, system_size, key_dim
+    )
+    effective_right = torch.linalg.solve_triangular(
+        system, right_flat, upper=False, unitriangular=True
+    )
+
+    write_coupling = torch.einsum(
+        "bhntrk,bhnsk->bhntrs", right_chunks, normalized_write
+    ).masked_fill(~causal[None, None, None, :, None, :], 0)
+    write_rhs = torch.einsum(
+        "bhntrs,bhnsv->bhntrv", write_coupling, value_chunks
+    ).reshape(batch, heads, chunks, system_size, value_dim)
+    write_reads = torch.linalg.solve_triangular(
+        system, write_rhs, upper=False, unitriangular=True
+    )
+
+    normalized_left_flat = normalized_left.reshape(
+        batch, heads, chunks, system_size, key_dim
+    )
+    chunk_scale = decay_prefix[..., -1]
+    chunk_left = chunk_scale[..., None, None] * normalized_left_flat
+    write_updates = torch.einsum(
+        "bhntrk,bhntrv->bhntkv",
+        normalized_left,
+        write_reads.reshape(
+            batch, heads, chunks, chunk_size, rank, value_dim
+        ),
+    )
+    direct_writes = normalized_write[..., None] * value_chunks[..., None, :]
+    chunk_bias = chunk_scale[..., None, None] * (
+        write_updates + direct_writes
+    ).sum(dim=3)
+
+    chunk_starts = []
+    for chunk in range(chunks):
+        chunk_starts.append(state)
+        state = _apply_compact_affine(
+            chunk_scale[:, :, chunk],
+            chunk_left[:, :, chunk],
+            effective_right[:, :, chunk],
+            chunk_bias[:, :, chunk],
+            state,
+        )
+    chunk_starts = torch.stack(chunk_starts, dim=2)
+
+    state_reads = torch.einsum(
+        "bhnrk,bhnkv->bhnrv", effective_right, chunk_starts
+    )
+    reads = (state_reads + write_reads).reshape(
+        batch, heads, chunks, chunk_size, rank, value_dim
+    )
+    low_rank_updates = torch.einsum(
+        "bhntrk,bhntrv->bhntkv", normalized_left, reads
+    )
+    normalized_states = chunk_starts[..., None, :, :] + (
+        low_rank_updates + direct_writes
+    ).cumsum(dim=3)
+    states = decay_prefix[..., None, None] * normalized_states
+    outputs = output_scale * torch.einsum(
+        "bhntk,bhntkv->bhntv", q_chunks, states
+    )
+    outputs = outputs.permute(0, 2, 3, 1, 4).reshape(
+        batch, padded_length, heads, value_dim
+    )
+    return outputs[:, :length], state
