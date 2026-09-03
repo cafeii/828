@@ -414,3 +414,53 @@ def test_cuda_update_order_output_state_and_backward(update_order):
             / reference.square().mean().sqrt().clamp_min(1e-6)
         )
         assert relative_rmse < 0.07
+
+
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="physical-T CUDA kernel requires a GPU")
+def test_cuda_physical_t_output_state_and_backward(update_order):
+    from lit_gpt.qgdn_physical import qgdn_physical, qgdn_physical_forward
+
+    xs = inputs(T=64, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=0.1)
+    gpu = [
+        x.detach().to(torch.bfloat16 if i < 3 else torch.float32).requires_grad_()
+        for i, x in enumerate(xs)
+    ]
+    qn = F.normalize(gpu[0].float(), dim=-1).to(torch.bfloat16)
+    kn = F.normalize(gpu[1].float(), dim=-1).to(torch.bfloat16)
+    output, _, final_state = qgdn_physical_forward(
+        qn, kn, *gpu[2:6],
+        update_order=update_order,
+        initial_state=gpu[6],
+        output_final_state=True,
+    )
+    reference_inputs = [value.detach().float().requires_grad_() for value in gpu]
+    reference_output, reference_state = qgdn_reference(
+        *reference_inputs[:6], initial_state=reference_inputs[6], update_order=update_order
+    )
+    for value, reference in ((output, reference_output), (final_state, reference_state)):
+        relative_rmse = (
+            (value.float() - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-6)
+        )
+        assert relative_rmse < 0.025
+
+    differentiable_output = qgdn_physical(
+        qn, kn, *gpu[2:6],
+        update_order=update_order,
+        initial_state=gpu[6],
+    )
+    weight = torch.randn_like(reference_output)
+    actual_gradients = torch.autograd.grad(
+        (differentiable_output.float() * weight).sum(), gpu
+    )
+    expected_gradients = torch.autograd.grad(
+        (reference_output * weight).sum(), reference_inputs
+    )
+    for value, reference in zip(actual_gradients, expected_gradients):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value.float() - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-6)
+        )
+        assert relative_rmse < 0.1

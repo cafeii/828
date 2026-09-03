@@ -22,6 +22,7 @@ QGDN_TRAIN_CHUNK_SIZE = 32
 # in every QGDN layer.  H800 340M/4096 benchmarks validate the compiled graph.
 QGDN_COMPILE_DPLR_INPUTS = True
 QGDN_DISABLE_DPLR_RECOMPUTE = False
+QGDN_USE_PHYSICAL_T = False
 # Optional audited lower bound for the physical log-decay.  Supplying it lets
 # FLA select its tensor-core DPLR backend.  The production default remains
 # unset until the candidate has passed the numerical and throughput gates.
@@ -148,6 +149,21 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
         return op(q=q, k=k, v=v, g=effective_g, beta=beta, scale=scale,
                   initial_state=initial_state, output_final_state=output_final_state,
                   use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
+    if (
+        mode == "chunk"
+        and QGDN_USE_PHYSICAL_T
+        and recall_mode == "query"
+        and cu_seqlens is None
+        and not output_final_state
+    ):
+        from ..qgdn_physical import qgdn_physical
+
+        qn, kn = _normalized(q).to(q.dtype).contiguous(), _normalized(k).to(k.dtype).contiguous()
+        output = qgdn_physical(
+            qn, kn, v.contiguous(), g.contiguous(), beta.contiguous(), gamma.contiguous(),
+            update_order=update_order, scale=scale, initial_state=initial_state,
+        )
+        return output, None
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
     inputs = dplr_inputs(
