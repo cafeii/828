@@ -141,6 +141,40 @@ def test_state_carry_and_causality():
     torch.testing.assert_close(final, carried)
 
 
+@pytest.mark.parametrize("recall_mode", ["query", "key"])
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA compile parity requires an allocated GPU")
+def test_cuda_compiled_dplr_inputs_match_eager_outputs_and_gradients(recall_mode):
+    xs = inputs(T=257, K=64, V=64, dtype=torch.float32, device="cuda")[:6]
+    base = [x.detach().to(torch.bfloat16 if i < 3 else torch.float32) for i, x in enumerate(xs)]
+    eager_inputs = [x.clone().requires_grad_() for x in base]
+    eager = tuple(dplr_inputs(*eager_inputs, recall_mode=recall_mode, compiled=False).values())
+    weights = [torch.randn_like(value) for value in eager]
+    eager_grads = torch.autograd.grad(
+        sum((value * weight).float().mean() for value, weight in zip(eager, weights)),
+        eager_inputs,
+    )
+
+    compiled_inputs = [x.clone().requires_grad_() for x in base]
+    compiled = tuple(dplr_inputs(*compiled_inputs, recall_mode=recall_mode, compiled=True).values())
+    compiled_grads = torch.autograd.grad(
+        sum((value * weight).float().mean() for value, weight in zip(compiled, weights)),
+        compiled_inputs,
+    )
+    for actual, expected in zip(compiled, eager):
+        relative_rmse = (
+            (actual.float() - expected.float()).square().mean().sqrt()
+            / expected.float().square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 1e-5
+    for actual, expected in zip(compiled_grads, eager_grads):
+        assert actual.isfinite().all()
+        relative_rmse = (
+            (actual.float() - expected.float()).square().mean().sqrt()
+            / expected.float().square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 1e-4
+
+
 @pytest.mark.parametrize("recall_weight_init,recall_init", [("zero", 0.1), ("beta", 0.5)])
 def test_backbone_initialization_and_gate_gradient(recall_weight_init, recall_init):
     models = []

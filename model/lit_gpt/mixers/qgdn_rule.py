@@ -17,7 +17,10 @@ import torch.nn.functional as F
 # corresponds to 16 real tokens per DPLR chunk.  Keep the value explicit so
 # speed and numerical regressions cannot silently follow an upstream default.
 QGDN_TRAIN_CHUNK_SIZE = 32
-QGDN_COMPILE_DPLR_INPUTS = False
+# Fuse normalization, gate arithmetic, zero filling, and virtual-row packing.
+# This preserves the exact 2T recurrence while avoiding a long eager op chain
+# in every QGDN layer.  H800 340M/4096 benchmarks validate the compiled graph.
+QGDN_COMPILE_DPLR_INPUTS = True
 QGDN_DISABLE_DPLR_RECOMPUTE = False
 
 
