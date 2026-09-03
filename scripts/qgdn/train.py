@@ -75,6 +75,11 @@ def parse_args():
         help="Fused loss avoids the full FP32 logits buffer and enables larger micro batches",
     )
     p.add_argument("--no-activation-checkpointing", action="store_true")
+    p.add_argument(
+        "--compile-model-forward",
+        action="store_true",
+        help="Compile the full model forward graph after moving it to CUDA",
+    )
     p.add_argument("--resume", type=Path, help="Explicit complete checkpoint; any mismatch/error is fatal")
     p.add_argument("--cpu", action="store_true", help="Tiny integration tests only")
     p.add_argument("--stop-after-step", type=int, help="Orderly checkpoint/exit without changing the planned LR schedule")
@@ -165,6 +170,8 @@ def main():
         raise ValueError("--cpu is restricted to the tiny smoke configurations")
     if args.cpu and args.training_loss != "torch":
         raise ValueError("The fused training loss requires CUDA")
+    if args.cpu and args.compile_model_forward:
+        raise ValueError("Full-model forward compilation is restricted to CUDA")
     if not args.cpu and not torch.cuda.is_available():
         raise RuntimeError("No allocated CUDA GPU; do not run training on the login node")
     device = torch.device("cpu" if args.cpu else f"cuda:{local_rank}")
@@ -204,6 +211,8 @@ def main():
     parameters = sum(p.numel() for p in model.parameters())
     extra_parameters = sum(p.numel() for n, p in model.named_parameters() if ".recall_" in n)
     model.to(device)
+    if args.compile_model_forward:
+        model.forward = torch.compile(model.forward, dynamic=False, fullgraph=False)
     optimizer = torch.optim.AdamW(optimizer_groups(model, args.weight_decay), lr=args.learning_rate,
                                  betas=(args.beta1, args.beta2), fused=device.type == "cuda")
     training_model = DistributedDataParallel(
