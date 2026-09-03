@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:12:04.254191+00:00",
-  "current_stage": "chunk_size_gpu_profile_retry_ready",
+  "updated_at": "2026-09-03T06:15:14.667831+00:00",
+  "current_stage": "chunk32_full_model_validation",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -38,13 +38,19 @@
     }
   ],
   "last_review": {
-    "job_id": "35096",
-    "state": "FAILED",
-    "exit_code": "1:0",
-    "first_error": "GDN baseline does not use gamma; profiler required every differentiated input to be used",
-    "impact": "QGDN candidate measurements completed in memory but report was not written",
-    "remediation": "allow unused gamma only in GDN benchmark autograd call",
-    "retry_count_for_cause": 1
+    "job_id": "35100",
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "result": "chunk32 accepted for full-model validation",
+    "metrics": {
+      "chunk16_median_ms": 9.167807579040527,
+      "chunk32_median_ms": 7.781504154205322,
+      "chunk32_speedup": 1.1781536573601918,
+      "chunk32_peak_memory_gb": 1.015284736,
+      "chunk32_output_relative_rmse": 0.0009447545744478703,
+      "chunk32_state_relative_rmse": 3.8726459024474025e-05,
+      "chunk32_max_gradient_relative_rmse": 0.018422970548272133
+    }
   },
-  "next_action": "commit profiler-only fix and retry the same diagnostic once"
+  "next_action": "validate production chunk32 change and benchmark complete 340M training step versus chunk16 and GDN"
 }

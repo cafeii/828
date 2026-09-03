@@ -1,0 +1,12 @@
+{
+  "job_id": "35100",
+  "exp_id": "20260903-141216-qgdn-chunk-size-profile-retry1-b93f96",
+  "job_name": "王正仁-Metis-20260903-141216-qgdn-chunk-size-profile-retry1-b93f96",
+  "scope": "QGDN DPLR chunk-size retry after profiler-only fix",
+  "commit": "cc06bad6fdb6bc17ad12927f6420a90a86255433",
+  "state": "COMPLETED",
+  "exit_code": "0",
+  "elapsed": "00:00:21",
+  "node": "tko-b3-nv-dgx04",
+  "reviewed_at": "2026-09-03T06:15:14.667831+00:00"
+}

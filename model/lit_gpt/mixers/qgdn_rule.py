@@ -12,6 +12,13 @@ import torch
 import torch.nn.functional as F
 
 
+# The exact same generalized-DPLR recurrence is faster at 32 DPLR kernel
+# rows on H800.  QGDN still presents 2T virtual rows to this backend, so this
+# corresponds to 16 real tokens per DPLR chunk.  Keep the value explicit so
+# speed and numerical regressions cannot silently follow an upstream default.
+QGDN_TRAIN_CHUNK_SIZE = 32
+
+
 def _normalized(x):
     dtype = torch.float64 if x.dtype == torch.float64 else torch.float32
     return F.normalize(x.to(dtype), dim=-1)
@@ -166,7 +173,9 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
     inputs = dplr_inputs(q, k, v, g, beta, gamma, recall_mode)
+    chunk_kwargs = {"chunk_size": QGDN_TRAIN_CHUNK_SIZE} if mode == "chunk" else {}
     o, state = op(**inputs, scale=scale, initial_state=initial_state,
                   output_final_state=output_final_state,
-                  cu_seqlens=None if cu_seqlens is None else cu_seqlens * 2)
+                  cu_seqlens=None if cu_seqlens is None else cu_seqlens * 2,
+                  **chunk_kwargs)
     return o[:, 1::2].contiguous(), state
