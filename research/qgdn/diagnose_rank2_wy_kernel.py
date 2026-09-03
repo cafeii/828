@@ -23,8 +23,9 @@ def parse_args():
     parser.add_argument("--key-dim", type=int, default=64)
     parser.add_argument("--value-dim", type=int, default=64)
     parser.add_argument("--chunk-size", type=int, default=16)
-    parser.add_argument("--warmup", type=int, default=3)
-    parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument("--warmup", type=int, default=6)
+    parser.add_argument("--repeats", type=int, default=50)
+    parser.add_argument("--memory-repeats", type=int, default=3)
     return parser.parse_args()
 
 
@@ -72,31 +73,56 @@ def relative_rmse(actual, expected):
     )
 
 
-def benchmark(tensors, update_order, backend, args):
-    output_grads = None
-    for _ in range(args.warmup):
-        outputs, gradients, output_grads = run_step(
-            tensors,
-            update_order,
-            args.chunk_size,
-            backend,
-            output_grads,
-        )
-        assert all(bool(value.isfinite().all().item()) for value in outputs)
-        assert all(bool(value.isfinite().all().item()) for value in gradients)
-    del outputs, gradients
-    torch.cuda.synchronize()
+def percentile(values, quantile):
+    ordered = sorted(values)
+    position = quantile * (len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
-    times_ms = []
+
+def summarize_samples(values):
+    median = statistics.median(values)
+    absolute_deviations = [abs(value - median) for value in values]
+    return {
+        "median": median,
+        "mad": statistics.median(absolute_deviations),
+        "p10": percentile(values, 0.10),
+        "p90": percentile(values, 0.90),
+        "minimum": min(values),
+        "maximum": max(values),
+        "samples": values,
+    }
+
+
+def timed_step(tensors, update_order, backend, args, output_grads):
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    outputs, gradients, _ = run_step(
+        tensors,
+        update_order,
+        args.chunk_size,
+        backend,
+        output_grads,
+    )
+    end.record()
+    torch.cuda.synchronize()
+    assert all(bool(value.isfinite().all().item()) for value in outputs)
+    assert all(bool(value.isfinite().all().item()) for value in gradients)
+    elapsed_ms = start.elapsed_time(end)
+    del outputs, gradients
+    return elapsed_ms
+
+
+def measure_memory(tensors, update_order, backend, args, output_grads):
     peak_bytes = []
     incremental_peak_bytes = []
-    for _ in range(args.repeats):
+    for _ in range(args.memory_repeats):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         allocated_before = torch.cuda.memory_allocated()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
         outputs, gradients, _ = run_step(
             tensors,
             update_order,
@@ -104,27 +130,111 @@ def benchmark(tensors, update_order, backend, args):
             backend,
             output_grads,
         )
-        end.record()
         torch.cuda.synchronize()
         assert all(bool(value.isfinite().all().item()) for value in outputs)
         assert all(bool(value.isfinite().all().item()) for value in gradients)
-        times_ms.append(start.elapsed_time(end))
         peak = torch.cuda.max_memory_allocated()
         peak_bytes.append(peak)
         incremental_peak_bytes.append(peak - allocated_before)
         del outputs, gradients
-
-    median_ms = statistics.median(times_ms)
     return {
-        "median_forward_backward_ms": median_ms,
-        "physical_tokens_per_second": (
-            args.batch_size * args.sequence_length * 1000 / median_ms
-        ),
         "peak_allocated_gb": max(peak_bytes) / 1e9,
         "incremental_peak_allocated_gb": max(incremental_peak_bytes) / 1e9,
-        "all_outputs_states_and_gradients_finite": True,
-        "times_ms": times_ms,
     }
+
+
+def benchmark_interleaved(tensors, output_grads_by_order, args):
+    backends = ("triangular", "triton")
+    for warmup_index in range(args.warmup):
+        order_offset = warmup_index % len(UPDATE_ORDERS)
+        orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
+        for position, update_order in enumerate(orders):
+            backend_order = backends
+            if (warmup_index + position) % 2:
+                backend_order = tuple(reversed(backends))
+            for backend in backend_order:
+                timed_step(
+                    tensors,
+                    update_order,
+                    backend,
+                    args,
+                    output_grads_by_order[update_order],
+                )
+
+    times_ms = {
+        update_order: {backend: [] for backend in backends}
+        for update_order in UPDATE_ORDERS
+    }
+    paired_speedups = {update_order: [] for update_order in UPDATE_ORDERS}
+    backend_sequences = {update_order: [] for update_order in UPDATE_ORDERS}
+    for repeat_index in range(args.repeats):
+        order_offset = repeat_index % len(UPDATE_ORDERS)
+        orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
+        for position, update_order in enumerate(orders):
+            backend_order = backends
+            if (repeat_index + position) % 2:
+                backend_order = tuple(reversed(backends))
+            paired_times = {}
+            for backend in backend_order:
+                paired_times[backend] = timed_step(
+                    tensors,
+                    update_order,
+                    backend,
+                    args,
+                    output_grads_by_order[update_order],
+                )
+                times_ms[update_order][backend].append(paired_times[backend])
+            paired_speedups[update_order].append(
+                paired_times["triangular"] / paired_times["triton"]
+            )
+            backend_sequences[update_order].append("->".join(backend_order))
+
+    results = {}
+    for update_order in UPDATE_ORDERS:
+        backend_results = {}
+        for backend in backends:
+            timing = summarize_samples(times_ms[update_order][backend])
+            memory = measure_memory(
+                tensors,
+                update_order,
+                backend,
+                args,
+                output_grads_by_order[update_order],
+            )
+            backend_results[backend] = {
+                "median_forward_backward_ms": timing["median"],
+                "physical_tokens_per_second": (
+                    args.batch_size
+                    * args.sequence_length
+                    * 1000
+                    / timing["median"]
+                ),
+                "timing_ms": timing,
+                **memory,
+                "all_outputs_states_and_gradients_finite": True,
+            }
+        baseline = backend_results["triangular"]
+        candidate = backend_results["triton"]
+        candidate["speedup_vs_triangular"] = (
+            baseline["median_forward_backward_ms"]
+            / candidate["median_forward_backward_ms"]
+        )
+        candidate["paired_speedup_vs_triangular"] = summarize_samples(
+            paired_speedups[update_order]
+        )
+        candidate["peak_memory_ratio_vs_triangular"] = (
+            candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+        )
+        candidate["incremental_peak_memory_ratio_vs_triangular"] = (
+            candidate["incremental_peak_allocated_gb"]
+            / baseline["incremental_peak_allocated_gb"]
+        )
+        results[update_order] = {
+            "triangular": baseline,
+            "triton_fused": candidate,
+            "backend_sequences": backend_sequences[update_order],
+        }
+    return results
 
 
 def main():
@@ -133,6 +243,7 @@ def main():
         raise RuntimeError("CUDA is required")
     tensors = make_inputs(args)
     results = {}
+    output_grads_by_order = {}
     for update_order in UPDATE_ORDERS:
         expected_inputs = tuple(
             value.detach().clone().requires_grad_() for value in tensors
@@ -166,24 +277,23 @@ def main():
             raise AssertionError(
                 f"{update_order} Triton WY gradient RMSE failed: {errors}"
             )
-        baseline = benchmark(tensors, update_order, "triangular", args)
-        candidate = benchmark(tensors, update_order, "triton", args)
-        candidate["speedup_vs_triangular"] = (
-            baseline["median_forward_backward_ms"]
-            / candidate["median_forward_backward_ms"]
+        output_grads_by_order[update_order] = tuple(
+            value.detach() for value in output_grads
         )
-        candidate["peak_memory_ratio_vs_triangular"] = (
-            candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+        results[update_order] = {"relative_rmse": errors}
+        del (
+            expected_inputs,
+            expected,
+            expected_grads,
+            actual_inputs,
+            actual,
+            actual_grads,
+            output_grads,
         )
-        candidate["incremental_peak_memory_ratio_vs_triangular"] = (
-            candidate["incremental_peak_allocated_gb"]
-            / baseline["incremental_peak_allocated_gb"]
-        )
-        results[update_order] = {
-            "relative_rmse": errors,
-            "triangular": baseline,
-            "triton_fused": candidate,
-        }
+
+    benchmark_results = benchmark_interleaved(tensors, output_grads_by_order, args)
+    for update_order in UPDATE_ORDERS:
+        results[update_order].update(benchmark_results[update_order])
 
     payload = {
         "device": torch.cuda.get_device_name(),
@@ -198,7 +308,11 @@ def main():
         },
         "warmup": args.warmup,
         "repeats": args.repeats,
-        "scope": "operator forward+backward; not a full-model benchmark",
+        "memory_repeats": args.memory_repeats,
+        "scope": (
+            "operator forward+backward; order-rotated interleaved A/B timing; "
+            "memory measured separately; not a full-model benchmark"
+        ),
         "results": results,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
