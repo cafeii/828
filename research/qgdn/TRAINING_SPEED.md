@@ -71,6 +71,10 @@ Commit `221892c59d07bfc55fcf5a5206eae9dffe2864c2` 增加了不保存 forward tok
 
 这一步证明了 backward 公式和重算边界，但没有得到可用训练速度：同一 FP32 B=2/T=128/H=4/K=V=64/chunk=16 算子 forward+backward 中，重算路径约 48.1–48.4 ms，triangular oracle 为 8.75–13.0 ms，速度比分别为 `0.270x`、`0.182x`、`0.198x`。peak allocated memory 仅降至 `0.975x`，incremental peak 为 `0.957x`。瓶颈是 Python token 循环与大量 einsum launch；该实现只保留为下一版专用 Triton backward 的数值 oracle，不接入训练，也不改变 `QGDN_USE_PHYSICAL_T=False`。
 
+Commit `f09b36e81f59d73d5767173b48a20bb5e40f4d0c` 又将伴随求解和四组 WY 因子梯度融合到单个 Triton backward program。CPU/FP64 dense-adjoint、逐 token 手写反向和 PyTorch autograd 三方一致，rank-2 聚焦集合为 102 passed。Slurm 35649 为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed；覆盖三种顺序、chunk 8/16、尾部 padding 与全部输入梯度，最大输出/状态/梯度相对 RMSE 为 `4.62e-8`、`2.48e-8`、`7.71e-7`，所有值有限。
+
+融合后同配置 forward+backward 为 8.78、6.37、6.10 ms，相对 triangular 的速度比分别为 Recall→Delta `0.798x`、Delta→Recall `1.068x`、Parallel `1.071x`；peak allocated memory 比为 `0.975x`，incremental peak 比为 `0.957x`。这比 Python 重算的约 48 ms 大幅改善，但第一种顺序仍存在 6.23–10.24 ms 的明显波动，不能据此声称三种顺序稳定加速。下一步先做顺序轮换的交错 A/B，再决定是否值得融合 chunk-state/output；整模型门禁与 `QGDN_USE_PHYSICAL_T=False` 均保持不变。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -94,3 +98,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - Triton WY 首次编译门禁：Slurm 35627（chunk=8 的 dot 维度约束失败；chunk=16 三种顺序通过）
 - forward-only Triton WY CUDA 数值与算子诊断：Slurm 35628（6/6 门禁通过；速度信号混合）
 - 手写重算 WY backward 数值与算子诊断：Slurm 35642（6/6 全梯度门禁通过；Python/einsum 路径因仅有 0.182x–0.270x 速度而否决）
+- 融合 Triton WY backward 数值与算子诊断：Slurm 35649（6/6 全梯度门禁通过；两种顺序约 1.07x，一种受抖动影响为 0.798x）

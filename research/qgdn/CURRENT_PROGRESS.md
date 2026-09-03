@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 22:51（Asia/Shanghai）
+更新时间：2026-09-03 23:04（Asia/Shanghai）
 
 ## 当前目标
 
@@ -105,12 +105,17 @@ H800 作业 35642（实验 `20260903-224553-qgdn-wy-recompute-bwd-27370d`）为 
 
 但这版 backward 仍由 Python token 循环和通用 einsum 执行。FP32 B=2/T=128/H=4/K=V=64/chunk=16 的 forward+backward 中位数约为 48.1–48.4 ms，而 triangular oracle 为 8.75–13.0 ms，三种顺序的速度比分别只有 `0.270x`、`0.182x`、`0.198x`。peak allocated memory 比为 `0.975x`，incremental peak 比为 `0.957x`。因此手写公式与重算边界作为 CUDA backward 的可靠 oracle 保留，但当前执行路径因速度被否决，不接入训练默认。
 
+Commit `f09b36e81f59d73d5767173b48a20bb5e40f4d0c` 将上述伴随公式融合进单个 Triton backward program。每个 B/H/chunk lane 在片上重建 `A^-1`，用 `A^-T` 同时反传 effective-right 与 write-response，再将 causal coupling 的梯度映射回 normalized-left、right、normalized-write 和 values。CPU/FP64 新增的 dense-adjoint 公式与逐 token 手写反向、PyTorch autograd 三方一致，完整 rank-2 聚焦集合仍为 102 passed。
+
+H800 作业 35649（实验 `20260903-225903-qgdn-wy-triton-bwd-ec36b5`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 6 passed / 0 failed。三种更新顺序、chunk 8/16、尾 chunk padding、输出、末状态和全部七组模型输入梯度均有限；最大输出、末状态、输入梯度相对 RMSE 分别为 `4.62e-8`、`2.48e-8`、`7.71e-7`。
+
+同一算子配置的 fused forward+backward 中位数为 Recall→Delta 8.78 ms、Delta→Recall 6.37 ms、Parallel 6.10 ms，相对 triangular 分别为 `0.798x`、`1.068x`、`1.071x`；peak allocated memory 比仍为 `0.975x`，incremental peak 比为 `0.957x`。相比上一版 Python 重算的约 48 ms，launch 开销已经基本消除，但 Recall→Delta 的 10 次样本仍在 6.23–10.24 ms 间波动。当前结论是 fused backward 数值通过、两种顺序有约 7% 算子收益，尚未证明三种顺序稳定加速，也没有整模型结果。
+
 ## 下一任务的第一步
 
-1. 将已通过 FP64/CUDA 梯度门禁的手写 WY backward 融合成专用 Triton kernel，消除当前约 48 ms 的 Python/einsum 循环开销。
-2. 用交错 A/B 或更多稳态样本复测 forward+backward；任何性能结论都必须覆盖三种顺序。
-3. 接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 双 solve 路径作为 CUDA 数值 oracle。
-4. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
-5. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
+1. 用顺序轮换、交错 A/B 和更多稳态样本复测 fused forward+backward，排除 Recall→Delta 的首组/调度抖动；性能结论必须覆盖三种顺序。
+2. 若三种顺序的 WY 收益稳定，再接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 路径作为数值 oracle。
+3. 全部 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
+4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
