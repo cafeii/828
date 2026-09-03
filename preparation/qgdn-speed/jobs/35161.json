@@ -4,9 +4,12 @@
   "job_name": "王正仁-Metis-20260903-150235-qgdn-no-recompute-profile-f6fc7c",
   "scope": "isolated 340M QGDN DPLR backward recompute speed/memory benchmark",
   "commit": "21e727c7bb0aaa1fc4a32ebfb16f6a8418f6955f",
-  "state": "RUNNING",
+  "state": "COMPLETED",
   "node": "tko-b3-nv-dgx16",
   "resources": "1 GPU / 8 CPU / 64G / 1h",
   "required_output": "qgdn-no-recompute.json",
-  "submitted_at": "2026-09-03T07:03:55.549435+00:00"
+  "submitted_at": "2026-09-03T07:03:55.549435+00:00",
+  "exit_code": "0",
+  "elapsed": "00:11:58",
+  "reviewed_at": "2026-09-03T07:17:00.949817+00:00"
 }

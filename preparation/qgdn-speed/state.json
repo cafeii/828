@@ -1,22 +1,9 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:03:55.549435+00:00",
-  "current_stage": "dplr_no_recompute_benchmark",
-  "active_jobs": {
-    "35161": {
-      "job_id": "35161",
-      "exp_id": "20260903-150235-qgdn-no-recompute-profile-f6fc7c",
-      "job_name": "王正仁-Metis-20260903-150235-qgdn-no-recompute-profile-f6fc7c",
-      "scope": "isolated 340M QGDN DPLR backward recompute speed/memory benchmark",
-      "commit": "21e727c7bb0aaa1fc4a32ebfb16f6a8418f6955f",
-      "state": "RUNNING",
-      "node": "tko-b3-nv-dgx16",
-      "resources": "1 GPU / 8 CPU / 64G / 1h",
-      "required_output": "qgdn-no-recompute.json",
-      "submitted_at": "2026-09-03T07:03:55.549435+00:00"
-    }
-  },
+  "updated_at": "2026-09-03T07:17:00.949817+00:00",
+  "current_stage": "dplr_no_recompute_confirmation",
+  "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -76,15 +63,20 @@
     }
   ],
   "last_review": {
-    "job_id": "35159",
+    "job_id": "35161",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "production compiled input CUDA parity passed",
+    "result": "no-recompute candidate positive but control unstable; long pair required",
     "metrics": {
-      "tests_passed": 2,
-      "tests_deselected": 27,
-      "seconds": 75.92
+      "compiled_tokens_per_second": 11008.714965964948,
+      "no_recompute_tokens_per_second": 16551.51794626512,
+      "reported_speedup": 1.5034922783845852,
+      "compiled_median_step_seconds": 0.32634778501233086,
+      "no_recompute_median_step_seconds": 0.24738629354396835,
+      "compiled_peak_memory_gb": 6.794485248,
+      "no_recompute_peak_memory_gb": 6.781902336,
+      "final_loss_absolute_difference": 0.0
     }
   },
-  "next_action": "monitor job 35161 and decide DPLR no-recompute speed/memory tradeoff"
+  "next_action": "add a focused isolated recompute pair mode and run 5-warmup/50-step confirmation"
 }
