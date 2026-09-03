@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:22:02.248921+00:00",
-  "current_stage": "dplr_no_recompute_reverse_confirmation",
+  "updated_at": "2026-09-03T07:25:45.498192+00:00",
+  "current_stage": "final_ddp_smoke",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -68,19 +68,18 @@
     }
   ],
   "last_review": {
-    "job_id": "35171",
+    "job_id": "35173",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "no-recompute positive; reverse-order confirmation required",
+    "result": "no-recompute rejected due order reversal",
     "metrics": {
-      "normal_tokens_per_second": 12329.530067416159,
-      "no_recompute_tokens_per_second": 13520.964694173676,
-      "mean_speedup": 1.0966326064531995,
-      "median_speedup": 1.074540222776707,
-      "normal_peak_memory_gb": 6.785572352,
+      "no_recompute_tokens_per_second": 11683.661500354085,
+      "normal_tokens_per_second": 14446.214028274731,
+      "no_recompute_speedup": 0.8087697909975815,
       "no_recompute_peak_memory_gb": 6.781902336,
+      "normal_peak_memory_gb": 6.785572352,
       "final_loss_absolute_difference": 0.0
     }
   },
-  "next_action": "run reverse-order long recompute pair; enable no-recompute only if non-regressive"
+  "next_action": "run final 8-GPU DDP smoke on production compile=true, recompute=false commit; no full pretraining"
 }
