@@ -393,6 +393,7 @@ def qgdn_rank2_parallel_wy_reference(
     scale=None,
     initial_state=None,
     chunk_size=16,
+    fuse_wy_rhs=True,
 ):
     """Prepare every physical-T chunk's exact rank-two WY map in parallel.
 
@@ -406,6 +407,9 @@ def qgdn_rank2_parallel_wy_reference(
 
     The final partial chunk is padded with identity transitions.  The padding
     is discarded from the output and cannot affect the returned final state.
+    By default, the effective-right factors and value-dependent write response
+    share one solve with concatenated right-hand sides.  ``fuse_wy_rhs=False``
+    retains the equivalent two-solve decomposition for isolated benchmarking.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
     """
@@ -486,19 +490,29 @@ def qgdn_rank2_parallel_wy_reference(
     right_flat = right_chunks.reshape(
         batch, heads, chunks, system_size, key_dim
     )
-    effective_right = torch.linalg.solve_triangular(
-        system, right_flat, upper=False, unitriangular=True
-    )
-
     write_coupling = torch.einsum(
         "bhntrk,bhnsk->bhntrs", right_chunks, normalized_write
     ).masked_fill(~causal[None, None, None, :, None, :], 0)
     write_rhs = torch.einsum(
         "bhntrs,bhnsv->bhntrv", write_coupling, value_chunks
     ).reshape(batch, heads, chunks, system_size, value_dim)
-    write_reads = torch.linalg.solve_triangular(
-        system, write_rhs, upper=False, unitriangular=True
-    )
+    if fuse_wy_rhs:
+        wy_solution = torch.linalg.solve_triangular(
+            system,
+            torch.cat((right_flat, write_rhs), dim=-1),
+            upper=False,
+            unitriangular=True,
+        )
+        effective_right, write_reads = wy_solution.split(
+            (key_dim, value_dim), dim=-1
+        )
+    else:
+        effective_right = torch.linalg.solve_triangular(
+            system, right_flat, upper=False, unitriangular=True
+        )
+        write_reads = torch.linalg.solve_triangular(
+            system, write_rhs, upper=False, unitriangular=True
+        )
 
     normalized_left_flat = normalized_left.reshape(
         batch, heads, chunks, system_size, key_dim

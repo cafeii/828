@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import json
 import statistics
 from pathlib import Path
@@ -110,7 +111,12 @@ def main():
     tensors = make_inputs(args)
     operators = {
         "per_chunk_solve_oracle": qgdn_rank2_chunk_batched_reference,
-        "parallel_wy_prepare_oracle": qgdn_rank2_parallel_wy_reference,
+        "parallel_wy_two_solve_oracle": partial(
+            qgdn_rank2_parallel_wy_reference, fuse_wy_rhs=False
+        ),
+        "parallel_wy_fused_rhs_oracle": partial(
+            qgdn_rank2_parallel_wy_reference, fuse_wy_rhs=True
+        ),
     }
     results = {}
     for update_order in UPDATE_ORDERS:
@@ -119,13 +125,21 @@ def main():
             for name, operator in operators.items()
         }
         baseline = results[update_order]["per_chunk_solve_oracle"]
-        candidate = results[update_order]["parallel_wy_prepare_oracle"]
+        two_solve = results[update_order]["parallel_wy_two_solve_oracle"]
+        candidate = results[update_order]["parallel_wy_fused_rhs_oracle"]
         candidate["speedup_vs_per_chunk_solve"] = (
             baseline["median_forward_backward_ms"]
             / candidate["median_forward_backward_ms"]
         )
+        candidate["speedup_vs_two_solve_parallel_wy"] = (
+            two_solve["median_forward_backward_ms"]
+            / candidate["median_forward_backward_ms"]
+        )
         candidate["peak_memory_ratio_vs_per_chunk_solve"] = (
             candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+        )
+        candidate["peak_memory_ratio_vs_two_solve_parallel_wy"] = (
+            candidate["peak_allocated_gb"] / two_solve["peak_allocated_gb"]
         )
 
     payload = {
