@@ -60,7 +60,14 @@ class TileLangBackend(BaseBackend):
         cu_seqlens: torch.LongTensor | None = None,
         chunk_size: int = 64,
         chunk_indices: torch.LongTensor | None = None,
+        q_aux: torch.Tensor | None = None,
+        do_aux: torch.Tensor | None = None,
+        scale_aux: float | None = None,
     ) -> tuple[bool, str | None]:
+        if (q_aux is None) != (do_aux is None):
+            return False, "q_aux and do_aux must be supplied together"
+        if q_aux is not None and (q_aux.shape != q.shape or do_aux.shape != do.shape):
+            return False, "auxiliary read tensors must match q and do shapes"
         if g is None:
             return False, "TileLang backend only supports gated case (g != None)"
         if g_gamma is not None:
@@ -94,6 +101,9 @@ class TileLangBackend(BaseBackend):
         cu_seqlens: torch.LongTensor | None = None,
         chunk_size: int = 64,
         chunk_indices: torch.LongTensor | None = None,
+        q_aux: torch.Tensor | None = None,
+        do_aux: torch.Tensor | None = None,
+        scale_aux: float | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         from fla.ops.common.backends.tilelang.chunk_bwd import (
             chunk_bwd_dqkwg_tilelang,
@@ -114,6 +124,9 @@ class TileLangBackend(BaseBackend):
             chunk_size=chunk_size,
             chunk_indices=chunk_indices,
             state_v_first=state_v_first,
+            q_aux=q_aux,
+            do_aux=do_aux,
+            scale_aux=scale_aux,
         )
 
     def parallel_attn_fwd_verifier(

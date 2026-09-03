@@ -33,6 +33,7 @@ def _build_kernel(
     dtype_str,
     USE_G,
     USE_DW,
+    USE_AUX_READ,
     STATE_V_FIRST,
     IS_VARLEN=False,
     num_warps=4,
@@ -52,7 +53,7 @@ def _build_kernel(
     _NV = NV
     _hD1, _hD2, _thD1, _thD2 = hD1, hD2, tile_hD1, tile_hD2
     _threads = threads
-    _USE_G, _USE_DW = USE_G, USE_DW
+    _USE_G, _USE_DW, _USE_AUX = USE_G, USE_DW, USE_AUX_READ
     _TS, _VAR = STATE_V_FIRST, IS_VARLEN
 
     # T, NT, total_h are dynamic (vary with sequence length, no recompilation).
@@ -71,18 +72,26 @@ def _build_kernel(
     dg_s = (_NK, _B, T_d, _HV)
 
     @T.macro
-    def kernel_body(q, k, v, g, h, do, dh, dq, dk, dw, dv, dg, scale,
+    def kernel_body(q, q_aux, k, v, g, h, do, do_aux, dh, dq, dq_aux, dk, dw, dv, dg, scale, scale_aux,
                     i_b, i_h, i_k, t_s, T_seq, i_t_local, h_idx, k_off):
         # Map the value-head program id to the qk-head it belongs to. For GVA
         # (HV > H) multiple value-heads share the same q/k head.
         i_hqk = i_h // _G
         # -- accumulators --
         b_dq = T.alloc_fragment((_BT, _BK), T.float32)
+        if _USE_AUX:
+            b_dq_aux = T.alloc_fragment((_BT, _BK), T.float32)
         b_dk = T.alloc_fragment((_BT, _BK), T.float32)
         b_ds = T.alloc_fragment((_BT, _BT), T.float32)
+        if _USE_AUX:
+            b_ds_aux = T.alloc_fragment((_BT, _BT), T.float32)
         T.clear(b_dq)
+        if _USE_AUX:
+            T.clear(b_dq_aux)
         T.clear(b_dk)
         T.clear(b_ds)
+        if _USE_AUX:
+            T.clear(b_ds_aux)
 
         if _USE_DW:
             b_dw = T.alloc_fragment((_BT, _BK), T.float32)
@@ -91,6 +100,8 @@ def _build_kernel(
         # -- shared tiles --
         s_v = T.alloc_shared((_BT, _BV), _dtype)
         s_do = T.alloc_shared((_BT, _BV), _dtype)
+        if _USE_AUX:
+            s_do_aux = T.alloc_shared((_BT, _BV), _dtype)
         s_h = T.alloc_shared((_thD1, _thD2), _dtype)
         s_dh = T.alloc_shared((_thD1, _thD2), _dtype)
 
@@ -107,6 +118,8 @@ def _build_kernel(
 
             T.copy(v[i_b, t_s:t_s + _BT, i_h, v_off_c:v_off_c + _BV], s_v)
             T.copy(do[i_b, t_s:t_s + _BT, i_h, v_off_c:v_off_c + _BV], s_do)
+            if _USE_AUX:
+                T.copy(do_aux[i_b, t_s:t_s + _BT, i_h, v_off_c:v_off_c + _BV], s_do_aux)
 
             if _TS:
                 T.copy(h[h_idx, v_off_c:v_off_c + _BV, k_off:k_off + _BK], s_h)
@@ -116,6 +129,8 @@ def _build_kernel(
                 T.copy(dh[h_idx, k_off:k_off + _BK, v_off_c:v_off_c + _BV], s_dh)
 
             T.gemm(s_do, s_v, b_ds, transpose_B=True)
+            if _USE_AUX:
+                T.gemm(s_do_aux, s_v, b_ds_aux, transpose_B=True)
 
             # h·dh reduction must precede the gemms that consume s_h/s_dh:
             # the downstream gemms are what the pipeline recognizes as consumers,
@@ -132,9 +147,13 @@ def _build_kernel(
 
             if _TS:
                 T.gemm(s_do, s_h, b_dq)
+                if _USE_AUX:
+                    T.gemm(s_do_aux, s_h, b_dq_aux)
                 T.gemm(s_v, s_dh, b_dk)
             else:
                 T.gemm(s_do, s_h, b_dq, transpose_B=True)
+                if _USE_AUX:
+                    T.gemm(s_do_aux, s_h, b_dq_aux, transpose_B=True)
                 T.gemm(s_v, s_dh, b_dk, transpose_B=True)
 
             if _USE_DW:
@@ -160,8 +179,12 @@ def _build_kernel(
         # ========== load q, k ==========
         # q/k are indexed by the shared qk-head, not the value-head.
         s_q = T.alloc_shared((_BT, _BK), _dtype)
+        if _USE_AUX:
+            s_q_aux = T.alloc_shared((_BT, _BK), _dtype)
         s_k = T.alloc_shared((_BT, _BK), _dtype)
         T.copy(q[i_b, t_s:t_s + _BT, i_hqk, k_off:k_off + _BK], s_q)
+        if _USE_AUX:
+            T.copy(q_aux[i_b, t_s:t_s + _BT, i_hqk, k_off:k_off + _BK], s_q_aux)
         T.copy(k[i_b, t_s:t_s + _BT, i_hqk, k_off:k_off + _BK], s_k)
 
         # ========== USE_G path ==========
@@ -180,6 +203,8 @@ def _build_kernel(
             # b_dq *= exp2(g) * scale  (inline, no extra fragment)
             for _i, _j in T.Parallel(_BT, _BK):
                 b_dq[_i, _j] = b_dq[_i, _j] * T.exp2(s_g[_i]) * scale
+                if _USE_AUX:
+                    b_dq_aux[_i, _j] = b_dq_aux[_i, _j] * T.exp2(s_g[_i]) * scale_aux
 
             # Gate b_dk with m_t mask: zero out OOB positions
             for _i, _j in T.Parallel(_BT, _BK):
@@ -208,28 +233,53 @@ def _build_kernel(
                     causal,
                     b_ds[_i, _j] * T.exp2(s_g[_i] - s_g[_j]) * scale,
                     0.0)
+                if _USE_AUX:
+                    b_ds_aux[_i, _j] = T.if_then_else(
+                        causal,
+                        b_ds_aux[_i, _j] * T.exp2(s_g[_i] - s_g[_j]) * scale_aux,
+                        0.0)
 
             # cast ds for final gemms
             s_ds = T.alloc_shared((_BT, _BT), _dtype)
             f_ds = T.alloc_fragment((_BT, _BT), _dtype)
+            if _USE_AUX:
+                s_ds_aux = T.alloc_shared((_BT, _BT), _dtype)
+                f_ds_aux = T.alloc_fragment((_BT, _BT), _dtype)
             for _i, _j in T.Parallel(_BT, _BT):
                 f_ds[_i, _j] = T.cast(b_ds[_i, _j], _dtype)
+                if _USE_AUX:
+                    f_ds_aux[_i, _j] = T.cast(b_ds_aux[_i, _j], _dtype)
             T.copy(f_ds, s_ds)
+            if _USE_AUX:
+                T.copy(f_ds_aux, s_ds_aux)
 
             T.gemm(s_ds, s_k, b_dq)               # dq += ds @ k
             T.gemm(s_ds, s_q, b_dk, transpose_A=True)  # dk += ds^T @ q
+            if _USE_AUX:
+                T.gemm(s_ds_aux, s_k, b_dq_aux)
+                T.gemm(s_ds_aux, s_q_aux, b_dk, transpose_A=True)
 
             # b_dg = sum(b_dq * q) - sum(b_dk * k)  using the fully-updated b_dq/b_dk
             f_prod1 = T.alloc_fragment((_BT, _BK), T.float32)
+            if _USE_AUX:
+                f_prod_aux = T.alloc_fragment((_BT, _BK), T.float32)
             for _i, _j in T.Parallel(_BT, _BK):
                 f_prod1[_i, _j] = b_dq[_i, _j] * s_q[_i, _j]
+                if _USE_AUX:
+                    f_prod_aux[_i, _j] = b_dq_aux[_i, _j] * s_q_aux[_i, _j]
                 f_prod2[_i, _j] = b_dk[_i, _j] * s_k[_i, _j]
             f_dg1 = T.alloc_fragment((_BT,), T.float32)
+            if _USE_AUX:
+                f_dg_aux = T.alloc_fragment((_BT,), T.float32)
             T.reduce_sum(f_prod1, f_dg1, dim=1)
+            if _USE_AUX:
+                T.reduce_sum(f_prod_aux, f_dg_aux, dim=1)
             T.reduce_sum(f_prod2, f_dg2, dim=1)
             f_dg_diff = T.alloc_fragment((_BT,), T.float32)
             for _i in T.Parallel(_BT):
                 f_dg_diff[_i] = f_dg1[_i] - f_dg2[_i]
+                if _USE_AUX:
+                    f_dg_diff[_i] = f_dg_diff[_i] + f_dg_aux[_i]
             s_dg = T.alloc_shared((_BT,), T.float32)
             T.copy(f_dg_diff, s_dg)
 
@@ -243,6 +293,14 @@ def _build_kernel(
             for _i, _j in T.Parallel(_BT, _BK):
                 if (i_t_local * _BT + _i) < T_seq:
                     dq[i_b, t_s + _i, i_h, k_off + _j] = s_out[_i, _j]
+            if _USE_AUX:
+                for _i, _j in T.Parallel(_BT, _BK):
+                    f_out[_i, _j] = T.cast(b_dq_aux[_i, _j], _dtype)
+                T.copy(f_out, s_out)
+                T.sync_threads()
+                for _i, _j in T.Parallel(_BT, _BK):
+                    if (i_t_local * _BT + _i) < T_seq:
+                        dq_aux[i_b, t_s + _i, i_h, k_off + _j] = s_out[_i, _j]
             for _i, _j in T.Parallel(_BT, _BK):
                 f_out[_i, _j] = T.cast(b_dk[_i, _j], _dtype)
             T.copy(f_out, s_out)
@@ -260,15 +318,15 @@ def _build_kernel(
     if _VAR:
         @T.prim_func
         def kernel(
-            q: T.Tensor(qk_s, _dtype), k: T.Tensor(qk_s, _dtype),
+            q: T.Tensor(qk_s, _dtype), q_aux: T.Tensor(qk_s, _dtype), k: T.Tensor(qk_s, _dtype),
             v: T.Tensor(v_s, _dtype), g: T.Tensor(g_s, T.float32),
-            h: T.Tensor(h_s, _dtype), do: T.Tensor(v_s, _dtype),
-            dh: T.Tensor(h_s, _dtype), dq: T.Tensor(dqk_s, _dtype),
+            h: T.Tensor(h_s, _dtype), do: T.Tensor(v_s, _dtype), do_aux: T.Tensor(v_s, _dtype),
+            dh: T.Tensor(h_s, _dtype), dq: T.Tensor(dqk_s, _dtype), dq_aux: T.Tensor(dqk_s, _dtype),
             dk: T.Tensor(dqk_s, _dtype), dw: T.Tensor(dqk_s, _dtype),
             dv: T.Tensor(v_s, _dtype), dg: T.Tensor(dg_s, T.float32),
             cu_seqlens: T.Tensor((Ncu_d,), T.int32),
             chunk_indices: T.Tensor((NT_d, 2), T.int32),
-            scale: T.float32,
+            scale: T.float32, scale_aux: T.float32,
         ):
             with T.Kernel(_NK, NT_d, _HV, threads=_threads) as (i_k, i_t, i_h):
                 i_n = chunk_indices[i_t, 0]
@@ -277,19 +335,19 @@ def _build_kernel(
                 T_seq = cu_seqlens[i_n + 1] - bos
                 h_idx = i_t * _HV + i_h
                 t_s = bos + i_t_local * _BT
-                kernel_body(q, k, v, g, h, do, dh, dq, dk, dw, dv, dg,
-                            scale, 0, i_h, i_k, t_s, T_seq, i_t_local,
+                kernel_body(q, q_aux, k, v, g, h, do, do_aux, dh, dq, dq_aux, dk, dw, dv, dg,
+                            scale, scale_aux, 0, i_h, i_k, t_s, T_seq, i_t_local,
                             h_idx, i_k * _BK)
     else:
         @T.prim_func
         def kernel(
-            q: T.Tensor(qk_s, _dtype), k: T.Tensor(qk_s, _dtype),
+            q: T.Tensor(qk_s, _dtype), q_aux: T.Tensor(qk_s, _dtype), k: T.Tensor(qk_s, _dtype),
             v: T.Tensor(v_s, _dtype), g: T.Tensor(g_s, T.float32),
-            h: T.Tensor(h_s, _dtype), do: T.Tensor(v_s, _dtype),
-            dh: T.Tensor(h_s, _dtype), dq: T.Tensor(dqk_s, _dtype),
+            h: T.Tensor(h_s, _dtype), do: T.Tensor(v_s, _dtype), do_aux: T.Tensor(v_s, _dtype),
+            dh: T.Tensor(h_s, _dtype), dq: T.Tensor(dqk_s, _dtype), dq_aux: T.Tensor(dqk_s, _dtype),
             dk: T.Tensor(dqk_s, _dtype), dw: T.Tensor(dqk_s, _dtype),
             dv: T.Tensor(v_s, _dtype), dg: T.Tensor(dg_s, T.float32),
-            scale: T.float32,
+            scale: T.float32, scale_aux: T.float32,
         ):
             with T.Kernel(_NK, T.ceildiv(T_d, _BT), _B * _HV, threads=_threads) as (i_k, i_t, i_bh):
                 i_b = i_bh // _HV
@@ -297,8 +355,8 @@ def _build_kernel(
                 NT_local = T.ceildiv(T_d, _BT)
                 h_idx = (i_b * NT_local + i_t) * _HV + i_h
                 t_s = i_t * _BT
-                kernel_body(q, k, v, g, h, do, dh, dq, dk, dw, dv, dg,
-                            scale, i_b, i_h, i_k, t_s, T_d, i_t,
+                kernel_body(q, q_aux, k, v, g, h, do, do_aux, dh, dq, dq_aux, dk, dw, dv, dg,
+                            scale, scale_aux, i_b, i_h, i_k, t_s, T_d, i_t,
                             h_idx, i_k * _BK)
 
     return kernel
@@ -320,7 +378,17 @@ def chunk_bwd_dqkwg_tilelang(
     cu_seqlens=None,
     chunk_size=64,
     chunk_indices=None,
+    q_aux=None,
+    do_aux=None,
+    scale_aux=None,
 ):
+    assert (q_aux is None) == (do_aux is None), "q_aux and do_aux must be supplied together"
+    USE_AUX_READ = q_aux is not None
+    if USE_AUX_READ:
+        assert g is not None and g_gamma is None
+        assert q_aux.shape == q.shape and do_aux.shape == do.shape
+    if scale_aux is None:
+        scale_aux = 1.0
     B, T, H, K = k.shape
     HV, V = v.shape[2], v.shape[-1]
     BT = chunk_size
@@ -369,6 +437,7 @@ def chunk_bwd_dqkwg_tilelang(
         dtype_str,
         USE_G,
         USE_DW,
+        USE_AUX_READ,
         state_v_first,
         IS_VARLEN,
         num_warps=num_warps,
@@ -376,20 +445,28 @@ def chunk_bwd_dqkwg_tilelang(
 
     # Unused optional params still need shape-matching tensors for TileLang
     g_kern = g if USE_G else q.new_empty(B, T, HV)
+    q_aux_kern = q_aux if USE_AUX_READ else q
+    do_aux_kern = do_aux if USE_AUX_READ else do
+    dq_aux = torch.empty(B, T, HV, K, dtype=q.dtype, device=q.device) if USE_AUX_READ else dq
     dw_kern = dw_out if USE_DW else q.new_empty(B, T, HV, K)
     dv_kern = dv if USE_DW else q.new_empty(B, T, HV, V)
     dg_kern = dg if USE_G else q.new_empty(NK, B, T, HV, dtype=torch.float32)
 
     if IS_VARLEN:
-        kernel(q, k, v, g_kern, h_flat, do, dh_flat, dq, dk, dw_kern, dv_kern, dg_kern,
-               cu_seqlens.int(), chunk_indices.int(), scale)
+        kernel(q, q_aux_kern, k, v, g_kern, h_flat, do, do_aux_kern, dh_flat, dq, dq_aux,
+               dk, dw_kern, dv_kern, dg_kern, cu_seqlens.int(), chunk_indices.int(), scale, scale_aux)
     else:
-        kernel(q, k, v, g_kern, h_flat, do, dh_flat, dq, dk, dw_kern, dv_kern, dg_kern, scale)
+        kernel(q, q_aux_kern, k, v, g_kern, h_flat, do, do_aux_kern, dh_flat, dq, dq_aux,
+               dk, dw_kern, dv_kern, dg_kern, scale, scale_aux)
 
     if dg is not None:
         dg = dg.sum(0)
     if H != HV:
         G = HV // H
         dq = dq.view(B, T, H, G, K).sum(3)
+        if USE_AUX_READ:
+            dq_aux = dq_aux.view(B, T, H, G, K).sum(3)
         dk = dk.view(B, T, H, G, K).sum(3)
+    if USE_AUX_READ:
+        return dq, dk, dw_out, dg, dq_aux
     return dq, dk, dw_out, dg

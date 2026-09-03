@@ -219,18 +219,10 @@ def chunk_gated_delta_rule_bwd(
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
         chunk_size=chunk_size,
+        q_aux=q_aux,
+        do_aux=do_aux,
+        scale_aux=scale_aux,
     )
-    if q_aux is not None:
-        dv.add_(chunk_bwd_dv_local(
-            q=q_aux,
-            k=k,
-            g=g,
-            do=do_aux,
-            scale=scale_aux,
-            cu_seqlens=cu_seqlens,
-            chunk_indices=chunk_indices,
-            chunk_size=chunk_size,
-        ))
     if cp_context is not None:
         # initial_state is None in the CP mode
         # We only need to compute dht of current rank and pass it to the backward kernel
@@ -268,7 +260,7 @@ def chunk_gated_delta_rule_bwd(
         state_v_first=state_v_first,
         chunk_size=chunk_size,
     )
-    dq, dk, dw, dg = chunk_bwd_dqkwg(
+    dqkwg = chunk_bwd_dqkwg(
         q=q,
         k=k,
         v=v_new,
@@ -283,27 +275,15 @@ def chunk_gated_delta_rule_bwd(
         chunk_indices=chunk_indices,
         state_v_first=state_v_first,
         chunk_size=chunk_size,
+        q_aux=q_aux,
+        do_aux=do_aux,
+        scale_aux=scale_aux,
     )
-    dq_aux = None
-    if q_aux is not None:
-        dq_aux, dk_aux, _, dg_aux = chunk_bwd_dqkwg(
-            q=q_aux,
-            k=k,
-            v=v_new,
-            w=None,
-            g=g,
-            h=h,
-            dv=None,
-            do=do_aux,
-            dh=torch.zeros_like(dh),
-            scale=scale_aux,
-            cu_seqlens=cu_seqlens,
-            chunk_indices=chunk_indices,
-            state_v_first=state_v_first,
-            chunk_size=chunk_size,
-        )
-        dk.add_(dk_aux)
-        dg.add_(dg_aux)
+    if q_aux is None:
+        dq, dk, dw, dg = dqkwg
+        dq_aux = None
+    else:
+        dq, dk, dw, dg, dq_aux = dqkwg
     dk2, dv, db, dg2 = prepare_wy_repr_bwd(
         k=k,
         v=v,
