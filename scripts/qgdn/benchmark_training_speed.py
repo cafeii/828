@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "qgdn"))
 import torch
 import torch.nn.functional as F
 
+from lit_gpt import FusedCrossEntropyLoss
 from lit_gpt.config import Config
 from lit_gpt.model import GPT
 from runtime import configure_numerics
@@ -76,6 +77,8 @@ def benchmark_model(
     warmup: int,
     measured: int,
     *,
+    activation_checkpointing: bool = True,
+    loss_implementation: str = "torch",
     qgdn_chunk_size: int | None = None,
     compile_qgdn_inputs: bool = False,
     disable_qgdn_recompute: bool = False,
@@ -94,11 +97,17 @@ def benchmark_model(
         config = Config.from_name(name, block_size=tokens.shape[1])
         model = GPT(config)
         model.apply(lambda module: model._init_weights(module, n_layer=config.n_layer))
-        model.gradient_checkpointing = True
+        model.gradient_checkpointing = activation_checkpointing
         model.cuda().train()
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=4e-4, betas=(0.9, 0.95), fused=True
         )
+        if loss_implementation == "fused":
+            criterion = FusedCrossEntropyLoss(inplace_backward=True)
+        elif loss_implementation == "torch":
+            criterion = None
+        else:
+            raise ValueError(loss_implementation)
         durations = []
         for index in range(warmup + measured):
             optimizer.zero_grad(set_to_none=True)
@@ -108,7 +117,11 @@ def benchmark_model(
             start = time.perf_counter()
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 logits = model(tokens)
-                loss = F.cross_entropy(logits.float().flatten(0, 1), targets.flatten())
+                loss = (
+                    criterion(logits, targets)
+                    if criterion is not None
+                    else F.cross_entropy(logits.float().flatten(0, 1), targets.flatten())
+                )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
             optimizer.step()
@@ -117,6 +130,9 @@ def benchmark_model(
                 durations.append(time.perf_counter() - start)
         result = {
             "model": name,
+            "micro_batch_size": tokens.shape[0],
+            "activation_checkpointing": activation_checkpointing,
+            "loss_implementation": loss_implementation,
             "qgdn_chunk_size": qgdn_chunk_size,
             "compile_qgdn_inputs": compile_qgdn_inputs,
             "disable_qgdn_recompute": disable_qgdn_recompute,
@@ -148,8 +164,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--sequence-length", type=int, default=4096)
+    parser.add_argument("--micro-batch-size", type=int, default=1)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--measured", type=int, default=5)
+    parser.add_argument("--no-activation-checkpointing", action="store_true")
+    parser.add_argument(
+        "--loss-implementation", choices=("torch", "fused"), default="torch"
+    )
     parser.add_argument(
         "--reverse-order",
         action="store_true",
@@ -204,10 +225,14 @@ def main() -> None:
                 str(Path(__file__).resolve()),
                 "--output", str(child_output),
                 "--sequence-length", str(args.sequence_length),
+                "--micro-batch-size", str(args.micro_batch_size),
                 "--warmup", str(args.warmup),
                 "--measured", str(args.measured),
+                "--loss-implementation", args.loss_implementation,
                 "--only", name,
             ]
+            if args.no_activation_checkpointing:
+                command.append("--no-activation-checkpointing")
             subprocess.run(command, check=True)
             child_reports[name] = json.loads(child_output.read_text())
             child_output.unlink()
@@ -222,8 +247,9 @@ def main() -> None:
                 "torch": child_reports[order[0]]["torch"],
                 "cuda": child_reports[order[0]]["cuda"],
                 "sequence_length": args.sequence_length,
-                "micro_batch_size": 1,
-                "activation_checkpointing": True,
+                "micro_batch_size": args.micro_batch_size,
+                "activation_checkpointing": not args.no_activation_checkpointing,
+                "loss_implementation": args.loss_implementation,
                 "warmup_steps": args.warmup,
                 "measured_steps": args.measured,
                 "measurement_order": order,
@@ -254,8 +280,9 @@ def main() -> None:
             "torch": child_reports[order[0]]["torch"],
             "cuda": child_reports[order[0]]["cuda"],
             "sequence_length": args.sequence_length,
-            "micro_batch_size": 1,
-            "activation_checkpointing": True,
+            "micro_batch_size": args.micro_batch_size,
+            "activation_checkpointing": not args.no_activation_checkpointing,
+            "loss_implementation": args.loss_implementation,
             "warmup_steps": args.warmup,
             "measured_steps": args.measured,
             "measurement_order": order,
@@ -285,27 +312,40 @@ def main() -> None:
     torch.manual_seed(117)
     config = Config.from_name("gdn_control_340M", block_size=args.sequence_length)
     tokens = torch.randint(
-        0, config.padded_vocab_size, (1, args.sequence_length), device="cuda"
+        0,
+        config.padded_vocab_size,
+        (args.micro_batch_size, args.sequence_length),
+        device="cuda",
     )
     targets = torch.roll(tokens, shifts=-1, dims=1)
     runners = {
         "gdn": lambda: benchmark_model(
-            "gdn_control_340M", tokens, targets, args.warmup, args.measured
+            "gdn_control_340M", tokens, targets, args.warmup, args.measured,
+            activation_checkpointing=not args.no_activation_checkpointing,
+            loss_implementation=args.loss_implementation,
         ),
         "qgdn_chunk16": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            activation_checkpointing=not args.no_activation_checkpointing,
+            loss_implementation=args.loss_implementation,
             qgdn_chunk_size=16,
         ),
         "qgdn_chunk32": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            activation_checkpointing=not args.no_activation_checkpointing,
+            loss_implementation=args.loss_implementation,
             qgdn_chunk_size=32,
         ),
         "qgdn_compiled_inputs": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            activation_checkpointing=not args.no_activation_checkpointing,
+            loss_implementation=args.loss_implementation,
             qgdn_chunk_size=32, compile_qgdn_inputs=True,
         ),
         "qgdn_compiled_no_recompute": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            activation_checkpointing=not args.no_activation_checkpointing,
+            loss_implementation=args.loss_implementation,
             qgdn_chunk_size=32, compile_qgdn_inputs=True,
             disable_qgdn_recompute=True,
         ),
@@ -341,8 +381,9 @@ def main() -> None:
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
         "sequence_length": args.sequence_length,
-        "micro_batch_size": 1,
-        "activation_checkpointing": True,
+        "micro_batch_size": args.micro_batch_size,
+        "activation_checkpointing": not args.no_activation_checkpointing,
+        "loss_implementation": args.loss_implementation,
         "warmup_steps": args.warmup,
         "measured_steps": args.measured,
         "measurement_order": order,
