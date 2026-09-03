@@ -272,3 +272,109 @@ def qgdn_rank2_chunk_wy_reference(
                 scale * torch.einsum("bhk,bhkv->bhv", qn[:, t], state)
             )
     return torch.stack(outputs, dim=1), state
+
+
+def qgdn_rank2_chunk_batched_reference(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    gamma,
+    *,
+    recall_mode="query",
+    update_order="recall_then_delta",
+    scale=None,
+    initial_state=None,
+    chunk_size=16,
+):
+    """Evaluate each physical-T chunk with one block-triangular solve.
+
+    After dividing out the scalar decay prefix, the two reads at every token
+    form a unit-lower-triangular block system.  Solving that system exposes all
+    intra-chunk reads in parallel; cumulative low-rank updates then recover all
+    token states.  This implementation is an autograd-capable CPU/CUDA oracle
+    for the eventual fused kernels and never materializes a 2T time axis or a
+    dense K-by-K transition.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    qn, alpha, left, right, write = qgdn_rank2_factors(
+        q,
+        k,
+        g,
+        beta,
+        gamma,
+        recall_mode=recall_mode,
+        update_order=update_order,
+    )
+    v = v.to(qn.dtype)
+    batch, length, heads, key_dim = qn.shape
+    value_dim = v.shape[-1]
+    expected = (batch, heads, key_dim, value_dim)
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    output_scale = key_dim**-0.5 if scale is None else scale
+    outputs = []
+
+    for chunk_start in range(0, length, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, length)
+        size = chunk_end - chunk_start
+        alpha_chunk = alpha[:, chunk_start:chunk_end].permute(0, 2, 1)
+        decay_prefix = alpha_chunk.cumprod(dim=-1)
+        left_chunk = left[:, chunk_start:chunk_end].permute(0, 2, 1, 3, 4)
+        right_chunk = right[:, chunk_start:chunk_end].permute(0, 2, 1, 3, 4)
+        normalized_left = left_chunk / alpha_chunk[..., None, None]
+        write_chunk = write[:, chunk_start:chunk_end].permute(0, 2, 1, 3)
+        normalized_write = write_chunk / decay_prefix[..., None]
+        value_chunk = v[:, chunk_start:chunk_end].permute(0, 2, 1, 3)
+
+        # [B,H,t,r,s,u] contains R[t,r]^T U[s,u].  Only s<t belongs
+        # to the causal block system; the two same-token ranks are simultaneous.
+        coupling = torch.einsum(
+            "bhtrk,bhsuk->bhtrsu", right_chunk, normalized_left
+        )
+        causal = torch.tril(
+            torch.ones(size, size, dtype=torch.bool, device=qn.device),
+            diagonal=-1,
+        )
+        coupling = coupling.masked_fill(
+            ~causal[None, None, :, None, :, None], 0
+        )
+        rank = left_chunk.shape[-2]
+        system_size = size * rank
+        eye = torch.eye(system_size, dtype=qn.dtype, device=qn.device)
+        system = eye - coupling.reshape(batch, heads, system_size, system_size)
+
+        initial_reads = torch.einsum(
+            "bhtrk,bhkv->bhtrv", right_chunk, state
+        )
+        write_coupling = torch.einsum(
+            "bhtrk,bhsk->bhtrs", right_chunk, normalized_write
+        ).masked_fill(~causal[None, None, :, None, :], 0)
+        earlier_writes = torch.einsum(
+            "bhtrs,bhsv->bhtrv", write_coupling, value_chunk
+        )
+        rhs = (initial_reads + earlier_writes).reshape(
+            batch, heads, system_size, value_dim
+        )
+        reads = torch.linalg.solve_triangular(
+            system, rhs, upper=False, unitriangular=True
+        ).reshape(batch, heads, size, rank, value_dim)
+
+        low_rank_updates = torch.einsum(
+            "bhtrk,bhtrv->bhtkv", normalized_left, reads
+        )
+        direct_writes = normalized_write[..., None] * value_chunk[..., None, :]
+        normalized_states = state[:, :, None] + (
+            low_rank_updates + direct_writes
+        ).cumsum(dim=2)
+        states = decay_prefix[..., None, None] * normalized_states
+        queries = qn[:, chunk_start:chunk_end].permute(0, 2, 1, 3)
+        outputs.append(
+            output_scale * torch.einsum("bhtk,bhtkv->bhtv", queries, states)
+        )
+        state = states[:, :, -1]
+
+    return torch.cat(outputs, dim=2).permute(0, 2, 1, 3), state
