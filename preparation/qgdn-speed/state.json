@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
-  "status": "in_progress",
-  "updated_at": "2026-09-03T07:25:45.498192+00:00",
-  "current_stage": "final_ddp_smoke",
+  "status": "completed_first_pass",
+  "updated_at": "2026-09-03T07:35:44.531683+00:00",
+  "current_stage": "accepted_compiled_inputs_and_8gpu_ddp",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -20,10 +20,12 @@
     "source": "reviewed 10B-token FineWeb metrics.jsonl logs"
   },
   "implementation": {
-    "current_backend": "2T virtual-step generalized DPLR, implicit chunk_size=16",
+    "current_backend": "2T virtual-step generalized DPLR, explicit chunk_size=32, compiled virtual-input construction",
     "candidate_1": "same DPLR with validated larger chunk size",
     "candidate_2": "physical-T exact rank-two fused chunk/scan",
-    "production_semantics_changed": false
+    "production_semantics_changed": false,
+    "accepted_production_commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
+    "disable_recompute": false
   },
   "commits": [
     {
@@ -68,18 +70,27 @@
     }
   ],
   "last_review": {
-    "job_id": "35173",
+    "job_id": "35175",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "no-recompute rejected due order reversal",
+    "result": "compiled virtual-input construction accepted on 8-GPU DDP",
     "metrics": {
-      "no_recompute_tokens_per_second": 11683.661500354085,
-      "normal_tokens_per_second": 14446.214028274731,
-      "no_recompute_speedup": 0.8087697909975815,
-      "no_recompute_peak_memory_gb": 6.781902336,
-      "normal_peak_memory_gb": 6.785572352,
-      "final_loss_absolute_difference": 0.0
+      "world_size": 8,
+      "steady_step_tokens_per_second": 96350.24093662304,
+      "peak_memory_gb": 9.38317568,
+      "all_finite": true
     }
   },
-  "next_action": "run final 8-GPU DDP smoke on production compile=true, recompute=false commit; no full pretraining"
+  "next_action": "speed-only work may continue with a physical-T rank-two fused scan kernel; do not resume QR-GDN or other method design without new user direction",
+  "final_benchmark": {
+    "job_id": "35154",
+    "gdn_tokens_per_second": 17761.2580285784,
+    "qgdn_eager_chunk32_tokens_per_second": 15840.385898679842,
+    "qgdn_compiled_tokens_per_second": 16140.211169636375,
+    "compiled_speedup_vs_eager_chunk32": 1.018927901938394,
+    "compiled_median_step_speedup": 1.028750785650191,
+    "compiled_to_gdn_ratio": 0.9087313040363633,
+    "compiled_peak_memory_gb": 6.794485248,
+    "eager_chunk32_peak_memory_gb": 6.844292608
+  }
 }
