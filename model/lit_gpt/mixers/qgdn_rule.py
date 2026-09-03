@@ -22,6 +22,10 @@ QGDN_TRAIN_CHUNK_SIZE = 32
 # in every QGDN layer.  H800 340M/4096 benchmarks validate the compiled graph.
 QGDN_COMPILE_DPLR_INPUTS = True
 QGDN_DISABLE_DPLR_RECOMPUTE = False
+# Optional audited lower bound for the physical log-decay.  Supplying it lets
+# FLA select its tensor-core DPLR backend.  The production default remains
+# unset until the candidate has passed the numerical and throughput gates.
+QGDN_DPLR_LOWER_BOUND = None
 
 
 def _normalized(x):
@@ -154,10 +158,19 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
         {
             "chunk_size": QGDN_TRAIN_CHUNK_SIZE,
             "disable_recompute": QGDN_DISABLE_DPLR_RECOMPUTE,
+            "lower_bound": QGDN_DPLR_LOWER_BOUND,
         }
         if mode == "chunk"
         else {}
     )
+    if mode == "chunk" and QGDN_DPLR_LOWER_BOUND is not None:
+        # Keep the optimized backend's numerical contract executable.  This
+        # is a device-side assertion rather than a clamp, so recurrence values
+        # and gradients are unchanged and a violated contract fails loudly.
+        torch._assert_async(
+            (g >= QGDN_DPLR_LOWER_BOUND).all(),
+            "QGDN log-decay is below the audited DPLR lower bound",
+        )
     o, state = op(**inputs, scale=scale, initial_state=initial_state,
                   output_final_state=output_final_state,
                   cu_seqlens=None if cu_seqlens is None else cu_seqlens * 2,
