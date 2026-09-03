@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:26:50.356446+00:00",
-  "current_stage": "virtual_io_optimization",
+  "updated_at": "2026-09-03T06:36:39.498245+00:00",
+  "current_stage": "compiled_virtual_input_confirmation",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -45,21 +45,29 @@
       "commit": "267f239593b64db5c8bdc099c35bc1e13d02074e",
       "milestone": "process-isolated 340M benchmark harness",
       "validation": "job 35123 completed"
+    },
+    {
+      "commit": "067ba0b13a7c851879862a0a1369df52525c335b",
+      "milestone": "compiled QGDN virtual-input candidate and isolated benchmark",
+      "validation": "job 35125 completed; exact outputs, max gradient relative RMSE 3.7721e-06"
     }
   ],
   "last_review": {
-    "job_id": "35123",
+    "job_id": "35125",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "chunk32 accepted",
+    "result": "compiled input candidate needs longer confirmation",
     "metrics": {
-      "chunk16_tokens_per_second": 10474.12937668575,
-      "chunk32_tokens_per_second": 10952.859978301705,
-      "candidate_speedup_vs_chunk16": 1.0457060042318702,
-      "chunk16_peak_memory_gb": 6.853205504,
-      "chunk32_peak_memory_gb": 6.834855424,
-      "final_loss_absolute_difference": 2.868473529815674e-07
+      "chunk16_tokens_per_second": 10588.144624761695,
+      "chunk32_tokens_per_second": 11435.58228301493,
+      "compiled_tokens_per_second": 11669.150644508192,
+      "compiled_speedup_vs_chunk32": 1.02042470210198,
+      "compiled_speedup_vs_chunk16": 1.1020958872452904,
+      "chunk32_median_step_seconds": 0.3564685679739341,
+      "compiled_median_step_seconds": 0.32221941399620846,
+      "compiled_peak_memory_gb": 6.794485248,
+      "max_builder_gradient_relative_rmse": 3.7721204080298776e-06
     }
   },
-  "next_action": "profile/fuse 2T input packing and unused Recall-position output; retain exact recurrence"
+  "next_action": "run longer process-isolated chunk32 vs compiled-input confirmation; enable only if stable"
 }
