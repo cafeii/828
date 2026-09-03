@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 22:15（Asia/Shanghai）
+更新时间：2026-09-03 22:36（Asia/Shanghai）
 
 ## 当前目标
 
@@ -91,10 +91,18 @@ Commit `189100afe783d4d1fb701780d1f0b57c55ea4f0e` 又实现了不构造 2C×2C s
 
 H800 作业 35622（实验 `20260903-221056-qgdn-wy-streaming-cuda-f7dfff`，commit `d1706b46f021a6d0e6d29d8a2cb87320d3a9f856`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 6 passed / 0 failed，三种顺序的 triangular/streaming CUDA 输出、状态和梯度门禁均通过。但 eager/autograd streaming 相对双 solve 的速度比仅为 `0.376x`、`0.444x`、`0.412x`，peak allocated memory 反而统一为 `1.142x`。因此流式代数可作为专用 kernel 内部算法，但当前 Python 循环和通用 autograd 路径被否决；默认仍是 triangular 双 solve oracle。
 
+Commit `1b589cabfd6c4737bb87af62b199a64aa43023cc` 将这套流式代数写成单个 forward-only Triton WY kernel：每个 B/H/chunk lane 在 program 内构造 token-causal closure，并同时生成 effective-right 与零初态 write-response，不再向 PyTorch 物化全局 `[B,H,N,2C,2C]` system。提交前的 CPU/FP64 rank-2 聚焦回归为 99 passed，说明三种顺序既有的输出、末状态和全输入梯度密集参考合约未被改动。
+
+第一次 H800 编译门禁 35627（实验 `20260903-222547-qgdn-wy-triton-fwd-2d432c`）为 `FAILED / 1:0`，`run.exitcode=1`，JUnit 3 passed / 3 failed：chunk=16 的三种顺序通过，但 chunk=8 的 write RHS 使用了归约维 8 的 `tl.dot`，低于 Triton 要求的 16，故未产生 benchmark JSON。Commit `d77f05e93b39506c4a7d7e9479b0e87ec9afb825` 仅将该内部 token 维零填充到 16，并保持物理 chunk 的因果 mask 不变。
+
+修复后的 H800 作业 35628（实验 `20260903-222951-qgdn-wy-triton-fwd-pad-c60f57`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 6 passed / 0 failed，覆盖三种顺序、chunk 8/16 和 identity-padded 尾 chunk。相对 triangular oracle，最大输出相对 RMSE 为 `4.62e-8`，最大末状态相对 RMSE 为 `2.48e-8`，全部输出和状态有限。FP32 B=2/T=128/H=4/K=V=64/chunk=16 的 forward-only 中位数速度比分别为 `0.732x`、`1.280x`、`1.220x`；peak allocated memory 比均为 `0.987x`，incremental peak 比为 `0.982x`。首个顺序的 10 次样本有明显 2.48–6.66 ms 波动，因此当前只能确认 CUDA 数值正确和轻微显存下降，不能声称三种顺序都有稳定速度收益。
+
+该 Triton 后端仍是显式 diagnostic 且 forward-only；尚无 backward、有限梯度门禁、整模型吞吐或整模型峰值显存结果。生产默认 `QGDN_USE_PHYSICAL_T=False`，不会因本次 forward 通过而启用。
+
 ## 下一任务的第一步
 
-1. 将已验证的流式前代数写入单个专用 WY forward kernel，使 rank-2 history 留在寄存器/共享内存中；不采用 eager Python 循环，也不再尝试宽 RHS 合并。
-2. 为该 kernel 实现重算式或手写 backward，避免通用 autograd 保存每个 token 的中间图。
+1. 为已通过 forward 数值门禁的 Triton WY kernel 实现重算式或手写 backward，避免通用 autograd 保存每个 token 的中间图，并对三种顺序检查全部输入梯度。
+2. 用交错 A/B 或更多稳态样本复测 forward，排除 35628 首个顺序的调度抖动；任何性能结论都必须覆盖三种顺序。
 3. 接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 双 solve 路径作为 CUDA 数值 oracle。
 4. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
 5. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。

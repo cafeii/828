@@ -63,6 +63,10 @@ Slurm 35600 对“把 effective-right 与 write-response 合成一次宽 RHS 三
 
 Commit `189100afe783d4d1fb701780d1f0b57c55ea4f0e` 固定了无 2C×2C system 的流式 WY 前代数，CPU/FP64 chunk/WY 聚焦集合扩展到 91 passed。Slurm 35622 的 triangular/streaming CUDA 门控 6 项全部通过，但 eager streaming 相对双 solve 只有 `0.376x`、`0.444x`、`0.412x` 速度，peak allocated memory 还增加到 `1.142x`。这否决了 Python token 循环和通用 autograd 版本，却保留了一个清晰的专用 kernel 方案：在单个 program 内保存 rank-2 history，并用重算式或手写 backward 避免保存整段中间图。
 
+Commit `1b589cabfd6c4737bb87af62b199a64aa43023cc` 已实现单个 forward-only Triton WY kernel，不再向 PyTorch 暴露全局 `[B,H,N,2C,2C]` coupling system；提交前 CPU/FP64 rank-2 回归为 99 passed。首次 Slurm 35627 暴露了 chunk=8 的内部 `tl.dot` 归约维小于 16 的编译约束：chunk=16 三种顺序通过，chunk=8 三种顺序失败。Commit `d77f05e93b39506c4a7d7e9479b0e87ec9afb825` 用受 mask 约束的零填充修复后，Slurm 35628 为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed；三种顺序、chunk 8/16 和非整 chunk padding 均通过，最大输出/末状态相对 RMSE 分别为 `4.62e-8` 和 `2.48e-8`，所有输出与状态有限。
+
+35628 的 FP32 B=2/T=128/H=4/K=V=64/chunk=16 forward-only 算子对照中，Triton 相对 triangular 双 solve 的中位数速度比为 Recall→Delta `0.732x`、Delta→Recall `1.280x`、Parallel `1.220x`；peak allocated memory 比统一为 `0.987x`，incremental peak 比为 `0.982x`。Recall→Delta 样本在 2.48–6.66 ms 间明显抖动，当前结果不足以证明三种顺序都有稳定加速。该 kernel 尚无 backward 和有限梯度结果，也不是整模型 benchmark，因此不能启用物理 T 默认路径；下一步是手写/重算 backward 和更稳健的交错 A/B，再融合 chunk-state/output。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -83,3 +87,5 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 全 chunk 批量 WY 数值与算子诊断：Slurm 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`）
 - 合并 WY RHS 候选否决：Slurm 35600（实验 `20260903-215810-qgdn-wy-fused-rhs-cuda-412446`）
 - eager 流式 WY 候选否决：Slurm 35622（实验 `20260903-221056-qgdn-wy-streaming-cuda-f7dfff`）
+- Triton WY 首次编译门禁：Slurm 35627（chunk=8 的 dot 维度约束失败；chunk=16 三种顺序通过）
+- forward-only Triton WY CUDA 数值与算子诊断：Slurm 35628（6/6 门禁通过；速度信号混合）
