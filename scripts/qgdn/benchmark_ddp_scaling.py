@@ -47,6 +47,12 @@ def main() -> None:
     parser.add_argument("--world-size", type=int, default=8)
     parser.add_argument("--steps", type=int, default=6)
     parser.add_argument("--global-batch-size", type=int, default=128)
+    parser.add_argument(
+        "--global-batch-sizes",
+        type=int,
+        nargs="+",
+        help="Benchmark several global batches with the same per-GPU micro batch",
+    )
     parser.add_argument("--sequence-length", type=int, default=4096)
     parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument(
@@ -57,6 +63,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 2 or args.log_every < 1:
         parser.error("steps must be at least 2 and log-every must be positive")
+    if any(batch < 1 for batch in (args.global_batch_sizes or [args.global_batch_size])):
+        parser.error("global batch sizes must be positive")
     args.output_dir.mkdir(parents=True, exist_ok=False)
 
     train = Path(__file__).with_name("train.py")
@@ -66,7 +74,7 @@ def main() -> None:
         "status": "running",
         "world_size": args.world_size,
         "steps": args.steps,
-        "global_batch_size": args.global_batch_size,
+        "global_batch_sizes": args.global_batch_sizes or [args.global_batch_size],
         "sequence_length": args.sequence_length,
         "log_every": args.log_every,
         "selected_case": args.only,
@@ -94,8 +102,19 @@ def main() -> None:
     selected_cases = [
         config for config in CASES if args.only is None or config["name"] == args.only
     ]
-    for config in selected_cases:
-        run_output = args.output_dir / config["name"]
+    global_batch_sizes = args.global_batch_sizes or [args.global_batch_size]
+    selected_runs = [
+        (config, global_batch)
+        for config in selected_cases
+        for global_batch in global_batch_sizes
+    ]
+    for config, global_batch in selected_runs:
+        run_name = (
+            config["name"]
+            if len(global_batch_sizes) == 1
+            else f"{config['name']}-gb{global_batch}"
+        )
+        run_output = args.output_dir / run_name
         command = [
             "torchrun",
             "--standalone",
@@ -113,7 +132,7 @@ def main() -> None:
             "--sequence-length",
             str(args.sequence_length),
             "--global-batch-size",
-            str(args.global_batch_size),
+            str(global_batch),
             "--micro-batch-size",
             str(config["micro_batch_size"]),
             "--eval-every",
@@ -131,10 +150,17 @@ def main() -> None:
             command.append("--no-activation-checkpointing")
         returncode, process_seconds = run_logged(
             command,
-            args.output_dir / f"{config['name']}.out",
-            args.output_dir / f"{config['name']}.err",
+            args.output_dir / f"{run_name}.out",
+            args.output_dir / f"{run_name}.err",
         )
-        case = dict(config, returncode=returncode, process_seconds=process_seconds)
+        case = dict(
+            config,
+            name=run_name,
+            config_name=config["name"],
+            global_batch_size=global_batch,
+            returncode=returncode,
+            process_seconds=process_seconds,
+        )
         summary_path = run_output / "summary.json"
         metrics_path = run_output / "metrics.jsonl"
         if returncode == 0 and summary_path.exists() and metrics_path.exists():
@@ -148,7 +174,7 @@ def main() -> None:
             steady_steps = args.steps - 1
             steady_seconds = summary["train_seconds"] - first_step_seconds
             steady_tps = (
-                steady_steps * args.global_batch_size * args.sequence_length
+                steady_steps * global_batch * args.sequence_length
                 / steady_seconds
             )
             steady_metrics = [row for row in train_metrics if row["step"] > 1]
@@ -176,13 +202,13 @@ def main() -> None:
         else:
             case["status"] = "failed"
             case["stderr_tail"] = (
-                args.output_dir / f"{config['name']}.err"
+                args.output_dir / f"{run_name}.err"
             ).read_text()[-8000:]
         report["cases"].append(case)
         write_json(report_path, report)
 
     completed = [case for case in report["cases"] if case["status"] == "completed"]
-    report["status"] = "completed" if len(completed) == len(selected_cases) else "failed"
+    report["status"] = "completed" if len(completed) == len(selected_runs) else "failed"
     if completed:
         fastest = max(completed, key=lambda case: case["steady_tokens_per_second"])
         report["fastest_case"] = fastest["name"]
