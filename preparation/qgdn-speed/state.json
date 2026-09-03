@@ -1,9 +1,22 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:01:58.131375+00:00",
+  "updated_at": "2026-09-03T07:03:55.549435+00:00",
   "current_stage": "dplr_no_recompute_benchmark",
-  "active_jobs": {},
+  "active_jobs": {
+    "35161": {
+      "job_id": "35161",
+      "exp_id": "20260903-150235-qgdn-no-recompute-profile-f6fc7c",
+      "job_name": "王正仁-Metis-20260903-150235-qgdn-no-recompute-profile-f6fc7c",
+      "scope": "isolated 340M QGDN DPLR backward recompute speed/memory benchmark",
+      "commit": "21e727c7bb0aaa1fc4a32ebfb16f6a8418f6955f",
+      "state": "RUNNING",
+      "node": "tko-b3-nv-dgx16",
+      "resources": "1 GPU / 8 CPU / 64G / 1h",
+      "required_output": "qgdn-no-recompute.json",
+      "submitted_at": "2026-09-03T07:03:55.549435+00:00"
+    }
+  },
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -73,5 +86,5 @@
       "seconds": 75.92
     }
   },
-  "next_action": "benchmark compiled chunk32 with and without DPLR backward recomputation"
+  "next_action": "monitor job 35161 and decide DPLR no-recompute speed/memory tradeoff"
 }
