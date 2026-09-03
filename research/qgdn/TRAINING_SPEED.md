@@ -55,6 +55,8 @@ Slurm 35377（commit `6c8b5a0789da6a419e3ed3512daff4ee0ede5c30`）审计了不�
 
 Commit `17b2201ce73817f615dcd93b8722f92163926086` 已固定下一个 CUDA 实现的 CPU/FP64 合约。每个真实 token 使用一个秩二 `scale * I + U @ V.T` 转移和写入 bias，chunk 之间通过可结合的紧凑仿射组合衔接，全程不构造 K×K 稠密转移。三种更新顺序、query/key recall 和 chunk size 1/3/8 的输出、末状态与全输入梯度均已对齐逐 token FP64 参考；聚焦测试 28 passed。这只证明并行化代数合约正确，尚未产生 CUDA 吞吐或显存结果，所以默认路径不变。
 
+Commit `78eef3486dc51af3657fe1cd59739c48b50af1a7` 将 chunk 内 reads 写成一个单位下三角 2×2 block 系统，用一次 batched `solve_triangular` 并行求出，然后恢复每个物理 token 的状态和输出。CPU/FP64 聚焦测试扩展到 46 passed。H800 作业 35580 又验证了三种更新顺序：3 passed，输出/末状态相对 RMSE `<2e-5`，所有输入梯度均有限且相对 RMSE `<1e-4`。该实现是 CUDA 数值 oracle，未做性能声明；下一步是用融合 WY/扫描 kernel 取代 PyTorch 求解与 Python chunk 循环。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -71,3 +73,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 虚拟 2T 成本与三种更新顺序：Slurm 35365
 - TileLang DPLR 快路径 CUDA 越界：Slurm 35367
 - 串行物理 T CUDA 门控失败：Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`）
+- 并行秩二 chunk 数值 oracle：Slurm 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）

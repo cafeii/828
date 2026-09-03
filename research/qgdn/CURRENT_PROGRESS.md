@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 21:20（Asia/Shanghai）
+更新时间：2026-09-03 21:33（Asia/Shanghai）
 
 ## 当前目标
 
@@ -32,6 +32,8 @@
 | `343e75a4c9200f80a6344ba1c977f5e472220998` | 物理 T 融合 kernel 原型 |
 | `6c8b5a0789da6a419e3ed3512daff4ee0ede5c30` | 为物理 T 原型增加 CUDA 门控测试与整模型基准 |
 | `17b2201ce73817f615dcd93b8722f92163926086` | 定义物理 T 秩二 chunk/WY 紧凑仿射合约 |
+| `78eef3486dc51af3657fe1cd59739c48b50af1a7` | 用块下三角求解并行化 chunk 内秩二 reads |
+| `ddd4c9a9ed8a0e3907080ecbc2a352ba3d6b5c85` | 增加并行 chunk 的 H800 输出/状态/反向门控 |
 
 ## 当前速度结论
 
@@ -67,13 +69,17 @@ Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`，commit `6c
 
 已建立可微的 CPU/FP64 紧凑仿射参考。每个真实 token 直接表示为 `scale * I + U @ V.T` 的秩二转移加一个写入 bias；两个仿射可在不构造 K×K 稠密转移的情况下结合，组合满足结合律。一个 C-token chunk 保持 C 个物理时间行，WY 秩维最多为 2C，不再向公共算子暴露 2T 虚拟序列。
 
-针对 Recall→Delta、Delta→Recall 和 Parallel，query/key recall、chunk size 1/3/8，已验证输出、末状态和 q/k/v/g/beta/gamma/初态的全部梯度与逐 token FP64 参考一致。聚焦测试为 28 passed，新增合约用例为 19 passed，最严梯度容差为 `8e-11`。这一里程碑只固定并行算法的代数语义，还不是 CUDA 性能结果。
+针对 Recall→Delta、Delta→Recall 和 Parallel，query/key recall、chunk size 1/3/8，已验证输出、末状态和 q/k/v/g/beta/gamma/初态的全部梯度与逐 token FP64 参考一致。新增块求解实现先在 CPU 聚焦测试中与紧凑组合参考共同通过 46 项，最严梯度容差为 `8e-11`。
+
+块求解实现会先除去 chunk 内标量 decay prefix，将每个 token 的两个 read 组成单位下三角 2×2 block 系统，一次 `solve_triangular` 得到全部 chunk 内 reads，再累加低秩修正和写入。该路径保持 `[B,T,H,2,K]` 因子和 T 行输出，不构造 2T 序列或 K×K 稠密转移。
+
+H800 作业 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）为 `COMPLETED / 0:0`，`run.exitcode=0`，stderr 为空，JUnit 为 3 passed / 0 failed。三种顺序的 FP32 CUDA 输出、末状态和所有输入梯度均为有限值；输出/状态相对 RMSE 低于 `2e-5`，梯度低于 `1e-4`。日志和 JUnit 已回收；当前回收脚本因将 manifest 中的 `outputs/pytest.xml` 再次拼到 `outputs/` 下而误报 required output 缺失，但本地和远程的实际 JUnit 文件均存在且可解析。这是数值里程碑，尚未进入整模型吞吐/显存评测。
 
 ## 下一任务的第一步
 
-1. 将已验证的紧凑仿射组合改写为 GPU 块内下三角/WY 准备与块间状态扫描，不继续扩展串行 Triton 递推。
-2. 保留输入布局 `[B,T,H,2,K]`，输出仍为 T 行；先做短序列 CUDA 输出、末状态和全输入梯度对齐。
-3. CUDA 数值和有限梯度通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
+1. 将已验证的块下三角求解拆成融合的 WY 准备、块间状态扫描和块内输出 kernel，不继续扩展串行 Triton 递推。
+2. 用当前 `solve_triangular` 路径作为 CUDA 数值 oracle，为融合前向和手写反向分别增加短序列对齐。
+3. 融合 CUDA 数值和有限梯度通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
 4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
