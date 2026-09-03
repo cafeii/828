@@ -82,6 +82,7 @@ def benchmark_model(
     qgdn_chunk_size: int | None = None,
     compile_qgdn_inputs: bool = False,
     disable_qgdn_recompute: bool = False,
+    compile_model_forward: bool = False,
 ) -> dict:
     from lit_gpt.mixers import qgdn_rule
 
@@ -99,6 +100,10 @@ def benchmark_model(
         model.apply(lambda module: model._init_weights(module, n_layer=config.n_layer))
         model.gradient_checkpointing = activation_checkpointing
         model.cuda().train()
+        if compile_model_forward:
+            model.forward = torch.compile(
+                model.forward, dynamic=False, fullgraph=False
+            )
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=4e-4, betas=(0.9, 0.95), fused=True
         )
@@ -136,6 +141,7 @@ def benchmark_model(
             "qgdn_chunk_size": qgdn_chunk_size,
             "compile_qgdn_inputs": compile_qgdn_inputs,
             "disable_qgdn_recompute": disable_qgdn_recompute,
+            "compile_model_forward": compile_model_forward,
             "step_seconds": durations,
             "mean_step_seconds": statistics.mean(durations),
             "median_step_seconds": statistics.median(durations),
@@ -171,6 +177,7 @@ def main() -> None:
     parser.add_argument(
         "--loss-implementation", choices=("torch", "fused"), default="torch"
     )
+    parser.add_argument("--compile-model-forward", action="store_true")
     parser.add_argument(
         "--reverse-order",
         action="store_true",
@@ -233,6 +240,8 @@ def main() -> None:
             ]
             if args.no_activation_checkpointing:
                 command.append("--no-activation-checkpointing")
+            if args.compile_model_forward:
+                command.append("--compile-model-forward")
             subprocess.run(command, check=True)
             child_reports[name] = json.loads(child_output.read_text())
             child_output.unlink()
@@ -323,29 +332,34 @@ def main() -> None:
             "gdn_control_340M", tokens, targets, args.warmup, args.measured,
             activation_checkpointing=not args.no_activation_checkpointing,
             loss_implementation=args.loss_implementation,
+            compile_model_forward=args.compile_model_forward,
         ),
         "qgdn_chunk16": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             activation_checkpointing=not args.no_activation_checkpointing,
             loss_implementation=args.loss_implementation,
+            compile_model_forward=args.compile_model_forward,
             qgdn_chunk_size=16,
         ),
         "qgdn_chunk32": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             activation_checkpointing=not args.no_activation_checkpointing,
             loss_implementation=args.loss_implementation,
+            compile_model_forward=args.compile_model_forward,
             qgdn_chunk_size=32,
         ),
         "qgdn_compiled_inputs": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             activation_checkpointing=not args.no_activation_checkpointing,
             loss_implementation=args.loss_implementation,
+            compile_model_forward=args.compile_model_forward,
             qgdn_chunk_size=32, compile_qgdn_inputs=True,
         ),
         "qgdn_compiled_no_recompute": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             activation_checkpointing=not args.no_activation_checkpointing,
             loss_implementation=args.loss_implementation,
+            compile_model_forward=args.compile_model_forward,
             qgdn_chunk_size=32, compile_qgdn_inputs=True,
             disable_qgdn_recompute=True,
         ),
