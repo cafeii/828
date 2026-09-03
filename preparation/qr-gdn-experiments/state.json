@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "coupled_dual_state_kernel_architecture_reassessment",
+  "current_stage": "shared_normalization_adjacent_view_schedule_gpu_validation_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -39,7 +39,7 @@
     42
   ],
   "active_jobs": [],
-  "submission_count_this_wake": 1,
+  "submission_count_this_wake": 0,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
     "status": "prepared_never_submitted",
@@ -188,16 +188,13 @@
           "result": "experiments/20260903-070207-qr-gdn-fused-forward-profile-581312/outputs/result.json"
         },
         "next_candidate": {
-          "name": "specialized_coupled_dual_state_kernel",
-          "status": "architecture_design_pending",
-          "change": "co-schedule KV and QR state preparation/scan in a purpose-built coupled kernel while preserving the block-lower-triangular recurrence and stable pre-update recall",
-          "reason": "sharing the reverse scan and local-gradient launches raised the ratio only from 68.70% to 69.75%; the second full QR state path remains dominant",
-          "constraints": [
-            "no generic rank-2 block-WY path (job 34918 was slower)",
-            "no alpha division or cancellation recovery",
-            "retain physical T, exact gradients, and strict GDN degeneration",
-            "re-run CPU/GPU numerics and throughput before DDP or formal training"
-          ]
+          "name": "shared_normalization_adjacent_view_schedule",
+          "commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307",
+          "status": "isolated_profiler_cpu_static_passed_gpu_pending",
+          "change": "normalize q once for both channels and replace four materialized shifted tensors with a length-(T-1) adjacent-view QR scan",
+          "semantics": "physical update t is read by q[t+1]; recurrence and causal pre-update QR read are unchanged",
+          "risk": "equivalent chunk regrouping changes BF16 reduction order; must pass forward, final-state, backward, BF16, and zero-read exact-GDN checks",
+          "purpose": "measure whether scheduling overhead is material before implementing a larger coupled kernel"
         },
         "specialized_dual_read_backward": {
           "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2",
@@ -389,7 +386,11 @@
     {
       "stage": "fused_dual_read_local_gradients",
       "commit": "06a2e931420d29f6e189b862789a2f8d2fe80040"
+    },
+    {
+      "stage": "shared_normalization_adjacent_view_profiler",
+      "commit": "6b81b11871c0b6f032a2b03bba78a36b7d44a307"
     }
   ],
-  "last_heartbeat": "2026-09-03T00:24:11.503Z"
+  "last_heartbeat": "2026-09-03T01:16:41.737Z"
 }
