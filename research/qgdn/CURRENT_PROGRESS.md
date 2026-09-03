@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 22:03（Asia/Shanghai）
+更新时间：2026-09-03 22:15（Asia/Shanghai）
 
 ## 当前目标
 
@@ -38,6 +38,8 @@
 | `ba5be78c6da8805d57cc7ef040e38847767909a7` | 增加批量 WY CUDA 门控和算子诊断 |
 | `0f14b2fa2d20e621b43b0881877466619d4f4247` | 审计合并 WY 两组 RHS 的候选 |
 | `d157fcb2fa190ad05d3c7d67f1f52e0cc7ff5b4b` | 根据 H800 结果保留双 solve 默认 |
+| `189100afe783d4d1fb701780d1f0b57c55ea4f0e` | 增加不物化 2C×2C system 的流式 WY 前代数 |
+| `d1706b46f021a6d0e6d29d8a2cb87320d3a9f856` | 增加流式 WY CUDA 数值与性能门控 |
 
 ## 当前速度结论
 
@@ -85,11 +87,16 @@ H800 作业 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`，comm
 
 H800 作业 35600（实验 `20260903-215810-qgdn-wy-fused-rhs-cuda-412446`，commit `0f14b2fa2d20e621b43b0881877466619d4f4247`）进一步审计了把 effective-right 和 write-response 拼成一个宽 RHS、只调用一次 `solve_triangular` 的微优化。作业 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 3 passed / 0 failed；但相对双 solve，三种顺序的速度比分别只有 `0.769x`、`0.849x`、`0.942x`，峰值 allocated memory 比均为 `1.000x`。因此该候选没有速度或显存收益，已在 commit `d157fcb2fa190ad05d3c7d67f1f52e0cc7ff5b4b` 恢复双 solve 默认，仅保留开关用于复现。这个结果说明通用三角求解的 RHS 拼接不是解法，下一步必须直接写专用 WY kernel，并避免 materialize 完整耦合矩阵。
 
+Commit `189100afe783d4d1fb701780d1f0b57c55ea4f0e` 又实现了不构造 2C×2C system 的流式 forward substitution：每个物理 token 的两个 effective-right 因子只与此前的 rank-2 history 相乘，write-response 则通过 chunk 内零初态递推得到；B/H/chunk 维保持并行。CPU/FP64 新增后端对齐后，相关 chunk/WY 聚焦集合为 91 passed / 6 CUDA skipped，三种顺序、query/key recall、chunk size 1/3/8、输出、末状态和全部输入梯度均正确。
+
+H800 作业 35622（实验 `20260903-221056-qgdn-wy-streaming-cuda-f7dfff`，commit `d1706b46f021a6d0e6d29d8a2cb87320d3a9f856`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 6 passed / 0 failed，三种顺序的 triangular/streaming CUDA 输出、状态和梯度门禁均通过。但 eager/autograd streaming 相对双 solve 的速度比仅为 `0.376x`、`0.444x`、`0.412x`，peak allocated memory 反而统一为 `1.142x`。因此流式代数可作为专用 kernel 内部算法，但当前 Python 循环和通用 autograd 路径被否决；默认仍是 triangular 双 solve oracle。
+
 ## 下一任务的第一步
 
-1. 将已验证的双 solve 全 chunk 准备改写为专用 WY kernel，避免 materialize 完整 `[B,H,N,2C,2C]` 耦合矩阵和通用 autograd 保存；不再尝试宽 RHS 合并。
-2. 接入块间状态 kernel 与块内输出 kernel，并以当前批量 WY 路径作为 CUDA 数值 oracle；随后实现手写反向。
-3. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
-4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
+1. 将已验证的流式前代数写入单个专用 WY forward kernel，使 rank-2 history 留在寄存器/共享内存中；不采用 eager Python 循环，也不再尝试宽 RHS 合并。
+2. 为该 kernel 实现重算式或手写 backward，避免通用 autograd 保存每个 token 的中间图。
+3. 接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 双 solve 路径作为 CUDA 数值 oracle。
+4. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
+5. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

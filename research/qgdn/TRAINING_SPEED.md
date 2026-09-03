@@ -61,6 +61,8 @@ Commit `a85f2a5329c8ece5d0897d7fd77fd5e5f2a2cd9e` 进一步把全部 chunk 的�
 
 Slurm 35600 对“把 effective-right 与 write-response 合成一次宽 RHS 三角求解”做了同配置 A/B。三种顺序相对双 solve 的速度比分别为 `0.769x`、`0.849x`、`0.942x`，peak allocated memory 均完全不变（`1.000x`）。该微优化已否决，双 solve 继续作为数值 oracle 默认；要降低 0.169 GB 的 oracle 峰值，必须用专用 WY forward/backward kernel 避免完整耦合矩阵与通用 autograd 保存，而不是调整 `solve_triangular` 的调用次数。
 
+Commit `189100afe783d4d1fb701780d1f0b57c55ea4f0e` 固定了无 2C×2C system 的流式 WY 前代数，CPU/FP64 chunk/WY 聚焦集合扩展到 91 passed。Slurm 35622 的 triangular/streaming CUDA 门控 6 项全部通过，但 eager streaming 相对双 solve 只有 `0.376x`、`0.444x`、`0.412x` 速度，peak allocated memory 还增加到 `1.142x`。这否决了 Python token 循环和通用 autograd 版本，却保留了一个清晰的专用 kernel 方案：在单个 program 内保存 rank-2 history，并用重算式或手写 backward 避免保存整段中间图。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -80,3 +82,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 并行秩二 chunk 数值 oracle：Slurm 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）
 - 全 chunk 批量 WY 数值与算子诊断：Slurm 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`）
 - 合并 WY RHS 候选否决：Slurm 35600（实验 `20260903-215810-qgdn-wy-fused-rhs-cuda-412446`）
+- eager 流式 WY 候选否决：Slurm 35622（实验 `20260903-221056-qgdn-wy-streaming-cuda-f7dfff`）
