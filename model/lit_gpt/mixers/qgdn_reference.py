@@ -394,6 +394,7 @@ def qgdn_rank2_parallel_wy_reference(
     initial_state=None,
     chunk_size=16,
     fuse_wy_rhs=False,
+    wy_backend="triangular",
 ):
     """Prepare every physical-T chunk's exact rank-two WY map in parallel.
 
@@ -411,11 +412,17 @@ def qgdn_rank2_parallel_wy_reference(
     solves by default.  ``fuse_wy_rhs=True`` retains the equivalent combined
     right-hand-side experiment, which is useful for isolated benchmarking but
     was slower without reducing peak allocation on H800.
+    ``wy_backend="streaming"`` performs the same forward substitution directly
+    from the rank-two history, without constructing a 2C-by-2C coupling matrix.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
+    if wy_backend not in {"triangular", "streaming"}:
+        raise ValueError(f"unsupported WY backend: {wy_backend}")
+    if wy_backend == "streaming" and fuse_wy_rhs:
+        raise ValueError("streaming WY does not use triangular-solve right-hand sides")
     qn, alpha, left, right, write = qgdn_rank2_factors(
         q,
         k,
@@ -470,50 +477,97 @@ def qgdn_rank2_parallel_wy_reference(
     normalized_left = left_chunks / alpha_chunks[..., None, None]
     normalized_write = write_chunks / decay_prefix[..., None]
 
-    # The chunk dimension is a batch dimension here, so all independent
-    # 2C-by-2C causal systems are built and solved in one call.
-    coupling = torch.einsum(
-        "bhntrk,bhnsuk->bhntrsu", right_chunks, normalized_left
-    )
-    causal = torch.tril(
-        torch.ones(
-            chunk_size, chunk_size, dtype=torch.bool, device=qn.device
-        ),
-        diagonal=-1,
-    )
-    coupling = coupling.masked_fill(
-        ~causal[None, None, None, :, None, :, None], 0
-    )
-    eye = torch.eye(system_size, dtype=qn.dtype, device=qn.device)
-    system = eye - coupling.reshape(
-        batch, heads, chunks, system_size, system_size
-    )
-    right_flat = right_chunks.reshape(
-        batch, heads, chunks, system_size, key_dim
-    )
-    write_coupling = torch.einsum(
-        "bhntrk,bhnsk->bhntrs", right_chunks, normalized_write
-    ).masked_fill(~causal[None, None, None, :, None, :], 0)
-    write_rhs = torch.einsum(
-        "bhntrs,bhnsv->bhntrv", write_coupling, value_chunks
-    ).reshape(batch, heads, chunks, system_size, value_dim)
-    if fuse_wy_rhs:
-        wy_solution = torch.linalg.solve_triangular(
-            system,
-            torch.cat((right_flat, write_rhs), dim=-1),
-            upper=False,
-            unitriangular=True,
+    if wy_backend == "streaming":
+        # Forward-substitute directly over the C physical tokens.  The loop is
+        # shared by every B/H/chunk lane and keeps only rank-two history; a
+        # specialized CUDA kernel can retain this history in registers/shared
+        # memory instead of materializing the dense 2C-by-2C system below.
+        effective_parts = []
+        write_read_parts = []
+        write_state = qn.new_zeros(
+            batch, heads, chunks, key_dim, value_dim
         )
-        effective_right, write_reads = wy_solution.split(
-            (key_dim, value_dim), dim=-1
+        for token in range(chunk_size):
+            right_token = right_chunks[:, :, :, token]
+            effective_token = right_token
+            if effective_parts:
+                effective_history = torch.stack(effective_parts, dim=3)
+                token_coupling = torch.einsum(
+                    "bhnrk,bhnsuk->bhnrsu",
+                    right_token,
+                    normalized_left[:, :, :, :token],
+                )
+                effective_token = effective_token + torch.einsum(
+                    "bhnrsu,bhnsuk->bhnrk",
+                    token_coupling,
+                    effective_history,
+                )
+            write_read = torch.einsum(
+                "bhnrk,bhnkv->bhnrv", right_token, write_state
+            )
+            write_state = (
+                write_state
+                + torch.einsum(
+                    "bhnrk,bhnrv->bhnkv",
+                    normalized_left[:, :, :, token],
+                    write_read,
+                )
+                + normalized_write[:, :, :, token, :, None]
+                * value_chunks[:, :, :, token, None, :]
+            )
+            effective_parts.append(effective_token)
+            write_read_parts.append(write_read)
+        effective_right = torch.stack(effective_parts, dim=3).reshape(
+            batch, heads, chunks, system_size, key_dim
+        )
+        write_reads = torch.stack(write_read_parts, dim=3).reshape(
+            batch, heads, chunks, system_size, value_dim
         )
     else:
-        effective_right = torch.linalg.solve_triangular(
-            system, right_flat, upper=False, unitriangular=True
+        # The chunk dimension is a batch dimension here, so all independent
+        # 2C-by-2C causal systems are built and solved in one call.
+        coupling = torch.einsum(
+            "bhntrk,bhnsuk->bhntrsu", right_chunks, normalized_left
         )
-        write_reads = torch.linalg.solve_triangular(
-            system, write_rhs, upper=False, unitriangular=True
+        causal = torch.tril(
+            torch.ones(
+                chunk_size, chunk_size, dtype=torch.bool, device=qn.device
+            ),
+            diagonal=-1,
         )
+        coupling = coupling.masked_fill(
+            ~causal[None, None, None, :, None, :, None], 0
+        )
+        eye = torch.eye(system_size, dtype=qn.dtype, device=qn.device)
+        system = eye - coupling.reshape(
+            batch, heads, chunks, system_size, system_size
+        )
+        right_flat = right_chunks.reshape(
+            batch, heads, chunks, system_size, key_dim
+        )
+        write_coupling = torch.einsum(
+            "bhntrk,bhnsk->bhntrs", right_chunks, normalized_write
+        ).masked_fill(~causal[None, None, None, :, None, :], 0)
+        write_rhs = torch.einsum(
+            "bhntrs,bhnsv->bhntrv", write_coupling, value_chunks
+        ).reshape(batch, heads, chunks, system_size, value_dim)
+        if fuse_wy_rhs:
+            wy_solution = torch.linalg.solve_triangular(
+                system,
+                torch.cat((right_flat, write_rhs), dim=-1),
+                upper=False,
+                unitriangular=True,
+            )
+            effective_right, write_reads = wy_solution.split(
+                (key_dim, value_dim), dim=-1
+            )
+        else:
+            effective_right = torch.linalg.solve_triangular(
+                system, right_flat, upper=False, unitriangular=True
+            )
+            write_reads = torch.linalg.solve_triangular(
+                system, write_rhs, upper=False, unitriangular=True
+            )
 
     normalized_left_flat = normalized_left.reshape(
         batch, heads, chunks, system_size, key_dim

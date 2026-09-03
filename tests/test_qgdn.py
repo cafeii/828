@@ -233,9 +233,12 @@ def test_rank2_batched_chunk_matches_outputs_state_and_all_gradients(
 @pytest.mark.parametrize("chunk_size", [1, 3, 8])
 @pytest.mark.parametrize("recall_mode", ["query", "key"])
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
-@pytest.mark.parametrize("fuse_wy_rhs", [False, True])
+@pytest.mark.parametrize(
+    "wy_backend,fuse_wy_rhs",
+    [("triangular", False), ("triangular", True), ("streaming", False)],
+)
 def test_rank2_parallel_wy_matches_outputs_state_and_all_gradients(
-    chunk_size, recall_mode, update_order, fuse_wy_rhs
+    chunk_size, recall_mode, update_order, wy_backend, fuse_wy_rhs
 ):
     args = inputs(T=7)
     expected = qgdn_reference(
@@ -258,6 +261,7 @@ def test_rank2_parallel_wy_matches_outputs_state_and_all_gradients(
         update_order=update_order,
         chunk_size=chunk_size,
         fuse_wy_rhs=fuse_wy_rhs,
+        wy_backend=wy_backend,
     )
     actual_grads = torch.autograd.grad(
         sum((value * weight).sum() for value, weight in zip(actual, weights)),

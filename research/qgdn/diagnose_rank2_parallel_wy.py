@@ -117,6 +117,9 @@ def main():
         "parallel_wy_fused_rhs_oracle": partial(
             qgdn_rank2_parallel_wy_reference, fuse_wy_rhs=True
         ),
+        "parallel_wy_streaming_oracle": partial(
+            qgdn_rank2_parallel_wy_reference, wy_backend="streaming"
+        ),
     }
     results = {}
     for update_order in UPDATE_ORDERS:
@@ -140,6 +143,14 @@ def main():
         )
         candidate["peak_memory_ratio_vs_two_solve_parallel_wy"] = (
             candidate["peak_allocated_gb"] / two_solve["peak_allocated_gb"]
+        )
+        streaming = results[update_order]["parallel_wy_streaming_oracle"]
+        streaming["speedup_vs_two_solve_parallel_wy"] = (
+            two_solve["median_forward_backward_ms"]
+            / streaming["median_forward_backward_ms"]
+        )
+        streaming["peak_memory_ratio_vs_two_solve_parallel_wy"] = (
+            streaming["peak_allocated_gb"] / two_solve["peak_allocated_gb"]
         )
 
     payload = {
