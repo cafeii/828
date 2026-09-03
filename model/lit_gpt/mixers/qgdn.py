@@ -1,4 +1,6 @@
-"""Scalar-decay QGDN. See research/qgdn/DERIVATION_PACKAGE.md, §8.2–8.7."""
+"""QGDN model wrapper and recall-gate parameterization."""
+from __future__ import annotations
+
 import math
 
 import torch
@@ -8,6 +10,8 @@ from .gdn import GatedDeltaNet
 
 
 class QueryGuidedDeltaNet(GatedDeltaNet):
+    """GDN with a query-guided recall correction before the Delta write."""
+
     def __init__(self, *args, recall_mode="query", recall_gate="token", recall_init=0.1,
                  recall_weight_init="zero", **kwargs):
         super().__init__(*args, **kwargs)
@@ -40,7 +44,8 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
         elif recall_gate == "head":
             self.recall_logit = nn.Parameter(torch.full((self.num_heads,), math.log(recall_init / (1 - recall_init))))
             self.recall_logit._no_weight_decay = True
-    def recall_gamma(self, x):
+
+    def recall_gamma(self, x: torch.Tensor) -> torch.Tensor:
         if self.recall_gate == "token":
             gamma = self.recall_proj(x).float().sigmoid()
         elif self.recall_gate == "head":

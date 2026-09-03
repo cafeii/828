@@ -9,13 +9,12 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))
 from lit_gpt.config import Config
 from lit_gpt.model import GPT
-from lit_gpt.mixers.qgdn_rule import (
-    dplr_inputs,
+from lit_gpt.mixers.qgdn_reference import (
     qgdn_rank2_factors,
     qgdn_rank2_reference,
     qgdn_reference,
-    qgdn_rule,
 )
+from lit_gpt.mixers.qgdn_rule import dplr_inputs, qgdn_rule
 from lit_gpt.mixers.naive import naive_gdn2_recurrence
 
 

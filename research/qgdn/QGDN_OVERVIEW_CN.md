@@ -1,5 +1,8 @@
 # QGDN: A Query-Guided Recall Rule for Gated Delta Networks
 
+> 当前正式结果见 [EXPERIMENTS.md](EXPERIMENTS.md)，训练实现与脚本入口见仓库根目录
+> [README.md](../../README.md)。
+
 ## 一句话思想
 
 Gated Delta Networks 会对旧状态施加与当前访问需求无关的基础衰减。QGDN 让当前查询 $q_t$ 在 Delta 编辑之前，先把这次衰减刚刚损失的相关读出恢复一部分。

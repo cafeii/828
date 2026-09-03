@@ -17,7 +17,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "model"))
 from lit_gpt.kernels import get_chunk_gated_delta_rule
-from lit_gpt.mixers.qgdn_rule import qgdn_reference, qgdn_rule
+from lit_gpt.mixers.qgdn_reference import qgdn_reference
+from lit_gpt.mixers.qgdn_rule import qgdn_rule
 
 
 def sha256(path):
@@ -110,6 +111,7 @@ def main():
               and max_zero_output < thresholds["zero_gdn_output_relative_rmse"]
               and max_zero_gradient < thresholds["zero_gdn_gradient_relative_rmse"])
     files = ["model/lit_gpt/mixers/qgdn.py", "model/lit_gpt/mixers/qgdn_rule.py",
+             "model/lit_gpt/mixers/qgdn_reference.py",
              "model/lit_gpt/mixers/gdn.py",
              "third_party/flash-linear-attention/fla/ops/generalized_delta_rule/dplr/chunk.py"]
     report = dict(status="passed" if passed else "failed",

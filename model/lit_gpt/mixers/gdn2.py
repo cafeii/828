@@ -5,9 +5,9 @@
 # LSA（use_lsa=True）时组级value是潜向量c（维度d_c），每组只有一份潜状态T_g，
 # 每头输出由静态参数P还原：o_{g,i} = (q_{g,i} T_g) P_{g,i}^T。
 #
-# kernel策略2（见 plans/2026-08-30-lsa-kernel-optimization.md）：
-# 组级张量repeat到H份进现有chunk_gdn2 kernel（数学等价，docs/research.md有归纳证明），
-# 出口对kernel输出乘P。后续GQA化专用kernel落地时仅需替换kernel调用，模块结构不变。
+# 当前 LSA fallback 将组级张量 repeat 到 H 份后调用现有 chunk_gdn2 kernel，
+# 再在出口乘 P。它保持数学语义，但不会兑现专用 GQA kernel 的状态效率；背景见
+# research/OTHER_DIRECTIONS.md。
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 [project]
 name = "rnn"
 version = "0.1.0"
-description = "RNN 前沿架构探索（基于 GDN/KDA/GDN2 的结构改进）"
+description = "QGDN: query-guided recall for Gated Delta Networks"
 requires-python = ">=3.10,<3.13"
 # 依赖范围对齐 third_party/GatedDeltaNet-2/requirements.txt（minimal）+ 数据处理件。
 # 以下为纯 PyPI 依赖；手动件（不进锁文件，见 scripts/setup/）：
