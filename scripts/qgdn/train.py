@@ -30,6 +30,7 @@ from torch.nn.parallel import DistributedDataParallel
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "model"))
 from lit_gpt.config import Config
+from lit_gpt import FusedCrossEntropyLoss
 from lit_gpt.model import GPT
 from data import TokenCorpus, load_manifest, mqar_batch
 
@@ -67,6 +68,12 @@ def parse_args():
     p.add_argument("--eval-sequences", type=int, default=2560)
     p.add_argument("--save-every", type=int, default=500)
     p.add_argument("--log-every", type=int, default=10)
+    p.add_argument(
+        "--training-loss",
+        choices=("torch", "fused"),
+        default="torch",
+        help="Fused loss avoids the full FP32 logits buffer and enables larger micro batches",
+    )
     p.add_argument("--no-activation-checkpointing", action="store_true")
     p.add_argument("--resume", type=Path, help="Explicit complete checkpoint; any mismatch/error is fatal")
     p.add_argument("--cpu", action="store_true", help="Tiny integration tests only")
@@ -156,6 +163,8 @@ def main():
         raise ValueError("Global batch must be exactly divisible by world size * micro batch")
     if args.cpu and not args.model.endswith("_tiny"):
         raise ValueError("--cpu is restricted to the tiny smoke configurations")
+    if args.cpu and args.training_loss != "torch":
+        raise ValueError("The fused training loss requires CUDA")
     if not args.cpu and not torch.cuda.is_available():
         raise RuntimeError("No allocated CUDA GPU; do not run training on the login node")
     device = torch.device("cpu" if args.cpu else f"cuda:{local_rank}")
@@ -197,8 +206,17 @@ def main():
     model.to(device)
     optimizer = torch.optim.AdamW(optimizer_groups(model, args.weight_decay), lr=args.learning_rate,
                                  betas=(args.beta1, args.beta2), fused=device.type == "cuda")
-    training_model = DistributedDataParallel(model, device_ids=[local_rank] if not args.cpu else None,
-                                              broadcast_buffers=False) if world > 1 else model
+    training_model = DistributedDataParallel(
+        model,
+        device_ids=[local_rank] if not args.cpu else None,
+        broadcast_buffers=False,
+        gradient_as_bucket_view=True,
+    ) if world > 1 else model
+    training_loss = (
+        FusedCrossEntropyLoss(inplace_backward=True)
+        if args.training_loss == "fused"
+        else None
+    )
     immutable_args = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()
                       if k not in {"output", "resume", "stop_after_step", "data_manifest"}}
     code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -337,7 +355,15 @@ def main():
             with sync:
                 with amp():
                     logits = training_model(x)
-                    loss = F.cross_entropy(logits.float().flatten(0, 1), y.flatten(), ignore_index=-100)
+                    loss = (
+                        training_loss(logits, y)
+                        if training_loss is not None
+                        else F.cross_entropy(
+                            logits.float().flatten(0, 1),
+                            y.flatten(),
+                            ignore_index=-100,
+                        )
+                    )
                 # Non-reentrant activation checkpointing recomputes layers during backward.
                 # Disable side-effectful observation so every gate element is counted once.
                 for block in model.transformer.h:

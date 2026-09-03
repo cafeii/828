@@ -17,6 +17,10 @@ from pathlib import Path
 DEFAULT_CASES = (
     ("baseline-b1-checkpoint-torch", 1, True, "torch"),
     ("b1-checkpoint-fused", 1, True, "fused"),
+    ("b1-no-checkpoint-torch", 1, False, "torch"),
+    ("b2-no-checkpoint-torch", 2, False, "torch"),
+    ("b4-no-checkpoint-torch", 4, False, "torch"),
+    ("b8-no-checkpoint-torch", 8, False, "torch"),
     ("b1-no-checkpoint-fused", 1, False, "fused"),
     ("b2-no-checkpoint-fused", 2, False, "fused"),
     ("b4-no-checkpoint-fused", 4, False, "fused"),
