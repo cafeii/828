@@ -161,6 +161,11 @@ def main() -> None:
         help="measure each model in a fresh Python/CUDA process",
     )
     parser.add_argument(
+        "--recompute-pair",
+        action="store_true",
+        help="with --isolated, measure only compiled inputs with/without DPLR recompute",
+    )
+    parser.add_argument(
         "--only", choices=(
             "gdn",
             "qgdn_chunk16",
@@ -173,12 +178,21 @@ def main() -> None:
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
+    if args.recompute_pair and not args.isolated:
+        raise ValueError("--recompute-pair requires --isolated")
 
-    order = (
-        ["qgdn_compiled_no_recompute", "qgdn_compiled_inputs", "qgdn_chunk32", "qgdn_chunk16", "gdn"]
-        if args.reverse_order
-        else ["gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs", "qgdn_compiled_no_recompute"]
-    )
+    if args.recompute_pair:
+        order = (
+            ["qgdn_compiled_no_recompute", "qgdn_compiled_inputs"]
+            if args.reverse_order
+            else ["qgdn_compiled_inputs", "qgdn_compiled_no_recompute"]
+        )
+    else:
+        order = (
+            ["qgdn_compiled_no_recompute", "qgdn_compiled_inputs", "qgdn_chunk32", "qgdn_chunk16", "gdn"]
+            if args.reverse_order
+            else ["gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs", "qgdn_compiled_no_recompute"]
+        )
     if args.isolated:
         if args.only is not None:
             raise ValueError("--isolated and --only are mutually exclusive")
@@ -198,6 +212,36 @@ def main() -> None:
             child_reports[name] = json.loads(child_output.read_text())
             child_output.unlink()
         models = {name: child_reports[name]["model"] for name in order}
+        if args.recompute_pair:
+            normal = models["qgdn_compiled_inputs"]["tokens_per_second"]
+            no_recompute = models["qgdn_compiled_no_recompute"]["tokens_per_second"]
+            report = {
+                "status": "measured_isolated_recompute_pair",
+                "commit": child_reports[order[0]]["commit"],
+                "device": child_reports[order[0]]["device"],
+                "torch": child_reports[order[0]]["torch"],
+                "cuda": child_reports[order[0]]["cuda"],
+                "sequence_length": args.sequence_length,
+                "micro_batch_size": 1,
+                "activation_checkpointing": True,
+                "warmup_steps": args.warmup,
+                "measured_steps": args.measured,
+                "measurement_order": order,
+                "process_isolation": True,
+                "numerics": child_reports[order[0]]["numerics"],
+                "compiled_builder_validation": child_reports["qgdn_compiled_inputs"].get(
+                    "compiled_builder_validation"
+                ),
+                "models": models,
+                "no_recompute_speedup": no_recompute / normal,
+                "peak_memory_delta_gb": (
+                    models["qgdn_compiled_no_recompute"]["peak_memory_gb"]
+                    - models["qgdn_compiled_inputs"]["peak_memory_gb"]
+                ),
+            }
+            write_json(args.output, report)
+            print(json.dumps(report, ensure_ascii=False), flush=True)
+            return
         gdn = models["gdn"]["tokens_per_second"]
         old = models["qgdn_chunk16"]["tokens_per_second"]
         chunk32 = models["qgdn_chunk32"]["tokens_per_second"]
