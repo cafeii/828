@@ -1,0 +1,12 @@
+{
+  "job_id": "35123",
+  "exp_id": "20260903-142320-qgdn-340m-speed-isolated-958b20",
+  "job_name": "王正仁-Metis-20260903-142320-qgdn-340m-speed-isolated-958b20",
+  "scope": "process-isolated 340M GDN/QGDN chunk-size benchmark",
+  "commit": "267f239593b64db5c8bdc099c35bc1e13d02074e",
+  "state": "COMPLETED",
+  "exit_code": "0",
+  "elapsed": "00:01:18",
+  "node": "tko-b3-nv-dgx04",
+  "reviewed_at": "2026-09-03T06:26:50.356446+00:00"
+}

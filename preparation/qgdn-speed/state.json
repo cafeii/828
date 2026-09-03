@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:23:07.637128+00:00",
-  "current_stage": "isolated_full_model_benchmark_ready",
+  "updated_at": "2026-09-03T06:26:50.356446+00:00",
+  "current_stage": "virtual_io_optimization",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -35,18 +35,31 @@
       "commit": "ec560e4c1a06965b7b3c77d16de379d04d7a686a",
       "milestone": "H800 QGDN chunk-size profiler",
       "validation": "python bytecode compilation passed"
+    },
+    {
+      "commit": "2059cde7d90d82e93b74fe72a797f9c7447e4736",
+      "milestone": "production QGDN chunk size 32",
+      "validation": "15 CPU QGDN tests passed; H800 operator and full-model finite"
+    },
+    {
+      "commit": "267f239593b64db5c8bdc099c35bc1e13d02074e",
+      "milestone": "process-isolated 340M benchmark harness",
+      "validation": "job 35123 completed"
     }
   ],
   "last_review": {
-    "job_id": "35120",
+    "job_id": "35123",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "measurement-order bias confirmed; per-variant process isolation required",
+    "result": "chunk32 accepted",
     "metrics": {
-      "chunk32_first_tokens_per_second": 11158.891132043958,
-      "chunk16_second_tokens_per_second": 7835.791657692477,
-      "candidate_speedup_vs_chunk16": 1.4240923724776628
+      "chunk16_tokens_per_second": 10474.12937668575,
+      "chunk32_tokens_per_second": 10952.859978301705,
+      "candidate_speedup_vs_chunk16": 1.0457060042318702,
+      "chunk16_peak_memory_gb": 6.853205504,
+      "chunk32_peak_memory_gb": 6.834855424,
+      "final_loss_absolute_difference": 2.868473529815674e-07
     }
   },
-  "next_action": "measure GDN, QGDN chunk16 and chunk32 in independent Python/CUDA processes"
+  "next_action": "profile/fuse 2T input packing and unused Recall-position output; retain exact recurrence"
 }
