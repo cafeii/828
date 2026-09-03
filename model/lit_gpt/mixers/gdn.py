@@ -218,7 +218,7 @@ class GatedDeltaNet(nn.Module):
 
             o, recurrent_state = qgdn_rule(
                 q, k, v, g, b, gamma,
-                recall_mode=self.recall_mode, mode=mode,
+                recall_mode=self.recall_mode, update_order=self.recall_order, mode=mode,
                 initial_state=recurrent_state, output_final_state=use_cache,
                 cu_seqlens=kwargs.get("cu_seqlens"),
             )

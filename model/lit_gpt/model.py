@@ -249,6 +249,7 @@ class Block(nn.Module):
                 norm_eps=config.norm_eps,
                 layer_idx=layer_idx,
                 recall_mode=config.recall_mode,
+                recall_order=config.recall_order,
                 recall_gate=config.recall_gate,
                 recall_init=config.recall_init,
                 recall_weight_init=config.recall_weight_init,

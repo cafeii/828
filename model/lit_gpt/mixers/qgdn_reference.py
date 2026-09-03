@@ -23,12 +23,17 @@ def qgdn_reference(
     gamma,
     *,
     recall_mode="query",
+    update_order="recall_then_delta",
     scale=None,
     initial_state=None,
 ):
     """Apply the differentiable token recurrence in FP32 or FP64."""
     if recall_mode not in {"query", "key", "isotropic"}:
         raise ValueError(recall_mode)
+    if update_order not in {"recall_then_delta", "delta_then_recall", "parallel"}:
+        raise ValueError(update_order)
+    if recall_mode == "isotropic" and update_order != "recall_then_delta":
+        raise ValueError("The isotropic control only defines recall_then_delta ordering")
     q, k = _normalized(q), _normalized(k)
     v, g, beta, gamma = (x.to(q.dtype) for x in (v, g, beta, gamma))
     batch, length, heads, key_dim = q.shape
@@ -41,23 +46,45 @@ def qgdn_reference(
     outputs = []
     for t in range(length):
         alpha = g[:, t].exp()[..., None, None]
-        eta = (gamma[:, t] * (-g[:, t].expm1()))[..., None, None]
+        gamma_t = gamma[:, t, :, None, None]
+        eta = gamma_t * (-g[:, t].expm1())[..., None, None]
         recall = q[:, t] if recall_mode == "query" else k[:, t]
         if recall_mode == "isotropic":
             state = (alpha + eta) * state
         else:
             old_read = torch.einsum("bhk,bhkv->bhv", recall, state)
-            state = alpha * state + eta * recall[..., None] * old_read[..., None, :]
-        error = v[:, t] - torch.einsum("bhk,bhkv->bhv", k[:, t], state)
-        state = state + beta[:, t, :, None, None] * k[:, t, :, :, None] * error[..., None, :]
+            decayed = alpha * state
+            recall_error = old_read - torch.einsum("bhk,bhkv->bhv", recall, decayed)
+            delta_error = v[:, t] - torch.einsum("bhk,bhkv->bhv", k[:, t], decayed)
+            if update_order == "recall_then_delta":
+                state = decayed + gamma_t * recall[..., None] * recall_error[..., None, :]
+                delta_error = v[:, t] - torch.einsum("bhk,bhkv->bhv", k[:, t], state)
+                state = state + beta[:, t, :, None, None] * k[:, t, :, :, None] * delta_error[..., None, :]
+            elif update_order == "delta_then_recall":
+                state = decayed + beta[:, t, :, None, None] * k[:, t, :, :, None] * delta_error[..., None, :]
+                recall_error = old_read - torch.einsum("bhk,bhkv->bhv", recall, state)
+                state = state + gamma_t * recall[..., None] * recall_error[..., None, :]
+            else:
+                state = (
+                    decayed
+                    + beta[:, t, :, None, None] * k[:, t, :, :, None] * delta_error[..., None, :]
+                    + gamma_t * recall[..., None] * recall_error[..., None, :]
+                )
+        if recall_mode == "isotropic":
+            error = v[:, t] - torch.einsum("bhk,bhkv->bhv", k[:, t], state)
+            state = state + beta[:, t, :, None, None] * k[:, t, :, :, None] * error[..., None, :]
         outputs.append(scale * torch.einsum("bhk,bhkv->bhv", q[:, t], state))
     return torch.stack(outputs, dim=1), state
 
 
-def qgdn_rank2_factors(q, k, g, beta, gamma, *, recall_mode="query"):
+def qgdn_rank2_factors(
+    q, k, g, beta, gamma, *, recall_mode="query", update_order="recall_then_delta"
+):
     """Return the exact one-token rank-two affine factors for QGDN."""
     if recall_mode not in {"query", "key"}:
         raise ValueError("rank-two factors support query/key recall only")
+    if update_order not in {"recall_then_delta", "delta_then_recall", "parallel"}:
+        raise ValueError(update_order)
     qn, kn = _normalized(q), _normalized(k)
     g, beta, gamma = (x.to(qn.dtype) for x in (g, beta, gamma))
     if qn.shape != kn.shape or any(x.shape != qn.shape[:-1] for x in (g, beta, gamma)):
@@ -69,15 +96,37 @@ def qgdn_rank2_factors(q, k, g, beta, gamma, *, recall_mode="query"):
     correlation = (kn * recall_vector).sum(-1)
 
     left = torch.stack((recall_vector, kn), dim=-2)
-    right = torch.stack(
-        (
-            recall[..., None] * recall_vector,
-            -(alpha * beta)[..., None] * kn
-            - (beta * recall * correlation)[..., None] * recall_vector,
-        ),
-        dim=-2,
-    )
-    write = beta[..., None] * kn
+    if update_order == "recall_then_delta":
+        right = torch.stack(
+            (
+                recall[..., None] * recall_vector,
+                -(alpha * beta)[..., None] * kn
+                - (beta * recall * correlation)[..., None] * recall_vector,
+            ),
+            dim=-2,
+        )
+        write = beta[..., None] * kn
+    elif update_order == "delta_then_recall":
+        right = torch.stack(
+            (
+                recall[..., None] * recall_vector
+                + (gamma * alpha * beta * correlation)[..., None] * kn,
+                -(alpha * beta)[..., None] * kn,
+            ),
+            dim=-2,
+        )
+        write = beta[..., None] * (
+            kn - (gamma * correlation)[..., None] * recall_vector
+        )
+    else:
+        right = torch.stack(
+            (
+                recall[..., None] * recall_vector,
+                -(alpha * beta)[..., None] * kn,
+            ),
+            dim=-2,
+        )
+        write = beta[..., None] * kn
     return qn, alpha, left, right, write
 
 
@@ -90,12 +139,13 @@ def qgdn_rank2_reference(
     gamma,
     *,
     recall_mode="query",
+    update_order="recall_then_delta",
     scale=None,
     initial_state=None,
 ):
     """Apply the physical-time rank-two factors as a differentiable oracle."""
     qn, alpha, left, right, write = qgdn_rank2_factors(
-        q, k, g, beta, gamma, recall_mode=recall_mode
+        q, k, g, beta, gamma, recall_mode=recall_mode, update_order=update_order
     )
     v = v.to(qn.dtype)
     batch, length, heads, key_dim = qn.shape

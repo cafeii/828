@@ -55,6 +55,7 @@ class Config:
     conv_size: int = 4
     allow_neg_eigval: bool = False
     recall_mode: str = "query"  # query | key | isotropic (QGDN only)
+    recall_order: str = "recall_then_delta"  # recall_then_delta | delta_then_recall | parallel
     recall_gate: str = "token"  # token | head | fixed
     recall_init: float = 0.1
     recall_weight_init: str = "zero"  # zero | beta (same Xavier gain as the GDN beta projection)
@@ -180,6 +181,18 @@ _recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
 configs += [
     dict(_recall_base, name="gdn_control_340M"),
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
+    dict(
+        _recall_base,
+        name="qgdn_delta_then_recall_340M",
+        mixer="qgdn",
+        recall_order="delta_then_recall",
+    ),
+    dict(
+        _recall_base,
+        name="qgdn_parallel_340M",
+        mixer="qgdn",
+        recall_order="parallel",
+    ),
     dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn", recall_weight_init="beta", recall_init=0.5),
     dict(_recall_base, name="qgdn_key_340M", mixer="qgdn", recall_mode="key"),
     dict(_recall_base, name="qgdn_isotropic_340M", mixer="qgdn", recall_mode="isotropic"),
@@ -191,6 +204,12 @@ for _mixer in ("gdn", "qgdn"):
     configs.append(dict(
         _recall_base, name=f"{_mixer}_recall_tiny", mixer=_mixer,
         n_layer=2, n_embd=128, n_head=2, head_dim=64,
+        intermediate_size=352, vocab_size=256, block_size=128,
+    ))
+for _order in ("delta_then_recall", "parallel"):
+    configs.append(dict(
+        _recall_base, name=f"qgdn_{_order}_tiny", mixer="qgdn",
+        recall_order=_order, n_layer=2, n_embd=128, n_head=2, head_dim=64,
         intermediate_size=352, vocab_size=256, block_size=128,
     ))
 

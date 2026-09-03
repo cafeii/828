@@ -10,9 +10,10 @@ from .gdn import GatedDeltaNet
 
 
 class QueryGuidedDeltaNet(GatedDeltaNet):
-    """GDN with a query-guided recall correction before the Delta write."""
+    """GDN with configurable ordering of Recall and Delta corrections."""
 
-    def __init__(self, *args, recall_mode="query", recall_gate="token", recall_init=0.1,
+    def __init__(self, *args, recall_mode="query", recall_order="recall_then_delta",
+                 recall_gate="token", recall_init=0.1,
                  recall_weight_init="zero", **kwargs):
         super().__init__(*args, **kwargs)
         if self.num_groups != self.num_heads or self.use_lsa:
@@ -21,6 +22,10 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             raise ValueError("QGDN assumes beta in [0,1]; allow_neg_eigval must be False.")
         if recall_mode not in {"query", "key", "isotropic"}:
             raise ValueError(f"Unknown recall_mode: {recall_mode}")
+        if recall_order not in {"recall_then_delta", "delta_then_recall", "parallel"}:
+            raise ValueError(f"Unknown recall_order: {recall_order}")
+        if recall_mode == "isotropic" and recall_order != "recall_then_delta":
+            raise ValueError("The isotropic control only defines recall_then_delta ordering")
         if recall_gate not in {"token", "head", "fixed"}:
             raise ValueError(f"Unknown recall_gate: {recall_gate}")
         if recall_weight_init not in {"zero", "beta"}:
@@ -29,7 +34,9 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             raise ValueError("beta weight initialization requires a token-dependent projection")
         if not 0 <= recall_init <= 1 or (recall_gate != "fixed" and not 0 < recall_init < 1):
             raise ValueError("Learned gates require 0 < recall_init < 1; fixed gates allow endpoints.")
-        self.recall_mode, self.recall_gate, self.recall_init = recall_mode, recall_gate, recall_init
+        self.recall_mode = recall_mode
+        self.recall_order = recall_order
+        self.recall_gate, self.recall_init = recall_gate, recall_init
         self.recall_weight_init = recall_weight_init
         if recall_gate == "token":
             # Do not change the RNG stream used to initialize shared backbone weights.

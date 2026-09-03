@@ -1,10 +1,10 @@
 """QGDN production recurrence, state layout [B,H,K,V].
 
 FLA's DPLR API implements S' = exp(g) S + b (a^T S) + k v^T.
-Each real token becomes two virtual steps, in this exact order:
-  Recall: g=log(alpha), a=r, b=gamma*(1-alpha)*r, k=v=0.
-  Delta:  g=0, a=k, b=-beta*k, write key=k, write value=beta*v.
-Only the Delta step produces an output. r=q in the main method.
+Each real token becomes two virtual DPLR rows.  The default rows are the
+literal Recall-then-Delta operations; the reverse and parallel variants use
+exact rank-two factorizations of their physical-time affine transitions.
+Only the second row produces an output. r=q in the main method.
 No inverse alpha, negative-beta GDN trick, or dense K-by-K matrix is used.
 This correctness-first chunk backend processes 2T virtual steps; benchmark it.
 """
@@ -33,20 +33,58 @@ def _interleave(first, second):
     return torch.stack((first, second), dim=2).flatten(1, 2).contiguous()
 
 
-def _dplr_input_values(q, k, v, g, beta, gamma, recall_from_query):
+UPDATE_ORDERS = ("recall_then_delta", "delta_then_recall", "parallel")
+
+
+def _dplr_input_values(q, k, v, g, beta, gamma, recall_from_query, update_order):
     qn, kn = _normalized(q), _normalized(k)
     r = qn if recall_from_query else kn
     dtype = q.dtype
     g = g.to(qn.dtype)
     beta, gamma = beta.to(qn.dtype), gamma.to(qn.dtype)
-    eta = gamma * (-g.expm1())
+    alpha = g.exp()
+    lost = -g.expm1()
+    eta = gamma * lost
+    correlation = (kn * r).sum(-1)
+    tiny = torch.finfo(alpha.dtype).tiny
+
+    if update_order == "recall_then_delta":
+        first_a = r
+        first_b = eta[..., None] * r
+        second_a = kn
+        second_b = -beta[..., None] * kn
+        write_key = kn
+    elif update_order == "parallel":
+        # Factor P - alpha*beta*k*k^T as
+        # (I - beta*k*a2^T) P, where P=alpha*I+eta*r*r^T and a2^T P=alpha*k^T.
+        denominator = (alpha + eta).clamp_min(tiny)
+        second_a = kn - (eta * correlation / denominator)[..., None] * r
+        first_a = r
+        first_b = eta[..., None] * r
+        second_b = -beta[..., None] * kn
+        write_key = kn
+    elif update_order == "delta_then_recall":
+        # Exact two-row factorization of Delta-then-Recall.  P is chosen so
+        # that its Sherman-Morrison denominator is strictly positive for the
+        # bounded gates; no state-transition inverse is formed.
+        z = lost[..., None] * r + (alpha * beta * correlation)[..., None] * kn
+        rtz = lost + alpha * beta * correlation.square()
+        denominator = (alpha + gamma * rtz).clamp_min(tiny)
+        second_a = kn - (gamma * correlation / denominator)[..., None] * z
+        first_a = z
+        first_b = gamma[..., None] * r
+        second_b = -beta[..., None] * kn
+        write_key = kn - (gamma * correlation)[..., None] * r
+    else:
+        raise ValueError(update_order)
+
     zeros = torch.zeros_like(q)
     return (
         _interleave(zeros, qn.to(dtype)),
-        _interleave(zeros, kn.to(dtype)),
+        _interleave(zeros, write_key.to(dtype)),
         _interleave(torch.zeros_like(v), (v * beta[..., None]).to(dtype)),
-        _interleave(r.to(dtype), kn.to(dtype)),
-        _interleave((eta[..., None] * r).to(dtype), (-beta[..., None] * kn).to(dtype)),
+        _interleave(first_a.to(dtype), second_a.to(dtype)),
+        _interleave(first_b.to(dtype), second_b.to(dtype)),
         _interleave(g[..., None].expand_as(qn), torch.zeros_like(qn)),
     )
 
@@ -54,28 +92,37 @@ def _dplr_input_values(q, k, v, g, beta, gamma, recall_from_query):
 _compiled_dplr_input_values = torch.compile(_dplr_input_values, fullgraph=True, dynamic=False)
 
 
-def dplr_inputs(q, k, v, g, beta, gamma, recall_mode="query", *, compiled=False):
+def dplr_inputs(
+    q, k, v, g, beta, gamma, recall_mode="query", update_order="recall_then_delta", *, compiled=False
+):
     """Build virtual-step tensors. Public for independent algebra/gradient tests."""
     if recall_mode not in {"query", "key"}:
         raise ValueError(recall_mode)
+    if update_order not in UPDATE_ORDERS:
+        raise ValueError(update_order)
     builder = _compiled_dplr_input_values if compiled else _dplr_input_values
-    values = builder(q, k, v, g, beta, gamma, recall_mode == "query")
+    values = builder(q, k, v, g, beta, gamma, recall_mode == "query", update_order)
     return dict(zip(("q", "k", "v", "a", "b", "gk"), values))
 
 
-def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
+def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
+              update_order="recall_then_delta", mode="chunk",
               scale=None, initial_state=None, output_final_state=False, cu_seqlens=None):
     if mode not in {"naive", "chunk", "fused_recurrent"}:
         raise ValueError(mode)
     if recall_mode not in {"query", "key", "isotropic"}:
         raise ValueError(recall_mode)
+    if update_order not in UPDATE_ORDERS:
+        raise ValueError(update_order)
+    if recall_mode == "isotropic" and update_order != "recall_then_delta":
+        raise ValueError("The isotropic control only defines recall_then_delta ordering")
     if mode == "naive":
         if cu_seqlens is not None:
             raise NotImplementedError("Reference mode takes equal-length batches; test segments separately.")
         from .qgdn_reference import qgdn_reference
 
         o, state = qgdn_reference(q, k, v, g, beta, gamma, recall_mode=recall_mode,
-                                 scale=scale, initial_state=initial_state)
+                                 update_order=update_order, scale=scale, initial_state=initial_state)
         return o.to(q.dtype), state if output_final_state else None
     if not q.is_cuda:
         raise ValueError("QGDN chunk/recurrent kernels require CUDA; use mode='naive' for reference tests.")
@@ -97,7 +144,7 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
     inputs = dplr_inputs(
-        q, k, v, g, beta, gamma, recall_mode,
+        q, k, v, g, beta, gamma, recall_mode, update_order,
         compiled=QGDN_COMPILE_DPLR_INPUTS,
     )
     chunk_kwargs = (
