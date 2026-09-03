@@ -1,0 +1,31 @@
+{
+  "task": "qgdn_training_speed_optimization",
+  "status": "in_progress",
+  "updated_at": "2026-09-03T05:57:31.140006+00:00",
+  "current_stage": "physical_t_reference_validation",
+  "active_jobs": {},
+  "frozen_directions": [
+    "qr_gdn",
+    "dt_gdn",
+    "jqc_gdn",
+    "new_method_design"
+  ],
+  "baseline": {
+    "historical_commit": "f62322a5fd0cdbc1ed45a9753bdfa22a663143d4",
+    "gdn_seed3407_mean_tokens_per_second": 148698.42,
+    "qgdn_seed3407_mean_tokens_per_second": 122997.39,
+    "gdn_seed42_mean_tokens_per_second": 149310.99,
+    "qgdn_seed42_mean_tokens_per_second": 123469.91,
+    "mean_qgdn_to_gdn_ratio": 0.8270455959786969,
+    "source": "reviewed 10B-token FineWeb metrics.jsonl logs"
+  },
+  "implementation": {
+    "current_backend": "2T virtual-step generalized DPLR, implicit chunk_size=16",
+    "candidate_1": "same DPLR with validated larger chunk size",
+    "candidate_2": "physical-T exact rank-two fused chunk/scan",
+    "production_semantics_changed": false
+  },
+  "commits": [],
+  "last_review": null,
+  "next_action": "run CPU FP64 rank-two equivalence tests and commit the optimization contract"
+}

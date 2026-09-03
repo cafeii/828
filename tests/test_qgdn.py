@@ -9,7 +9,13 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))
 from lit_gpt.config import Config
 from lit_gpt.model import GPT
-from lit_gpt.mixers.qgdn_rule import dplr_inputs, qgdn_reference, qgdn_rule
+from lit_gpt.mixers.qgdn_rule import (
+    dplr_inputs,
+    qgdn_rank2_factors,
+    qgdn_rank2_reference,
+    qgdn_reference,
+    qgdn_rule,
+)
 from lit_gpt.mixers.naive import naive_gdn2_recurrence
 
 
@@ -79,6 +85,34 @@ def test_zero_recall_is_original_gdn():
                                     beta[..., None].expand_as(v), initial_state=state)
     for a, b in zip(actual, expected):
         torch.testing.assert_close(a, b, atol=2e-12, rtol=2e-12)
+
+
+@pytest.mark.parametrize("recall_mode", ["query", "key"])
+def test_physical_time_rank2_matches_qgdn_outputs_state_and_gradients(recall_mode):
+    args = inputs(T=7)
+    expected = qgdn_reference(*args[:6], initial_state=args[6], recall_mode=recall_mode)
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)), args
+    )
+
+    cloned = [x.detach().clone().requires_grad_() for x in args]
+    actual = qgdn_rank2_reference(
+        *cloned[:6], initial_state=cloned[6], recall_mode=recall_mode
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)), cloned
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=2e-12, atol=2e-12)
+    for value, reference in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(value, reference, rtol=4e-11, atol=4e-11)
+
+    _, _, left, right, _ = qgdn_rank2_factors(
+        *cloned[:2], *cloned[3:6], recall_mode=recall_mode
+    )
+    assert left.shape[1] == args[0].shape[1]
+    assert left.shape[-2] == 2 and right.shape == left.shape
 
 
 def test_recall_readout_and_nonexpansion():

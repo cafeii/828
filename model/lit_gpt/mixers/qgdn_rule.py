@@ -46,6 +46,71 @@ def qgdn_reference(q, k, v, g, beta, gamma, *, recall_mode="query", scale=None, 
     return torch.stack(outputs, dim=1), S
 
 
+def qgdn_rank2_factors(q, k, g, beta, gamma, *, recall_mode="query"):
+    """Return the exact one-token rank-two affine factors for QGDN.
+
+    For query/key recall, the recurrence is represented at the original T
+    physical positions as
+
+      S_t = alpha_t S_{t-1}
+            + sum_i left[t,i] (right[t,i]^T S_{t-1})
+            + write[t] v_t^T.
+
+    This is a correctness contract for a future fused chunk kernel.  It does
+    not expand T to 2T and it does not materialize a K-by-K transition.
+    """
+    if recall_mode not in {"query", "key"}:
+        raise ValueError("rank-two factors support query/key recall only")
+    qn, kn = _normalized(q), _normalized(k)
+    g, beta, gamma = (x.to(qn.dtype) for x in (g, beta, gamma))
+    if qn.shape != kn.shape or any(x.shape != qn.shape[:-1] for x in (g, beta, gamma)):
+        raise ValueError("incompatible QGDN rank-two factor shapes")
+
+    r = qn if recall_mode == "query" else kn
+    alpha = g.exp()
+    recall = gamma * (-g.expm1())
+    correlation = (kn * r).sum(-1)
+
+    # (I - beta*k*k^T) (alpha*I + recall*r*r^T)
+    # = alpha*I + r*(recall*r)^T
+    #   + k*(-alpha*beta*k - beta*recall*(k^T r)*r)^T.
+    left = torch.stack((r, kn), dim=-2)
+    right = torch.stack(
+        (
+            recall[..., None] * r,
+            -(alpha * beta)[..., None] * kn
+            - (beta * recall * correlation)[..., None] * r,
+        ),
+        dim=-2,
+    )
+    write = beta[..., None] * kn
+    return qn, alpha, left, right, write
+
+
+def qgdn_rank2_reference(
+    q, k, v, g, beta, gamma, *, recall_mode="query", scale=None, initial_state=None
+):
+    """Apply the physical-T rank-two factors as a differentiable oracle."""
+    qn, alpha, left, right, write = qgdn_rank2_factors(
+        q, k, g, beta, gamma, recall_mode=recall_mode
+    )
+    v = v.to(qn.dtype)
+    B, T, H, K = qn.shape
+    expected = (B, H, K, v.shape[-1])
+    state = qn.new_zeros(expected) if initial_state is None else initial_state.to(qn.dtype)
+    if tuple(state.shape) != expected:
+        raise ValueError(f"initial_state must have shape {expected}")
+    scale = K**-0.5 if scale is None else scale
+    outputs = []
+    for t in range(T):
+        reads = torch.einsum("bhrk,bhkv->bhrv", right[:, t], state)
+        state = alpha[:, t, :, None, None] * state
+        state = state + torch.einsum("bhrk,bhrv->bhkv", left[:, t], reads)
+        state = state + write[:, t, :, :, None] * v[:, t, :, None, :]
+        outputs.append(scale * torch.einsum("bhk,bhkv->bhv", qn[:, t], state))
+    return torch.stack(outputs, dim=1), state
+
+
 def _interleave(first, second):
     return torch.stack((first, second), dim=2).flatten(1, 2).contiguous()
 
