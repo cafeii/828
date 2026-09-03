@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 21:53（Asia/Shanghai）
+更新时间：2026-09-03 22:03（Asia/Shanghai）
 
 ## 当前目标
 
@@ -36,6 +36,8 @@
 | `ddd4c9a9ed8a0e3907080ecbc2a352ba3d6b5c85` | 增加并行 chunk 的 H800 输出/状态/反向门控 |
 | `a85f2a5329c8ece5d0897d7fd77fd5e5f2a2cd9e` | 将全部物理 T chunk 的 WY 准备合并为一次批量求解 |
 | `ba5be78c6da8805d57cc7ef040e38847767909a7` | 增加批量 WY CUDA 门控和算子诊断 |
+| `0f14b2fa2d20e621b43b0881877466619d4f4247` | 审计合并 WY 两组 RHS 的候选 |
+| `d157fcb2fa190ad05d3c7d67f1f52e0cc7ff5b4b` | 根据 H800 结果保留双 solve 默认 |
 
 ## 当前速度结论
 
@@ -81,9 +83,11 @@ H800 作业 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）为 
 
 H800 作业 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`，commit `ba5be78c6da8805d57cc7ef040e38847767909a7`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 3 passed / 0 failed，三种顺序的 CUDA 输出、末状态和全部输入梯度均有限且通过与逐 token 参考的相对 RMSE 门槛。算子级 FP32、B=2/T=128/H=4/K=V=64、chunk=16 的 forward+backward 中位数显示，批量 WY 相对逐 chunk solve 在 Recall→Delta、Delta→Recall、Parallel 上分别快 `1.226x`、`1.915x`、`2.111x`；对应吞吐为 20,575、25,244、25,091 physical token/s。代价是峰值 allocated memory 均约为对照的 `1.46x`（约 0.169 GB vs 0.115 GB）。这仍是算子 oracle，不是整模型结果；完整耦合矩阵和 autograd 保存带来的显存增长必须在融合 kernel 中消除。
 
+H800 作业 35600（实验 `20260903-215810-qgdn-wy-fused-rhs-cuda-412446`，commit `0f14b2fa2d20e621b43b0881877466619d4f4247`）进一步审计了把 effective-right 和 write-response 拼成一个宽 RHS、只调用一次 `solve_triangular` 的微优化。作业 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 3 passed / 0 failed；但相对双 solve，三种顺序的速度比分别只有 `0.769x`、`0.849x`、`0.942x`，峰值 allocated memory 比均为 `1.000x`。因此该候选没有速度或显存收益，已在 commit `d157fcb2fa190ad05d3c7d67f1f52e0cc7ff5b4b` 恢复双 solve 默认，仅保留开关用于复现。这个结果说明通用三角求解的 RHS 拼接不是解法，下一步必须直接写专用 WY kernel，并避免 materialize 完整耦合矩阵。
+
 ## 下一任务的第一步
 
-1. 将已验证的全 chunk 批量求解改写为融合 WY 准备 kernel，避免 materialize 完整 `[B,H,N,2C,2C]` 耦合矩阵和通用 autograd 保存。
+1. 将已验证的双 solve 全 chunk 准备改写为专用 WY kernel，避免 materialize 完整 `[B,H,N,2C,2C]` 耦合矩阵和通用 autograd 保存；不再尝试宽 RHS 合并。
 2. 接入块间状态 kernel 与块内输出 kernel，并以当前批量 WY 路径作为 CUDA 数值 oracle；随后实现手写反向。
 3. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
 4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。

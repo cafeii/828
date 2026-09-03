@@ -59,6 +59,8 @@ Commit `78eef3486dc51af3657fe1cd59739c48b50af1a7` 将 chunk 内 reads 写成一�
 
 Commit `a85f2a5329c8ece5d0897d7fd77fd5e5f2a2cd9e` 进一步把全部 chunk 的三角系统合并为一次批量求解，只让 compact chunk-end 状态转移保持顺序。CPU/FP64 新增 18 项、chunk/WY 聚焦集合 55 项通过。H800 作业 35593 的三种顺序 CUDA 门控均通过；在 FP32、B=2/T=128/H=4/K=V=64、chunk=16 的算子 forward+backward 上，相对逐 chunk 求解分别加速 `1.226x`、`1.915x`、`2.111x`。但是 peak allocated memory 从约 0.115 GB 增至约 0.169 GB，即 `1.46x`。这说明批量 WY 准备值得继续融合，同时也否决了把当前通用 PyTorch/autograd oracle 直接接入整模型；生产默认仍保持虚拟 2T。
 
+Slurm 35600 对“把 effective-right 与 write-response 合成一次宽 RHS 三角求解”做了同配置 A/B。三种顺序相对双 solve 的速度比分别为 `0.769x`、`0.849x`、`0.942x`，peak allocated memory 均完全不变（`1.000x`）。该微优化已否决，双 solve 继续作为数值 oracle 默认；要降低 0.169 GB 的 oracle 峰值，必须用专用 WY forward/backward kernel 避免完整耦合矩阵与通用 autograd 保存，而不是调整 `solve_triangular` 的调用次数。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -77,3 +79,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 串行物理 T CUDA 门控失败：Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`）
 - 并行秩二 chunk 数值 oracle：Slurm 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）
 - 全 chunk 批量 WY 数值与算子诊断：Slurm 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`）
+- 合并 WY RHS 候选否决：Slurm 35600（实验 `20260903-215810-qgdn-wy-fused-rhs-cuda-412446`）
