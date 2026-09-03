@@ -21,6 +21,54 @@ from lit_gpt.model import GPT
 from runtime import configure_numerics
 
 
+def _relative_rmse(actual: torch.Tensor, expected: torch.Tensor) -> float:
+    numerator = (actual.float() - expected.float()).square().mean().sqrt()
+    denominator = expected.float().square().mean().sqrt().clamp_min(1e-7)
+    return float((numerator / denominator).item())
+
+
+def validate_compiled_builder() -> dict:
+    """Compare compiled virtual-row construction with the eager contract."""
+    from lit_gpt.mixers.qgdn_rule import dplr_inputs
+
+    generator = torch.Generator(device="cuda").manual_seed(912)
+    B, T, H, K, V = 1, 257, 2, 64, 64
+    base = (
+        torch.randn(B, T, H, K, device="cuda", dtype=torch.bfloat16, generator=generator),
+        torch.randn(B, T, H, K, device="cuda", dtype=torch.bfloat16, generator=generator),
+        torch.randn(B, T, H, V, device="cuda", dtype=torch.bfloat16, generator=generator),
+        -torch.rand(B, T, H, device="cuda", generator=generator),
+        torch.rand(B, T, H, device="cuda", generator=generator),
+        torch.rand(B, T, H, device="cuda", generator=generator),
+    )
+    eager_inputs = tuple(x.detach().clone().requires_grad_() for x in base)
+    eager = tuple(dplr_inputs(*eager_inputs, compiled=False).values())
+    weights = [torch.randn_like(value) for value in eager]
+    eager_grads = torch.autograd.grad(
+        sum((value * weight).float().mean() for value, weight in zip(eager, weights)),
+        eager_inputs,
+    )
+
+    compiled_inputs = tuple(x.detach().clone().requires_grad_() for x in base)
+    compiled = tuple(dplr_inputs(*compiled_inputs, compiled=True).values())
+    compiled_grads = torch.autograd.grad(
+        sum((value * weight).float().mean() for value, weight in zip(compiled, weights)),
+        compiled_inputs,
+    )
+    return {
+        "finite": bool(
+            all(value.isfinite().all() for value in (*compiled, *compiled_grads))
+        ),
+        "output_relative_rmse": [
+            _relative_rmse(value, reference) for value, reference in zip(compiled, eager)
+        ],
+        "gradient_relative_rmse": [
+            _relative_rmse(value, reference)
+            for value, reference in zip(compiled_grads, eager_grads)
+        ],
+    }
+
+
 def benchmark_model(
     name: str,
     tokens: torch.Tensor,
@@ -29,12 +77,15 @@ def benchmark_model(
     measured: int,
     *,
     qgdn_chunk_size: int | None = None,
+    compile_qgdn_inputs: bool = False,
 ) -> dict:
     from lit_gpt.mixers import qgdn_rule
 
     original_chunk_size = qgdn_rule.QGDN_TRAIN_CHUNK_SIZE
+    original_compile_inputs = qgdn_rule.QGDN_COMPILE_DPLR_INPUTS
     if qgdn_chunk_size is not None:
         qgdn_rule.QGDN_TRAIN_CHUNK_SIZE = qgdn_chunk_size
+        qgdn_rule.QGDN_COMPILE_DPLR_INPUTS = compile_qgdn_inputs
     try:
         torch.manual_seed(3407)
         config = Config.from_name(name, block_size=tokens.shape[1])
@@ -64,6 +115,7 @@ def benchmark_model(
         result = {
             "model": name,
             "qgdn_chunk_size": qgdn_chunk_size,
+            "compile_qgdn_inputs": compile_qgdn_inputs,
             "step_seconds": durations,
             "mean_step_seconds": statistics.mean(durations),
             "median_step_seconds": statistics.median(durations),
@@ -77,6 +129,7 @@ def benchmark_model(
         return result
     finally:
         qgdn_rule.QGDN_TRAIN_CHUNK_SIZE = original_chunk_size
+        qgdn_rule.QGDN_COMPILE_DPLR_INPUTS = original_compile_inputs
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -103,7 +156,7 @@ def main() -> None:
         help="measure each model in a fresh Python/CUDA process",
     )
     parser.add_argument(
-        "--only", choices=("gdn", "qgdn_chunk16", "qgdn_chunk32"),
+        "--only", choices=("gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs"),
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
@@ -111,9 +164,9 @@ def main() -> None:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
 
     order = (
-        ["qgdn_chunk32", "qgdn_chunk16", "gdn"]
+        ["qgdn_compiled_inputs", "qgdn_chunk32", "qgdn_chunk16", "gdn"]
         if args.reverse_order
-        else ["gdn", "qgdn_chunk16", "qgdn_chunk32"]
+        else ["gdn", "qgdn_chunk16", "qgdn_chunk32", "qgdn_compiled_inputs"]
     )
     if args.isolated:
         if args.only is not None:
@@ -136,7 +189,8 @@ def main() -> None:
         models = {name: child_reports[name]["model"] for name in order}
         gdn = models["gdn"]["tokens_per_second"]
         old = models["qgdn_chunk16"]["tokens_per_second"]
-        new = models["qgdn_chunk32"]["tokens_per_second"]
+        chunk32 = models["qgdn_chunk32"]["tokens_per_second"]
+        new = models["qgdn_compiled_inputs"]["tokens_per_second"]
         report = {
             "status": "measured_isolated",
             "commit": child_reports[order[0]]["commit"],
@@ -151,10 +205,16 @@ def main() -> None:
             "measurement_order": order,
             "process_isolation": True,
             "numerics": child_reports[order[0]]["numerics"],
+            "compiled_builder_validation": child_reports["qgdn_compiled_inputs"].get(
+                "compiled_builder_validation"
+            ),
             "models": models,
+            "chunk32_speedup_vs_chunk16": chunk32 / old,
+            "compiled_input_speedup_vs_chunk32": new / chunk32,
             "candidate_speedup_vs_chunk16": new / old,
             "chunk16_to_gdn_ratio": old / gdn,
-            "chunk32_to_gdn_ratio": new / gdn,
+            "chunk32_to_gdn_ratio": chunk32 / gdn,
+            "compiled_input_to_gdn_ratio": new / gdn,
             "throughput_target": 0.9,
             "throughput_target_passed": new / gdn >= 0.9,
         }
@@ -181,6 +241,10 @@ def main() -> None:
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             qgdn_chunk_size=32,
         ),
+        "qgdn_compiled_inputs": lambda: benchmark_model(
+            "qgdn_340M", tokens, targets, args.warmup, args.measured,
+            qgdn_chunk_size=32, compile_qgdn_inputs=True,
+        ),
     }
     if args.only is not None:
         report = {
@@ -194,12 +258,15 @@ def main() -> None:
             "numerics": numerics,
             "model": runners[args.only](),
         }
+        if args.only == "qgdn_compiled_inputs":
+            report["compiled_builder_validation"] = validate_compiled_builder()
         write_json(args.output, report)
         return
     models = {name: runners[name]() for name in order}
     gdn = models["gdn"]["tokens_per_second"]
     old = models["qgdn_chunk16"]["tokens_per_second"]
-    new = models["qgdn_chunk32"]["tokens_per_second"]
+    chunk32 = models["qgdn_chunk32"]["tokens_per_second"]
+    new = models["qgdn_compiled_inputs"]["tokens_per_second"]
     report = {
         "status": "measured",
         "commit": subprocess.check_output(
@@ -216,9 +283,12 @@ def main() -> None:
         "measurement_order": order,
         "numerics": numerics,
         "models": models,
+        "chunk32_speedup_vs_chunk16": chunk32 / old,
+        "compiled_input_speedup_vs_chunk32": new / chunk32,
         "candidate_speedup_vs_chunk16": new / old,
         "chunk16_to_gdn_ratio": old / gdn,
-        "chunk32_to_gdn_ratio": new / gdn,
+        "chunk32_to_gdn_ratio": chunk32 / gdn,
+        "compiled_input_to_gdn_ratio": new / gdn,
         "throughput_target": 0.9,
         "throughput_target_passed": new / gdn >= 0.9,
     }

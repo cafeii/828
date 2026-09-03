@@ -17,6 +17,7 @@ import torch.nn.functional as F
 # corresponds to 16 real tokens per DPLR chunk.  Keep the value explicit so
 # speed and numerical regressions cannot silently follow an upstream default.
 QGDN_TRAIN_CHUNK_SIZE = 32
+QGDN_COMPILE_DPLR_INPUTS = False
 
 
 def _normalized(x):
@@ -122,23 +123,34 @@ def _interleave(first, second):
     return torch.stack((first, second), dim=2).flatten(1, 2).contiguous()
 
 
-def dplr_inputs(q, k, v, g, beta, gamma, recall_mode="query"):
-    """Build virtual-step tensors. Public for independent algebra/gradient tests."""
+def _dplr_input_values(q, k, v, g, beta, gamma, recall_from_query):
     qn, kn = _normalized(q), _normalized(k)
-    r = qn if recall_mode == "query" else kn
+    r = qn if recall_from_query else kn
     dtype = q.dtype
     g = g.to(qn.dtype)
     beta, gamma = beta.to(qn.dtype), gamma.to(qn.dtype)
     eta = gamma * (-g.expm1())
     zeros = torch.zeros_like(q)
-    return dict(
-        q=_interleave(zeros, qn.to(dtype)),
-        k=_interleave(zeros, kn.to(dtype)),
-        v=_interleave(torch.zeros_like(v), (v * beta[..., None]).to(dtype)),
-        a=_interleave(r.to(dtype), kn.to(dtype)),
-        b=_interleave((eta[..., None] * r).to(dtype), (-beta[..., None] * kn).to(dtype)),
-        gk=_interleave(g[..., None].expand_as(qn), torch.zeros_like(qn)),
+    return (
+        _interleave(zeros, qn.to(dtype)),
+        _interleave(zeros, kn.to(dtype)),
+        _interleave(torch.zeros_like(v), (v * beta[..., None]).to(dtype)),
+        _interleave(r.to(dtype), kn.to(dtype)),
+        _interleave((eta[..., None] * r).to(dtype), (-beta[..., None] * kn).to(dtype)),
+        _interleave(g[..., None].expand_as(qn), torch.zeros_like(qn)),
     )
+
+
+_compiled_dplr_input_values = torch.compile(_dplr_input_values, fullgraph=True, dynamic=False)
+
+
+def dplr_inputs(q, k, v, g, beta, gamma, recall_mode="query", *, compiled=False):
+    """Build virtual-step tensors. Public for independent algebra/gradient tests."""
+    if recall_mode not in {"query", "key"}:
+        raise ValueError(recall_mode)
+    builder = _compiled_dplr_input_values if compiled else _dplr_input_values
+    values = builder(q, k, v, g, beta, gamma, recall_mode == "query")
+    return dict(zip(("q", "k", "v", "a", "b", "gk"), values))
 
 
 def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
@@ -172,7 +184,10 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query", mode="chunk",
                   use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
-    inputs = dplr_inputs(q, k, v, g, beta, gamma, recall_mode)
+    inputs = dplr_inputs(
+        q, k, v, g, beta, gamma, recall_mode,
+        compiled=QGDN_COMPILE_DPLR_INPUTS,
+    )
     chunk_kwargs = {"chunk_size": QGDN_TRAIN_CHUNK_SIZE} if mode == "chunk" else {}
     o, state = op(**inputs, scale=scale, initial_state=initial_state,
                   output_final_state=output_final_state,
