@@ -57,6 +57,8 @@ Commit `17b2201ce73817f615dcd93b8722f92163926086` 已固定下一个 CUDA 实现
 
 Commit `78eef3486dc51af3657fe1cd59739c48b50af1a7` 将 chunk 内 reads 写成一个单位下三角 2×2 block 系统，用一次 batched `solve_triangular` 并行求出，然后恢复每个物理 token 的状态和输出。CPU/FP64 聚焦测试扩展到 46 passed。H800 作业 35580 又验证了三种更新顺序：3 passed，输出/末状态相对 RMSE `<2e-5`，所有输入梯度均有限且相对 RMSE `<1e-4`。该实现是 CUDA 数值 oracle，未做性能声明；下一步是用融合 WY/扫描 kernel 取代 PyTorch 求解与 Python chunk 循环。
 
+Commit `a85f2a5329c8ece5d0897d7fd77fd5e5f2a2cd9e` 进一步把全部 chunk 的三角系统合并为一次批量求解，只让 compact chunk-end 状态转移保持顺序。CPU/FP64 新增 18 项、chunk/WY 聚焦集合 55 项通过。H800 作业 35593 的三种顺序 CUDA 门控均通过；在 FP32、B=2/T=128/H=4/K=V=64、chunk=16 的算子 forward+backward 上，相对逐 chunk 求解分别加速 `1.226x`、`1.915x`、`2.111x`。但是 peak allocated memory 从约 0.115 GB 增至约 0.169 GB，即 `1.46x`。这说明批量 WY 准备值得继续融合，同时也否决了把当前通用 PyTorch/autograd oracle 直接接入整模型；生产默认仍保持虚拟 2T。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -74,3 +76,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - TileLang DPLR 快路径 CUDA 越界：Slurm 35367
 - 串行物理 T CUDA 门控失败：Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`）
 - 并行秩二 chunk 数值 oracle：Slurm 35580（实验 `20260903-212608-qgdn-rank2-chunk-cuda-67839c`）
+- 全 chunk 批量 WY 数值与算子诊断：Slurm 35593（实验 `20260903-214702-qgdn-parallel-wy-cuda-6c110f`）
