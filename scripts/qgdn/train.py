@@ -47,8 +47,8 @@ def write_json(path, obj):
     temporary.replace(path)
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__)
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, fromfile_prefix_chars="@")
     p.add_argument("--model", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--task", choices=["lm", "mqar"], default="lm")
@@ -80,7 +80,7 @@ def parse_args():
     p.add_argument("--cpu", action="store_true", help="Tiny integration tests only")
     p.add_argument("--stop-after-step", type=int, help="Orderly checkpoint/exit without changing the planned LR schedule")
     p.add_argument("--mqar-overwrite", action="store_true")
-    args = p.parse_args()
+    args = p.parse_args(argv)
     for key in ("max_steps", "sequence_length", "global_batch_size", "micro_batch_size", "eval_every",
                 "eval_sequences", "save_every", "log_every"):
         if getattr(args, key) <= 0:
