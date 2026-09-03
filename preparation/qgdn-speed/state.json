@@ -1,9 +1,18 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T05:59:56.521195+00:00",
-  "current_stage": "chunk_size_gpu_profile_ready",
-  "active_jobs": {},
+  "updated_at": "2026-09-03T06:01:59.535070+00:00",
+  "current_stage": "chunk_size_gpu_profile_running",
+  "active_jobs": {
+    "35096": {
+      "exp_id": "20260903-140031-qgdn-chunk-size-profile-a21165",
+      "job_name": "王正仁-Metis-20260903-140031-qgdn-chunk-size-profile-a21165",
+      "scope": "QGDN DPLR chunk-size 16/32/64 numerical and speed profile",
+      "commit": "ec560e4c1a06965b7b3c77d16de379d04d7a686a",
+      "state": "RUNNING",
+      "node": "tko-b3-nv-dgx04"
+    }
+  },
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -30,8 +39,13 @@
       "commit": "b1beadfe1efd742a6673ad788b0a49c7095814b4",
       "milestone": "physical-T QGDN affine contract and FP64 all-input gradient parity",
       "validation": "9 targeted CPU tests passed"
+    },
+    {
+      "commit": "ec560e4c1a06965b7b3c77d16de379d04d7a686a",
+      "milestone": "H800 QGDN chunk-size profiler",
+      "validation": "python bytecode compilation passed"
     }
   ],
   "last_review": null,
-  "next_action": "submit one H800 diagnostic comparing exact DPLR chunk sizes 16/32/64"
+  "next_action": "review job 35096 output; adopt only a finite numerically acceptable faster chunk size"
 }

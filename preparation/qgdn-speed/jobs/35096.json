@@ -1,0 +1,10 @@
+{
+  "exp_id": "20260903-140031-qgdn-chunk-size-profile-a21165",
+  "job_name": "王正仁-Metis-20260903-140031-qgdn-chunk-size-profile-a21165",
+  "scope": "QGDN DPLR chunk-size 16/32/64 numerical and speed profile",
+  "commit": "ec560e4c1a06965b7b3c77d16de379d04d7a686a",
+  "state": "RUNNING",
+  "node": "tko-b3-nv-dgx04",
+  "job_id": "35096",
+  "submitted_at": "2026-09-03T06:01:59.535070+00:00"
+}
