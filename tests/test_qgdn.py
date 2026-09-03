@@ -151,6 +151,39 @@ def test_physical_time_rank2_matches_qgdn_outputs_state_and_gradients(recall_mod
     assert left.shape[-2] == 2 and right.shape == left.shape
 
 
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+def test_rank2_factors_remain_finite_at_collinear_extreme_gates(update_order):
+    q, _, v, g, _, _, state = inputs(T=3)
+    q = F.normalize(q, dim=-1)
+    k = q.detach().clone().requires_grad_()
+    g = torch.full_like(g, -20.0, requires_grad=True)
+    beta = torch.full_like(g, 1 - 1e-8, requires_grad=True)
+    gamma = torch.full_like(g, 1 - 1e-8, requires_grad=True)
+    actual = qgdn_rank2_reference(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        gamma,
+        initial_state=state,
+        update_order=update_order,
+    )
+    expected = dense(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        gamma,
+        state,
+        update_order=update_order,
+    )
+    assert all(value.isfinite().all() for value in (*actual, *expected))
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=2e-9, atol=2e-9)
+
+
 def test_recall_readout_and_nonexpansion():
     q, _, _, g, _, gamma, state = inputs(T=1)
     q = F.normalize(q[:, 0], dim=-1)
@@ -339,3 +372,45 @@ def test_cuda_output_state_and_backward(T, recall_mode):
     for a, b in zip(*gradients):
         assert a.isfinite().all()
         assert (a.float() - b).square().mean().sqrt() / b.square().mean().sqrt().clamp_min(1e-6) < 0.07
+
+
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity requires an allocated GPU")
+def test_cuda_update_order_output_state_and_backward(update_order):
+    xs = inputs(T=257, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=0.1)
+    gpu = [
+        x.detach().to(torch.bfloat16 if i < 3 else torch.float32).requires_grad_()
+        for i, x in enumerate(xs)
+    ]
+    ref = [x.detach().float().requires_grad_() for x in gpu]
+    actual = qgdn_rule(
+        *gpu[:6],
+        initial_state=gpu[6],
+        output_final_state=True,
+        update_order=update_order,
+    )
+    expected = qgdn_reference(
+        *ref[:6], initial_state=ref[6], update_order=update_order
+    )
+    for value, reference in zip(actual, expected):
+        relative_rmse = (
+            (value.float() - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-6)
+        )
+        assert relative_rmse < 0.025
+    weights = [torch.randn_like(value).float() for value in expected]
+    actual_gradients = torch.autograd.grad(
+        sum((value.float() * weight).sum() for value, weight in zip(actual, weights)),
+        gpu,
+    )
+    expected_gradients = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        ref,
+    )
+    for value, reference in zip(actual_gradients, expected_gradients):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value.float() - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-6)
+        )
+        assert relative_rmse < 0.07

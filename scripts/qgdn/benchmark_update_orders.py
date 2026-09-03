@@ -20,6 +20,10 @@ from runtime import configure_numerics
 
 MODELS = {
     "gdn": "gdn_control_340M",
+    # Same mathematical recurrence as GDN, but intentionally routed through
+    # QGDN's virtual-rank-two backend.  This isolates the implementation cost
+    # of the 2T compatibility path from the Recall mechanism itself.
+    "zero_recall_2t": "qgdn_zero_340M",
     "recall_then_delta": "qgdn_340M",
     "delta_then_recall": "qgdn_delta_then_recall_340M",
     "parallel": "qgdn_parallel_340M",
@@ -84,6 +88,9 @@ def main() -> None:
                 for name, value in models.items()
                 if name != "gdn"
             },
+            "virtual_2t_overhead_fraction": (
+                1.0 - models["zero_recall_2t"]["tokens_per_second"] / gdn_tps
+            ),
         }
         write_json(args.output, report)
         print(json.dumps(report, ensure_ascii=False), flush=True)
