@@ -416,13 +416,16 @@ def qgdn_rank2_parallel_wy_reference(
     from the rank-two history, without constructing a 2C-by-2C coupling matrix.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
+    ``wy_backend="triton"`` selects a forward-only diagnostic kernel for that
+    streaming algebra.  It is intentionally unavailable to autograd until its
+    backward and full-model speed advantage have both been verified.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
-    if wy_backend not in {"triangular", "streaming"}:
+    if wy_backend not in {"triangular", "streaming", "triton"}:
         raise ValueError(f"unsupported WY backend: {wy_backend}")
-    if wy_backend == "streaming" and fuse_wy_rhs:
-        raise ValueError("streaming WY does not use triangular-solve right-hand sides")
+    if wy_backend != "triangular" and fuse_wy_rhs:
+        raise ValueError("only triangular WY uses solve right-hand sides")
     qn, alpha, left, right, write = qgdn_rank2_factors(
         q,
         k,
@@ -521,6 +524,26 @@ def qgdn_rank2_parallel_wy_reference(
             batch, heads, chunks, system_size, key_dim
         )
         write_reads = torch.stack(write_read_parts, dim=3).reshape(
+            batch, heads, chunks, system_size, value_dim
+        )
+    elif wy_backend == "triton":
+        if torch.is_grad_enabled() and any(
+            x.requires_grad
+            for x in (normalized_left, right_chunks, normalized_write, value_chunks)
+        ):
+            raise RuntimeError("the Triton WY diagnostic is forward-only")
+        from lit_gpt.mixers.qgdn_wy_kernel import qgdn_streaming_wy_fwd
+
+        effective_right, write_reads = qgdn_streaming_wy_fwd(
+            normalized_left,
+            right_chunks,
+            normalized_write,
+            value_chunks,
+        )
+        effective_right = effective_right.reshape(
+            batch, heads, chunks, system_size, key_dim
+        )
+        write_reads = write_reads.reshape(
             batch, heads, chunks, system_size, value_dim
         )
     else:

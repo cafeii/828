@@ -390,6 +390,43 @@ def test_cuda_rank2_parallel_wy_output_state_and_backward(update_order, wy_backe
         assert relative_rmse < 1e-4
 
 
+@pytest.mark.parametrize("chunk_size,length", [(8, 17), (16, 33)])
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="Triton WY CUDA parity requires a GPU"
+)
+def test_cuda_rank2_triton_wy_forward(update_order, chunk_size, length):
+    # Both cases exercise a full chunk followed by identity padding.
+    args = [
+        value.detach()
+        for value in inputs(
+            T=length, K=64, V=64, dtype=torch.float32, device="cuda"
+        )
+    ]
+    with torch.no_grad():
+        expected = qgdn_rank2_parallel_wy_reference(
+            *args[:6],
+            initial_state=args[6],
+            update_order=update_order,
+            chunk_size=chunk_size,
+            wy_backend="triangular",
+        )
+        actual = qgdn_rank2_parallel_wy_reference(
+            *args[:6],
+            initial_state=args[6],
+            update_order=update_order,
+            chunk_size=chunk_size,
+            wy_backend="triton",
+        )
+    for value, reference in zip(actual, expected):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 2e-5
+
+
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
 def test_rank2_factors_remain_finite_at_collinear_extreme_gates(update_order):
     q, _, v, g, _, _, state = inputs(T=3)
