@@ -1,9 +1,22 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:55:55.462598+00:00",
-  "current_stage": "enable_compiled_virtual_inputs",
-  "active_jobs": {},
+  "updated_at": "2026-09-03T07:00:23.317708+00:00",
+  "current_stage": "compiled_virtual_input_cuda_validation",
+  "active_jobs": {
+    "35159": {
+      "job_id": "35159",
+      "exp_id": "20260903-145847-qgdn-compiled-cuda-parity-13a336",
+      "job_name": "王正仁-Metis-20260903-145847-qgdn-compiled-cuda-parity-13a336",
+      "scope": "CUDA compiled/eager virtual-input output and gradient parity",
+      "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
+      "state": "RUNNING",
+      "node": "tko-b3-nv-dgx16",
+      "resources": "1 GPU / 8 CPU / 64G / 1h",
+      "required_output": "qgdn-compiled-cuda.xml",
+      "submitted_at": "2026-09-03T07:00:23.317708+00:00"
+    }
+  },
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -50,6 +63,16 @@
       "commit": "067ba0b13a7c851879862a0a1369df52525c335b",
       "milestone": "compiled QGDN virtual-input candidate and isolated benchmark",
       "validation": "job 35125 completed; exact outputs, max gradient relative RMSE 3.7721e-06"
+    },
+    {
+      "commit": "5f7d9826026f37de3a20cfd3f9aab20c5c305b4f",
+      "milestone": "DPLR no-recompute speed/memory benchmark candidate",
+      "validation": "15 non-CUDA QGDN tests passed"
+    },
+    {
+      "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
+      "milestone": "production compiled QGDN virtual-input construction",
+      "validation": "15 non-CUDA QGDN tests passed; CUDA parity job 35159 running"
     }
   ],
   "last_review": {
@@ -70,5 +93,5 @@
       "max_builder_gradient_relative_rmse": 3.7721204080298776e-06
     }
   },
-  "next_action": "enable compiled virtual-input builder, validate CUDA path, then benchmark DPLR no-recompute candidate"
+  "next_action": "review CUDA parity job 35159, then benchmark no-recompute candidate"
 }
