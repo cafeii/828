@@ -92,6 +92,11 @@ def main() -> None:
     parser.add_argument("--sequence-length", type=int, default=4096)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--measured", type=int, default=5)
+    parser.add_argument(
+        "--reverse-order",
+        action="store_true",
+        help="run chunk32 before chunk16 to expose order/cache bias",
+    )
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
@@ -103,19 +108,25 @@ def main() -> None:
         0, config.padded_vocab_size, (1, args.sequence_length), device="cuda"
     )
     targets = torch.roll(tokens, shifts=-1, dims=1)
-    models = {
-        "gdn": benchmark_model(
+    runners = {
+        "gdn": lambda: benchmark_model(
             "gdn_control_340M", tokens, targets, args.warmup, args.measured
         ),
-        "qgdn_chunk16": benchmark_model(
+        "qgdn_chunk16": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             qgdn_chunk_size=16,
         ),
-        "qgdn_chunk32": benchmark_model(
+        "qgdn_chunk32": lambda: benchmark_model(
             "qgdn_340M", tokens, targets, args.warmup, args.measured,
             qgdn_chunk_size=32,
         ),
     }
+    order = (
+        ["qgdn_chunk32", "qgdn_chunk16", "gdn"]
+        if args.reverse_order
+        else ["gdn", "qgdn_chunk16", "qgdn_chunk32"]
+    )
+    models = {name: runners[name]() for name in order}
     gdn = models["gdn"]["tokens_per_second"]
     old = models["qgdn_chunk16"]["tokens_per_second"]
     new = models["qgdn_chunk32"]["tokens_per_second"]
@@ -132,6 +143,7 @@ def main() -> None:
         "activation_checkpointing": True,
         "warmup_steps": args.warmup,
         "measured_steps": args.measured,
+        "measurement_order": order,
         "numerics": numerics,
         "models": models,
         "candidate_speedup_vs_chunk16": new / old,
