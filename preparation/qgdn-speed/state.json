@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T05:57:31.140006+00:00",
-  "current_stage": "physical_t_reference_validation",
+  "updated_at": "2026-09-03T05:59:56.521195+00:00",
+  "current_stage": "chunk_size_gpu_profile_ready",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -25,7 +25,13 @@
     "candidate_2": "physical-T exact rank-two fused chunk/scan",
     "production_semantics_changed": false
   },
-  "commits": [],
+  "commits": [
+    {
+      "commit": "b1beadfe1efd742a6673ad788b0a49c7095814b4",
+      "milestone": "physical-T QGDN affine contract and FP64 all-input gradient parity",
+      "validation": "9 targeted CPU tests passed"
+    }
+  ],
   "last_review": null,
-  "next_action": "run CPU FP64 rank-two equivalence tests and commit the optimization contract"
+  "next_action": "submit one H800 diagnostic comparing exact DPLR chunk sizes 16/32/64"
 }
