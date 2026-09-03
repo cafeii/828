@@ -1,4 +1,4 @@
-"""Triton forward and recompute backward for physical-T rank-two WY."""
+"""Fused Triton forward/backward for physical-T rank-two WY preparation."""
 from __future__ import annotations
 
 import torch
@@ -107,6 +107,181 @@ def _qgdn_streaming_wy_fwd_kernel(
         p_write_reads,
         b_write_reads,
         mask=m_rows[:, None] & (o_v[None, :] < V),
+    )
+
+
+@triton.jit
+def _qgdn_streaming_wy_bwd_kernel(
+    normalized_left,
+    right,
+    normalized_write,
+    values,
+    grad_effective,
+    grad_write_reads,
+    grad_left,
+    grad_right,
+    grad_normalized_write,
+    grad_values,
+    K: tl.constexpr,
+    V: tl.constexpr,
+    BT: tl.constexpr,
+    BM: tl.constexpr,
+    BK: tl.constexpr,
+    BV: tl.constexpr,
+    BWT: tl.constexpr,
+):
+    lane = tl.program_id(0).to(tl.int64)
+    rank: tl.constexpr = 2
+    rows: tl.constexpr = BT * rank
+    o_m = tl.arange(0, BM)
+    o_k = tl.arange(0, BK)
+    o_v = tl.arange(0, BV)
+    o_t = tl.arange(0, BWT)
+    m_rows = o_m < rows
+
+    factor_base = lane * rows * K
+    p_right = right + factor_base + o_m[:, None] * K + o_k[None, :]
+    p_left = normalized_left + factor_base + o_m[:, None] * K + o_k[None, :]
+    b_right = tl.load(
+        p_right, mask=m_rows[:, None] & (o_k[None, :] < K), other=0.0
+    ).to(tl.float32)
+    b_left = tl.load(
+        p_left, mask=m_rows[:, None] & (o_k[None, :] < K), other=0.0
+    ).to(tl.float32)
+
+    b_closure = tl.dot(b_right, b_left.T, input_precision="ieee")
+    token = o_m // rank
+    causal = (token[:, None] > token[None, :]) & (
+        m_rows[:, None] & m_rows[None, :]
+    )
+    b_closure = tl.where(causal, b_closure, 0.0)
+    for row in range(1, rows):
+        row_mask = o_m == row
+        b_row = tl.sum(tl.where(row_mask[:, None], b_closure, 0.0), axis=0)
+        b_row = b_row + tl.sum(b_row[:, None] * b_closure, axis=0) * (
+            o_m < row
+        )
+        b_closure = tl.where(row_mask[:, None], b_row, b_closure)
+    b_inverse = b_closure + (o_m[:, None] == o_m[None, :])
+    b_effective = tl.dot(b_inverse, b_right, input_precision="ieee")
+
+    write_base = lane * BT * K
+    p_write = (
+        normalized_write + write_base + o_t[:, None] * K + o_k[None, :]
+    )
+    b_write = tl.load(
+        p_write,
+        mask=(o_t[:, None] < BT) & (o_k[None, :] < K),
+        other=0.0,
+    ).to(tl.float32)
+    write_causal = (
+        (token[:, None] > o_t[None, :])
+        & m_rows[:, None]
+        & (o_t[None, :] < BT)
+    )
+    b_write_coupling = tl.dot(b_right, b_write.T, input_precision="ieee")
+    b_write_coupling = tl.where(write_causal, b_write_coupling, 0.0)
+
+    value_base = lane * BT * V
+    p_values = values + value_base + o_t[:, None] * V + o_v[None, :]
+    b_values = tl.load(
+        p_values,
+        mask=(o_t[:, None] < BT) & (o_v[None, :] < V),
+        other=0.0,
+    ).to(tl.float32)
+    b_write_rhs = tl.dot(
+        b_write_coupling, b_values, input_precision="ieee"
+    )
+    b_write_reads = tl.dot(
+        b_inverse, b_write_rhs, input_precision="ieee"
+    )
+
+    p_grad_effective = (
+        grad_effective + factor_base + o_m[:, None] * K + o_k[None, :]
+    )
+    b_grad_effective = tl.load(
+        p_grad_effective,
+        mask=m_rows[:, None] & (o_k[None, :] < K),
+        other=0.0,
+    ).to(tl.float32)
+    grad_write_base = lane * rows * V
+    p_grad_write_reads = (
+        grad_write_reads
+        + grad_write_base
+        + o_m[:, None] * V
+        + o_v[None, :]
+    )
+    b_grad_write_reads = tl.load(
+        p_grad_write_reads,
+        mask=m_rows[:, None] & (o_v[None, :] < V),
+        other=0.0,
+    ).to(tl.float32)
+
+    # For Y=A^-1 B, dB=A^-T dY and dC=(A^-T dY)Y^T because A=I-C.
+    b_adjoint_effective = tl.dot(
+        b_inverse.T, b_grad_effective, input_precision="ieee"
+    )
+    b_adjoint_write = tl.dot(
+        b_inverse.T, b_grad_write_reads, input_precision="ieee"
+    )
+    b_grad_coupling = tl.dot(
+        b_adjoint_effective, b_effective.T, input_precision="ieee"
+    ) + tl.dot(
+        b_adjoint_write, b_write_reads.T, input_precision="ieee"
+    )
+    b_grad_coupling = tl.where(causal, b_grad_coupling, 0.0)
+    b_grad_write_coupling = tl.dot(
+        b_adjoint_write, b_values.T, input_precision="ieee"
+    )
+    b_grad_write_coupling = tl.where(
+        write_causal, b_grad_write_coupling, 0.0
+    )
+
+    b_grad_right = (
+        b_adjoint_effective
+        + tl.dot(b_grad_coupling, b_left, input_precision="ieee")
+        + tl.dot(b_grad_write_coupling, b_write, input_precision="ieee")
+    )
+    b_grad_left = tl.dot(
+        b_grad_coupling.T, b_right, input_precision="ieee"
+    )
+    b_grad_write = tl.dot(
+        b_grad_write_coupling.T, b_right, input_precision="ieee"
+    )
+    b_grad_values = tl.dot(
+        b_write_coupling.T, b_adjoint_write, input_precision="ieee"
+    )
+
+    p_grad_right = grad_right + factor_base + o_m[:, None] * K + o_k[None, :]
+    p_grad_left = grad_left + factor_base + o_m[:, None] * K + o_k[None, :]
+    tl.store(
+        p_grad_right,
+        b_grad_right,
+        mask=m_rows[:, None] & (o_k[None, :] < K),
+    )
+    tl.store(
+        p_grad_left,
+        b_grad_left,
+        mask=m_rows[:, None] & (o_k[None, :] < K),
+    )
+    p_grad_write = (
+        grad_normalized_write
+        + write_base
+        + o_t[:, None] * K
+        + o_k[None, :]
+    )
+    tl.store(
+        p_grad_write,
+        b_grad_write,
+        mask=(o_t[:, None] < BT) & (o_k[None, :] < K),
+    )
+    p_grad_values = (
+        grad_values + value_base + o_t[:, None] * V + o_v[None, :]
+    )
+    tl.store(
+        p_grad_values,
+        b_grad_values,
+        mask=(o_t[:, None] < BT) & (o_v[None, :] < V),
     )
 
 
@@ -308,6 +483,72 @@ def _qgdn_streaming_wy_cuda_fwd(
     return effective_right, write_reads
 
 
+def _qgdn_streaming_wy_cuda_bwd(
+    normalized_left: torch.Tensor,
+    right: torch.Tensor,
+    normalized_write: torch.Tensor,
+    values: torch.Tensor,
+    grad_effective: torch.Tensor,
+    grad_write_reads: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run the fused in-program adjoint solve and factor gradients."""
+    batch, heads, chunks, chunk_size, _, key_dim = right.shape
+    value_dim = values.shape[-1]
+    expected_grad_write = (*right.shape[:-1], value_dim)
+    if grad_effective.shape != right.shape:
+        raise ValueError("grad_effective has incompatible shape")
+    if grad_write_reads.shape != expected_grad_write:
+        raise ValueError("grad_write_reads has incompatible shape")
+
+    normalized_left = normalized_left.contiguous()
+    right = right.contiguous()
+    normalized_write = normalized_write.contiguous()
+    values = values.contiguous()
+    grad_effective = grad_effective.contiguous()
+    grad_write_reads = grad_write_reads.contiguous()
+    grad_left = torch.empty(
+        normalized_left.shape,
+        dtype=normalized_left.dtype,
+        device=normalized_left.device,
+    )
+    grad_right = torch.empty(
+        right.shape, dtype=right.dtype, device=right.device
+    )
+    grad_normalized_write = torch.empty(
+        normalized_write.shape,
+        dtype=normalized_write.dtype,
+        device=normalized_write.device,
+    )
+    grad_values = torch.empty(
+        values.shape, dtype=values.dtype, device=values.device
+    )
+    block_rows = triton.next_power_of_2(chunk_size * 2)
+    block_key = max(16, triton.next_power_of_2(key_dim))
+    block_value = max(16, triton.next_power_of_2(value_dim))
+    _qgdn_streaming_wy_bwd_kernel[(batch * heads * chunks,)](
+        normalized_left,
+        right,
+        normalized_write,
+        values,
+        grad_effective,
+        grad_write_reads,
+        grad_left,
+        grad_right,
+        grad_normalized_write,
+        grad_values,
+        K=key_dim,
+        V=value_dim,
+        BT=chunk_size,
+        BM=block_rows,
+        BK=block_key,
+        BV=block_value,
+        BWT=max(16, chunk_size),
+        num_warps=8,
+        num_stages=2,
+    )
+    return grad_left, grad_right, grad_normalized_write, grad_values
+
+
 class _QGDNStreamingWY(torch.autograd.Function):
     @staticmethod
     def forward(ctx, normalized_left, right, normalized_write, values):
@@ -325,7 +566,7 @@ class _QGDNStreamingWY(torch.autograd.Function):
             grad_write_reads = values.new_zeros(
                 *right.shape[:-1], values.shape[-1]
             )
-        return _qgdn_streaming_wy_recompute_bwd(
+        return _qgdn_streaming_wy_cuda_bwd(
             normalized_left,
             right,
             normalized_write,
@@ -341,7 +582,7 @@ def qgdn_streaming_wy_fwd(
     normalized_write: torch.Tensor,
     values: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return WY factors using Triton forward and recomputed manual backward."""
+    """Return WY factors using fused Triton forward and backward kernels."""
     return _QGDNStreamingWY.apply(
         normalized_left, right, normalized_write, values
     )

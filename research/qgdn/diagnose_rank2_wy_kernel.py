@@ -1,4 +1,4 @@
-"""Validate and benchmark Triton-forward/recompute-backward physical-T WY."""
+"""Validate and benchmark fused Triton physical-T WY forward/backward."""
 from __future__ import annotations
 
 import argparse
@@ -182,7 +182,7 @@ def main():
         results[update_order] = {
             "relative_rmse": errors,
             "triangular": baseline,
-            "triton_recompute": candidate,
+            "triton_fused": candidate,
         }
 
     payload = {

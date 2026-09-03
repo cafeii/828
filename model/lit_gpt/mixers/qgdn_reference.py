@@ -416,9 +416,9 @@ def qgdn_rank2_parallel_wy_reference(
     from the rank-two history, without constructing a 2C-by-2C coupling matrix.
     This remains a differentiable correctness oracle; the chunk-state loop is
     the sole sequential component that a fused inter-chunk kernel must replace.
-    ``wy_backend="triton"`` selects a diagnostic Triton forward plus a manual
-    recompute backward for that streaming algebra.  It remains opt-in until its
-    full-model speed advantage has been verified.
+    ``wy_backend="triton"`` selects diagnostic fused Triton forward/backward
+    kernels for that streaming algebra.  It remains opt-in until its full-model
+    speed advantage has been verified.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")

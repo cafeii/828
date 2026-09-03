@@ -307,8 +307,77 @@ def test_compact_affine_composition_is_associative_and_rank_additive():
     )
 
 
+def _dense_wy_adjoint(left, right, write, values, grad_effective, grad_reads):
+    batch, heads, chunks, chunk_size, rank, key_dim = right.shape
+    value_dim = values.shape[-1]
+    rows = chunk_size * rank
+    left_flat = left.reshape(batch, heads, chunks, rows, key_dim)
+    right_flat = right.reshape(batch, heads, chunks, rows, key_dim)
+    grad_effective_flat = grad_effective.reshape(
+        batch, heads, chunks, rows, key_dim
+    )
+    grad_reads_flat = grad_reads.reshape(
+        batch, heads, chunks, rows, value_dim
+    )
+    row_tokens = torch.arange(rows, device=right.device) // rank
+    causal = row_tokens[:, None] > row_tokens[None, :]
+    coupling = (right_flat @ left_flat.transpose(-1, -2)).masked_fill(
+        ~causal, 0
+    )
+    eye = torch.eye(rows, dtype=right.dtype, device=right.device)
+    system = eye - coupling
+    effective = torch.linalg.solve_triangular(
+        system, right_flat, upper=False, unitriangular=True
+    )
+    write_causal = row_tokens[:, None] > torch.arange(
+        chunk_size, device=right.device
+    )[None, :]
+    write_coupling = (right_flat @ write.transpose(-1, -2)).masked_fill(
+        ~write_causal, 0
+    )
+    reads = torch.linalg.solve_triangular(
+        system,
+        write_coupling @ values,
+        upper=False,
+        unitriangular=True,
+    )
+    adjoint_effective = torch.linalg.solve_triangular(
+        system.transpose(-1, -2),
+        grad_effective_flat,
+        upper=True,
+        unitriangular=True,
+    )
+    adjoint_reads = torch.linalg.solve_triangular(
+        system.transpose(-1, -2),
+        grad_reads_flat,
+        upper=True,
+        unitriangular=True,
+    )
+    grad_coupling = (
+        adjoint_effective @ effective.transpose(-1, -2)
+        + adjoint_reads @ reads.transpose(-1, -2)
+    ).masked_fill(~causal, 0)
+    grad_write_coupling = (
+        adjoint_reads @ values.transpose(-1, -2)
+    ).masked_fill(~write_causal, 0)
+    grad_right = (
+        adjoint_effective
+        + grad_coupling @ left_flat
+        + grad_write_coupling @ write
+    )
+    grad_left = grad_coupling.transpose(-1, -2) @ right_flat
+    grad_write = grad_write_coupling.transpose(-1, -2) @ right_flat
+    grad_values = write_coupling.transpose(-1, -2) @ adjoint_reads
+    return (
+        grad_left.reshape_as(left),
+        grad_right.reshape_as(right),
+        grad_write,
+        grad_values,
+    )
+
+
 @pytest.mark.parametrize("chunk_size", [1, 3, 8])
-def test_rank2_streaming_wy_manual_backward_matches_fp64_autograd(chunk_size):
+def test_rank2_streaming_wy_backward_formulas_match_fp64_autograd(chunk_size):
     torch.manual_seed(1701)
     prefix = (1, 2, 2, chunk_size)
     left = (0.1 * torch.randn(*prefix, 2, 4, dtype=torch.float64)).requires_grad_()
@@ -323,11 +392,15 @@ def test_rank2_streaming_wy_manual_backward_matches_fp64_autograd(chunk_size):
         torch.zeros_like(source) if value is None else value
         for value, source in zip(expected, inputs)
     )
-    actual = _qgdn_streaming_wy_recompute_bwd(
+    manual = _qgdn_streaming_wy_recompute_bwd(
         *(value.detach() for value in inputs), *output_grads
     )
-    for value, reference in zip(actual, expected):
-        torch.testing.assert_close(value, reference, rtol=2e-12, atol=2e-12)
+    dense_adjoint = _dense_wy_adjoint(
+        *(value.detach() for value in inputs), *output_grads
+    )
+    for actual in (manual, dense_adjoint):
+        for value, reference in zip(actual, expected):
+            torch.testing.assert_close(value, reference, rtol=2e-12, atol=2e-12)
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
