@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "PERFORMANCE_OPTIMIZATION",
-  "current_stage": "fused_dual_read_local_gradients_design",
+  "current_stage": "fused_dual_read_local_gradients_gpu_validation_pending",
   "remote": {
     "ssh": "H800_hk_Real_B3_01",
     "hostname": "tko-b3-nv-dgx01",
@@ -39,7 +39,7 @@
     42
   ],
   "active_jobs": [],
-  "submission_count_this_wake": 1,
+  "submission_count_this_wake": 0,
   "superseded_snapshot_audit": {
     "exp_id": "20260902-200157-dtjqc-rank2-state-gpu-pad-retest-902a43",
     "status": "prepared_never_submitted",
@@ -192,7 +192,7 @@
           "keep_native_kv_forward": true,
           "change": "fuse the native and shifted read streams inside local dv and dq/k/g kernels, eliminating the remaining auxiliary kernel launches and zero-dh materialization",
           "reason": "job 34925 showed that sharing only the reverse state scan improved throughput by just 0.65 percentage points; the remaining local-gradient work and the second QR state call dominate",
-          "status": "design_pending",
+          "status": "implemented_cpu_passed_gpu_pending",
           "constraint": "must preserve exact gradients and the 80 percent gate; do not submit formal training yet"
         },
         "specialized_dual_read_backward": {
@@ -216,6 +216,14 @@
           },
           "result": "experiments/20260903-074232-qr-gdn-dual-read-backward-gpu-perf-e641e7/outputs/result.json",
           "decision": "numerically_accepted_but_performance_gate_failed"
+        },
+        "fused_local_gradients": {
+          "commit": "06a2e931420d29f6e189b862789a2f8d2fe80040",
+          "status": "cpu_passed_gpu_pending",
+          "change": "combine native and shifted-read local dv plus dq/k/g contributions in one invocation per kernel; remove the auxiliary dq/k/g invocation and zero-dh tensor",
+          "gradient_identity": "shared recurrent state term counted once; main and auxiliary read terms accumulated before common k and decay-gate reductions",
+          "cpu_regression": "16_passed_8_gpu_skipped",
+          "formal_training": "blocked_pending_gpu_correctness_throughput_and_ddp"
         }
       }
     },
@@ -351,7 +359,11 @@
     {
       "stage": "specialized_dual_read_backward",
       "commit": "f2eca23807dfeee39f8920ba78f9b191314085b2"
+    },
+    {
+      "stage": "fused_dual_read_local_gradients",
+      "commit": "06a2e931420d29f6e189b862789a2f8d2fe80040"
     }
   ],
-  "last_heartbeat": "2026-09-02T23:34:41.340Z"
+  "last_heartbeat": "2026-09-03T00:24:11.503Z"
 }
