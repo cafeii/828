@@ -1,6 +1,7 @@
 """Paired GDN/QGDN training: explicit budgets, global data order, strict resume.
 
-Single node CUDA/DDP via torchrun. No automatic Slurm submission or downloads.
+Single node CUDA/DDP via ``python -m torch.distributed.run``. No automatic
+Slurm submission or downloads.
 The CPU option is solely for small integration tests (no ShortConv).
 """
 import argparse

@@ -125,7 +125,9 @@ def main() -> None:
         )
         run_output = args.output_dir / run_name
         command = [
-            "torchrun",
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
             "--standalone",
             "--nnodes=1",
             f"--nproc-per-node={args.world_size}",
