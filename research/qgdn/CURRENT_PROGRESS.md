@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 22:36（Asia/Shanghai）
+更新时间：2026-09-03 22:51（Asia/Shanghai）
 
 ## 当前目标
 
@@ -99,10 +99,16 @@ Commit `1b589cabfd6c4737bb87af62b199a64aa43023cc` 将这套流式代数写成单
 
 该 Triton 后端仍是显式 diagnostic 且 forward-only；尚无 backward、有限梯度门禁、整模型吞吐或整模型峰值显存结果。生产默认 `QGDN_USE_PHYSICAL_T=False`，不会因本次 forward 通过而启用。
 
+Commit `221892c59d07bfc55fcf5a5206eae9dffe2864c2` 为该 forward kernel 增加了手写重算 backward。forward 只保存 normalized-left、right、normalized-write 和 values 四个输入；backward 重算 effective-right history 与 chunk 内 write-state history，再显式反传，不保存 forward token 中间图，也不构造 2C×2C system。新增 CPU/FP64 直接梯度对照覆盖 chunk size 1/3/8，完整 rank-2 聚焦集合为 102 passed。
+
+H800 作业 35642（实验 `20260903-224553-qgdn-wy-recompute-bwd-27370d`）为 `COMPLETED / 0:0`，`run.exitcode=0`，JUnit 6 passed / 0 failed，覆盖三种更新顺序、chunk 8/16、尾 chunk padding、输出、末状态以及 q/k/v/g/beta/gamma/初态全部梯度。最大输出、末状态、输入梯度相对 RMSE 分别为 `4.62e-8`、`2.48e-8`、`7.98e-7`，全部有限。
+
+但这版 backward 仍由 Python token 循环和通用 einsum 执行。FP32 B=2/T=128/H=4/K=V=64/chunk=16 的 forward+backward 中位数约为 48.1–48.4 ms，而 triangular oracle 为 8.75–13.0 ms，三种顺序的速度比分别只有 `0.270x`、`0.182x`、`0.198x`。peak allocated memory 比为 `0.975x`，incremental peak 比为 `0.957x`。因此手写公式与重算边界作为 CUDA backward 的可靠 oracle 保留，但当前执行路径因速度被否决，不接入训练默认。
+
 ## 下一任务的第一步
 
-1. 为已通过 forward 数值门禁的 Triton WY kernel 实现重算式或手写 backward，避免通用 autograd 保存每个 token 的中间图，并对三种顺序检查全部输入梯度。
-2. 用交错 A/B 或更多稳态样本复测 forward，排除 35628 首个顺序的调度抖动；任何性能结论都必须覆盖三种顺序。
+1. 将已通过 FP64/CUDA 梯度门禁的手写 WY backward 融合成专用 Triton kernel，消除当前约 48 ms 的 Python/einsum 循环开销。
+2. 用交错 A/B 或更多稳态样本复测 forward+backward；任何性能结论都必须覆盖三种顺序。
 3. 接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 双 solve 路径作为 CUDA 数值 oracle。
 4. 融合 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
 5. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
