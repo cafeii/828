@@ -1,8 +1,8 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T06:20:03.152564+00:00",
-  "current_stage": "chunk32_full_model_confirmation",
+  "updated_at": "2026-09-03T06:23:07.637128+00:00",
+  "current_stage": "isolated_full_model_benchmark_ready",
   "active_jobs": {},
   "frozen_directions": [
     "qr_gdn",
@@ -38,17 +38,15 @@
     }
   ],
   "last_review": {
-    "job_id": "35101",
+    "job_id": "35120",
     "state": "COMPLETED",
     "exit_code": "0:0",
-    "result": "chunk32 slower in first fixed-order full-model run; confirmation required",
+    "result": "measurement-order bias confirmed; per-variant process isolation required",
     "metrics": {
-      "candidate_speedup_vs_chunk16": 0.9676804257732807,
-      "chunk16_to_gdn_ratio": 0.6158074424292477,
-      "chunk32_to_gdn_ratio": 0.5959048080842895,
-      "chunk16_peak_memory_gb": 6.838001152,
-      "chunk32_peak_memory_gb": 6.821223936
+      "chunk32_first_tokens_per_second": 11158.891132043958,
+      "chunk16_second_tokens_per_second": 7835.791657692477,
+      "candidate_speedup_vs_chunk16": 1.4240923724776628
     }
   },
-  "next_action": "run reverse-order 340M confirmation; revert chunk32 if it remains non-beneficial"
+  "next_action": "measure GDN, QGDN chunk16 and chunk32 in independent Python/CUDA processes"
 }

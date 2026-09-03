@@ -97,9 +97,70 @@ def main() -> None:
         action="store_true",
         help="run chunk32 before chunk16 to expose order/cache bias",
     )
+    parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help="measure each model in a fresh Python/CUDA process",
+    )
+    parser.add_argument(
+        "--only", choices=("gdn", "qgdn_chunk16", "qgdn_chunk32"),
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
+
+    order = (
+        ["qgdn_chunk32", "qgdn_chunk16", "gdn"]
+        if args.reverse_order
+        else ["gdn", "qgdn_chunk16", "qgdn_chunk32"]
+    )
+    if args.isolated:
+        if args.only is not None:
+            raise ValueError("--isolated and --only are mutually exclusive")
+        child_reports = {}
+        for name in order:
+            child_output = args.output.with_name(f".{args.output.stem}-{name}.json")
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--output", str(child_output),
+                "--sequence-length", str(args.sequence_length),
+                "--warmup", str(args.warmup),
+                "--measured", str(args.measured),
+                "--only", name,
+            ]
+            subprocess.run(command, check=True)
+            child_reports[name] = json.loads(child_output.read_text())
+            child_output.unlink()
+        models = {name: child_reports[name]["model"] for name in order}
+        gdn = models["gdn"]["tokens_per_second"]
+        old = models["qgdn_chunk16"]["tokens_per_second"]
+        new = models["qgdn_chunk32"]["tokens_per_second"]
+        report = {
+            "status": "measured_isolated",
+            "commit": child_reports[order[0]]["commit"],
+            "device": child_reports[order[0]]["device"],
+            "torch": child_reports[order[0]]["torch"],
+            "cuda": child_reports[order[0]]["cuda"],
+            "sequence_length": args.sequence_length,
+            "micro_batch_size": 1,
+            "activation_checkpointing": True,
+            "warmup_steps": args.warmup,
+            "measured_steps": args.measured,
+            "measurement_order": order,
+            "process_isolation": True,
+            "numerics": child_reports[order[0]]["numerics"],
+            "models": models,
+            "candidate_speedup_vs_chunk16": new / old,
+            "chunk16_to_gdn_ratio": old / gdn,
+            "chunk32_to_gdn_ratio": new / gdn,
+            "throughput_target": 0.9,
+            "throughput_target_passed": new / gdn >= 0.9,
+        }
+        write_json(args.output, report)
+        print(json.dumps(report, ensure_ascii=False), flush=True)
+        return
 
     numerics = configure_numerics(cpu=False)
     torch.manual_seed(117)
@@ -121,11 +182,20 @@ def main() -> None:
             qgdn_chunk_size=32,
         ),
     }
-    order = (
-        ["qgdn_chunk32", "qgdn_chunk16", "gdn"]
-        if args.reverse_order
-        else ["gdn", "qgdn_chunk16", "qgdn_chunk32"]
-    )
+    if args.only is not None:
+        report = {
+            "status": "measured_child",
+            "commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "device": torch.cuda.get_device_name(0),
+            "torch": torch.__version__,
+            "cuda": torch.version.cuda,
+            "numerics": numerics,
+            "model": runners[args.only](),
+        }
+        write_json(args.output, report)
+        return
     models = {name: runners[name]() for name in order}
     gdn = models["gdn"]["tokens_per_second"]
     old = models["qgdn_chunk16"]["tokens_per_second"]
