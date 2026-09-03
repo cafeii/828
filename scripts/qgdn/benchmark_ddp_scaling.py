@@ -48,7 +48,15 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=6)
     parser.add_argument("--global-batch-size", type=int, default=128)
     parser.add_argument("--sequence-length", type=int, default=4096)
+    parser.add_argument("--log-every", type=int, default=1)
+    parser.add_argument(
+        "--only",
+        choices=tuple(config["name"] for config in CASES),
+        help="Run one configuration when a focused repeat is sufficient",
+    )
     args = parser.parse_args()
+    if args.steps < 2 or args.log_every < 1:
+        parser.error("steps must be at least 2 and log-every must be positive")
     args.output_dir.mkdir(parents=True, exist_ok=False)
 
     train = Path(__file__).with_name("train.py")
@@ -60,6 +68,8 @@ def main() -> None:
         "steps": args.steps,
         "global_batch_size": args.global_batch_size,
         "sequence_length": args.sequence_length,
+        "log_every": args.log_every,
+        "selected_case": args.only,
         "cases": [],
     }
     write_json(report_path, report)
@@ -81,7 +91,10 @@ def main() -> None:
         write_json(report_path, report)
         raise RuntimeError("Fused-loss validation failed")
 
-    for config in CASES:
+    selected_cases = [
+        config for config in CASES if args.only is None or config["name"] == args.only
+    ]
+    for config in selected_cases:
         run_output = args.output_dir / config["name"]
         command = [
             "torchrun",
@@ -110,7 +123,7 @@ def main() -> None:
             "--save-every",
             str(args.steps),
             "--log-every",
-            "1",
+            str(args.log_every),
             "--training-loss",
             config["training_loss"],
         ]
@@ -131,19 +144,27 @@ def main() -> None:
                 for line in metrics_path.read_text().splitlines()
                 if json.loads(line)["kind"] == "train"
             ]
-            steady_metrics = [row for row in train_metrics if row["step"] > 1]
-            steady_tps = statistics.median(
-                row["tokens_per_second"] for row in steady_metrics
+            first_step_seconds = train_metrics[0]["step_seconds"]
+            steady_steps = args.steps - 1
+            steady_seconds = summary["train_seconds"] - first_step_seconds
+            steady_tps = (
+                steady_steps * args.global_batch_size * args.sequence_length
+                / steady_seconds
             )
+            steady_metrics = [row for row in train_metrics if row["step"] > 1]
             case.update(
                 status="completed",
                 peak_memory_gb=summary["peak_memory_gb"],
                 train_seconds=summary["train_seconds"],
                 wall_seconds=summary["wall_seconds"],
-                first_step_seconds=train_metrics[0]["step_seconds"],
-                steady_tokens_per_second_median=steady_tps,
-                steady_step_seconds_median=statistics.median(
-                    row["step_seconds"] for row in steady_metrics
+                first_step_seconds=first_step_seconds,
+                steady_steps=steady_steps,
+                steady_seconds=steady_seconds,
+                steady_tokens_per_second=steady_tps,
+                logged_steady_tokens_per_second_median=(
+                    statistics.median(row["tokens_per_second"] for row in steady_metrics)
+                    if steady_metrics
+                    else None
                 ),
                 projected_10b_hours=10e9 / steady_tps / 3600,
                 projected_15b_hours=15e9 / steady_tps / 3600,
@@ -161,11 +182,11 @@ def main() -> None:
         write_json(report_path, report)
 
     completed = [case for case in report["cases"] if case["status"] == "completed"]
-    report["status"] = "completed" if len(completed) == len(CASES) else "failed"
+    report["status"] = "completed" if len(completed) == len(selected_cases) else "failed"
     if completed:
-        fastest = max(completed, key=lambda case: case["steady_tokens_per_second_median"])
+        fastest = max(completed, key=lambda case: case["steady_tokens_per_second"])
         report["fastest_case"] = fastest["name"]
-        report["fastest_tokens_per_second"] = fastest["steady_tokens_per_second_median"]
+        report["fastest_tokens_per_second"] = fastest["steady_tokens_per_second"]
         report["fastest_projected_10b_hours"] = fastest["projected_10b_hours"]
         report["fastest_projected_15b_hours"] = fastest["projected_15b_hours"]
     write_json(report_path, report)
