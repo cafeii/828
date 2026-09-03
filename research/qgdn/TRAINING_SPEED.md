@@ -53,6 +53,8 @@ Slurm 35377（commit `6c8b5a0789da6a419e3ed3512daff4ee0ede5c30`）审计了不�
 
 由于梯度未执行，数值与有限性门槛未通过；整模型 benchmark 没有启动，所以没有物理 T 吞吐或峰值显存数据。`QGDN_USE_PHYSICAL_T` 继续为 `False`。后续应改为物理 T 的并行 chunk/WY 秩二扫描，不采用已在 Slurm 35367 触发 CUDA 越界的 TileLang 快路径。
 
+Commit `17b2201ce73817f615dcd93b8722f92163926086` 已固定下一个 CUDA 实现的 CPU/FP64 合约。每个真实 token 使用一个秩二 `scale * I + U @ V.T` 转移和写入 bias，chunk 之间通过可结合的紧凑仿射组合衔接，全程不构造 K×K 稠密转移。三种更新顺序、query/key recall 和 chunk size 1/3/8 的输出、末状态与全输入梯度均已对齐逐 token FP64 参考；聚焦测试 28 passed。这只证明并行化代数合约正确，尚未产生 CUDA 吞吐或显存结果，所以默认路径不变。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text

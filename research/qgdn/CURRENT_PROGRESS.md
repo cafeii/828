@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 20:06（Asia/Shanghai）
+更新时间：2026-09-03 21:20（Asia/Shanghai）
 
 ## 当前目标
 
@@ -31,6 +31,7 @@
 | `b765376d201a6f94a8681b24441802e8ffb69e28` | 审计更快的 DPLR 后端候选 |
 | `343e75a4c9200f80a6344ba1c977f5e472220998` | 物理 T 融合 kernel 原型 |
 | `6c8b5a0789da6a419e3ed3512daff4ee0ede5c30` | 为物理 T 原型增加 CUDA 门控测试与整模型基准 |
+| `17b2201ce73817f615dcd93b8722f92163926086` | 定义物理 T 秩二 chunk/WY 紧凑仿射合约 |
 
 ## 当前速度结论
 
@@ -62,11 +63,17 @@ Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`，commit `6c
 
 该串行原型仍只是显式 opt-in，`QGDN_USE_PHYSICAL_T=False`，因此生产训练仍走已验证的虚拟 2T DPLR 路径。不修补后直接启用，也不用已越界的 TileLang 候选替换它。下一个有效方向是将每个真实 token 的秩二仿射转移接入并行 chunk/WY 扫描，保留 T 时间长度，同时避免单个 program 内静态展开整个反向递推。
 
+## 并行 chunk/WY 合约
+
+已建立可微的 CPU/FP64 紧凑仿射参考。每个真实 token 直接表示为 `scale * I + U @ V.T` 的秩二转移加一个写入 bias；两个仿射可在不构造 K×K 稠密转移的情况下结合，组合满足结合律。一个 C-token chunk 保持 C 个物理时间行，WY 秩维最多为 2C，不再向公共算子暴露 2T 虚拟序列。
+
+针对 Recall→Delta、Delta→Recall 和 Parallel，query/key recall、chunk size 1/3/8，已验证输出、末状态和 q/k/v/g/beta/gamma/初态的全部梯度与逐 token FP64 参考一致。聚焦测试为 28 passed，新增合约用例为 19 passed，最严梯度容差为 `8e-11`。这一里程碑只固定并行算法的代数语义，还不是 CUDA 性能结果。
+
 ## 下一任务的第一步
 
-1. 设计物理 T 的并行 chunk/WY 秩二实现，不继续扩展当前串行 Triton 递推。
-2. 先用 FP64 密集参考检查三种更新顺序的 chunk 转移、输出、末状态和所有输入梯度。
-3. 再用 H800 做 CUDA 数值与有限梯度检查；只有通过后才跑同卡、同配置的整模型虚拟 2T 对照。
+1. 将已验证的紧凑仿射组合改写为 GPU 块内下三角/WY 准备与块间状态扫描，不继续扩展串行 Triton 递推。
+2. 保留输入布局 `[B,T,H,2,K]`，输出仍为 T 行；先做短序列 CUDA 输出、末状态和全输入梯度对齐。
+3. CUDA 数值和有限梯度通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
 4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
