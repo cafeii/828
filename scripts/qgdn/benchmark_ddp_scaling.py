@@ -17,21 +17,12 @@ CASES = (
         "micro_batch_size": 1,
         "activation_checkpointing": True,
         "training_loss": "torch",
-        "compile_model_forward": False,
     },
     {
         "name": "optimized-b8-no-checkpoint-fused",
         "micro_batch_size": 8,
         "activation_checkpointing": False,
         "training_loss": "fused",
-        "compile_model_forward": False,
-    },
-    {
-        "name": "optimized-b8-no-checkpoint-fused-compiled",
-        "micro_batch_size": 8,
-        "activation_checkpointing": False,
-        "training_loss": "fused",
-        "compile_model_forward": True,
     },
 )
 
@@ -159,8 +150,6 @@ def main() -> None:
         ]
         if not config["activation_checkpointing"]:
             command.append("--no-activation-checkpointing")
-        if config.get("compile_model_forward", False):
-            command.append("--compile-model-forward")
         returncode, process_seconds = run_logged(
             command,
             args.output_dir / f"{run_name}.out",
