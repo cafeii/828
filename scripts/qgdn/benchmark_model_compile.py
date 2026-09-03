@@ -74,7 +74,7 @@ def main() -> None:
     parser.add_argument("--measured", type=int, default=8)
     parser.add_argument("--acceptance-speedup", type=float, default=1.05)
     args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=False)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     eager = run_case(
         "eager",
