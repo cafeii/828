@@ -1,0 +1,12 @@
+{
+  "job_id": "35171",
+  "exp_id": "20260903-151830-qgdn-no-recompute-long-pair-80a5be",
+  "job_name": "王正仁-Metis-20260903-151830-qgdn-no-recompute-long-pair-80a5be",
+  "scope": "long isolated 340M QGDN recompute/no-recompute pair",
+  "commit": "69ce8f394a2aa9d3c0513a745fd8361fe1fe2b96",
+  "state": "RUNNING",
+  "node": "tko-b3-nv-dgx16",
+  "resources": "1 GPU / 8 CPU / 64G / 1h",
+  "required_output": "qgdn-no-recompute-long-pair.json",
+  "submitted_at": "2026-09-03T07:20:19.876629+00:00"
+}

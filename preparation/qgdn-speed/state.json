@@ -1,9 +1,22 @@
 {
   "task": "qgdn_training_speed_optimization",
   "status": "in_progress",
-  "updated_at": "2026-09-03T07:17:00.949817+00:00",
+  "updated_at": "2026-09-03T07:20:19.876629+00:00",
   "current_stage": "dplr_no_recompute_confirmation",
-  "active_jobs": {},
+  "active_jobs": {
+    "35171": {
+      "job_id": "35171",
+      "exp_id": "20260903-151830-qgdn-no-recompute-long-pair-80a5be",
+      "job_name": "王正仁-Metis-20260903-151830-qgdn-no-recompute-long-pair-80a5be",
+      "scope": "long isolated 340M QGDN recompute/no-recompute pair",
+      "commit": "69ce8f394a2aa9d3c0513a745fd8361fe1fe2b96",
+      "state": "RUNNING",
+      "node": "tko-b3-nv-dgx16",
+      "resources": "1 GPU / 8 CPU / 64G / 1h",
+      "required_output": "qgdn-no-recompute-long-pair.json",
+      "submitted_at": "2026-09-03T07:20:19.876629+00:00"
+    }
+  },
   "frozen_directions": [
     "qr_gdn",
     "dt_gdn",
@@ -60,6 +73,11 @@
       "commit": "da5320e124122dbd92abcbc08b81d0fc378f6be8",
       "milestone": "production compiled QGDN virtual-input construction",
       "validation": "15 non-CUDA and 2 CUDA compiled/eager parity tests passed"
+    },
+    {
+      "commit": "69ce8f394a2aa9d3c0513a745fd8361fe1fe2b96",
+      "milestone": "focused isolated DPLR recompute pair benchmark",
+      "validation": "bytecode compilation and CLI smoke passed"
     }
   ],
   "last_review": {
@@ -78,5 +96,5 @@
       "final_loss_absolute_difference": 0.0
     }
   },
-  "next_action": "add a focused isolated recompute pair mode and run 5-warmup/50-step confirmation"
+  "next_action": "monitor long pair job 35171 and accept/reject no-recompute production default"
 }
