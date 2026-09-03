@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 19:41（Asia/Shanghai）
+更新时间：2026-09-03 20:06（Asia/Shanghai）
 
 ## 当前目标
 
@@ -52,27 +52,21 @@
 
 TileLang 快路径在 Slurm 35367 中触发 CUDA `vectorized_gather_kernel index out of bounds`，作业以退出码 1 失败。该候选没有产出可用性能结果，也没有被设为生产默认。
 
-## 正在运行的物理 T 诊断
+Slurm 35377（实验 `20260903-193528-qgdn-physical-t-audit-0b29a7`，commit `6c8b5a0789da6a419e3ed3512daff4ee0ede5c30`）否决了串行物理 T Triton 原型。作业为 `FAILED / 1:0`，`run.exitcode=1`；JUnit 记录 61 项测试中 58 通过、3 失败。三种更新顺序都先通过了 CUDA forward 输出和末状态容差检查，但 backward kernel 编译时在 `tl.store(grad_g + token_head, dg_t)` 报错：要写入标量指针的 `dg_t` 被推导为 block。每种顺序的失败分别耗时 363.548、437.586 和 400.792 秒，整个 pytest 用时 1335.137 秒，说明当前静态展开 backward 还有明显编译资源问题。
+
+因为 backward 未能编译，梯度有限性和数值误差均未获得；门控脚本未进入整模型 benchmark，因此 `physical-t-audit.json` 缺失，吞吐和峰值显存都没有可报告数值。这不是速度候选通过，不能据此推断它比虚拟 2T 更快。
+
+## 物理 T 路径结论
 
 物理 T 原型直接按 T 个真实 token 执行每步两个低秩修正，不再构造零行、2T 查询/键/值张量或丢弃一半输出。它保持三种更新顺序的原公式，不把两个修正错误地合并成一个秩一更新。
 
-当前原型仍是显式 opt-in，`QGDN_USE_PHYSICAL_T=False`，因此没有改变生产训练路径。
-
-- Slurm：35377
-- 实验：`20260903-193528-qgdn-physical-t-audit-0b29a7`
-- Commit：`6c8b5a0789da6a419e3ed3512daff4ee0ede5c30`
-- 资源：1×H800，16 CPU，128 GB，最长 2 小时
-- 内容：先跑完整 QGDN CUDA 测试，再比较虚拟 2T 与三个物理 T 版本的整模型吞吐和显存
-- 当前状态：RUNNING
-
-不要在终态审查前启用该 kernel。它的反向会在短 chunk 内重建状态，需要重点检查 Triton 编译资源、梯度误差、有限值和实际吞吐；只要其中一项不合格，就保持现有生产路径不变。
+该串行原型仍只是显式 opt-in，`QGDN_USE_PHYSICAL_T=False`，因此生产训练仍走已验证的虚拟 2T DPLR 路径。不修补后直接启用，也不用已越界的 TileLang 候选替换它。下一个有效方向是将每个真实 token 的秩二仿射转移接入并行 chunk/WY 扫描，保留 T 时间长度，同时避免单个 program 内静态展开整个反向递推。
 
 ## 下一任务的第一步
 
-1. 用 `experiment.py status`、`sacct`、`run.exitcode`、日志、JUnit 和 `physical-t-audit.json` 审查 Slurm 35377。
-2. 无论成功或失败，都用 `sync_results.sh` 回收结果并记录第一处实质性错误。
-3. 若正确性通过且整模型明显加速，再做 8 卡 DDP smoke；通过后才考虑把物理 T 设为默认。
-4. 若 Triton 资源、数值重建或吞吐不合格，保留失败证据，转为物理 T 的并行 chunk/WY 秩二实现，不回退到有 CUDA 越界的 TileLang 候选。
-5. 验证完成后更新本文件和 `TRAINING_SPEED.md`，提交并推送 `QGDN` 分支。
+1. 设计物理 T 的并行 chunk/WY 秩二实现，不继续扩展当前串行 Triton 递推。
+2. 先用 FP64 密集参考检查三种更新顺序的 chunk 转移、输出、末状态和所有输入梯度。
+3. 再用 H800 做 CUDA 数值与有限梯度检查；只有通过后才跑同卡、同配置的整模型虚拟 2T 对照。
+4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
