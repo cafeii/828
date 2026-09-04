@@ -511,6 +511,12 @@ loss/PPL 为 `2.977149 / 19.63176`，比同顺序 beta-style 高 `0.442%` PPL；
 高 `0.274% / 0.306%` PPL。gamma 全部训练记录仍严格为 `1.0 / 0.0 / 100%`，loss、
 梯度和 checkpoint 正常；连续两个验证点都不支持固定强 recall 带来收益。
 
+第三个共同 step-6000 validation 仍一致：固定 gamma=1 Recall→Delta/Parallel 的
+loss/PPL 为 `2.896733 / 18.11486`、`2.896449 / 18.10973`，比各自 beta-style 对照
+高 `0.448% / 0.268%` PPL，也比 GDN 高 `0.250% / 0.221%`。固定门控全程仍严格为
+`1.0 / 0.0 / 100%`，排除了配置漂移；连续三个验证点都显示 gamma=1 对效果有小幅负面
+影响，因此继续训练只用于确认终点幅度，不改变科学配置。
+
 ## 可训练 gamma∼U(0.85, 0.95) 消融已启动
 
 Commit `9e381f0ecb1a8c2fcd8397446003cf6fdf0530b7` 新增 Recall→Delta 和 Parallel
@@ -576,6 +582,19 @@ Recall→Delta/Parallel `2.96963 / 2.97008`。高 gamma 两路的 beta mean/std 
 `0.27336 / 0.15795` 与 `0.27076 / 0.15722`，gamma mean/std/饱和率为
 `0.55068 / 0.31397 / 13.62%` 与 `0.55053 / 0.31249 / 13.10%`。饱和率继续缓慢
 回落，未见数值异常；需等待即将到达的 step-4000 validation 再做效果判断。
+
+高 gamma 的第二个共同 step-4000 validation 已完成。Recall→Delta 的 loss/PPL 为
+`2.975552 / 19.60045`，比同顺序 beta-style 高 `0.282%` PPL、比固定 gamma=1 低
+`0.159%`；Parallel 为 `2.974974 / 19.58912`，反而比 beta-style 低 `0.023%`、比固定
+gamma=1 低 `0.250%`。两路仍分别比 GDN 高 `0.114% / 0.056%` PPL。结果说明可训练
+高 gamma 明显优于固定 1，但相对 beta-style 没有跨顺序一致收益。
+
+共同 step `5081` 的近 20 点 loss 为 Recall→Delta beta-style `2.89813`、GDN
+`2.89943`、Parallel 高 gamma `2.89972`、Parallel beta-style `2.89975`、Recall→Delta
+高 gamma `2.90062`、Delta→Recall beta-style `2.90081`、固定 gamma=1 Parallel/
+Recall→Delta `2.90206 / 2.90276`。高 gamma 两路 gamma mean/std/饱和率约为
+`0.53337 / 0.31511 / 12.22%` 与 `0.53536 / 0.31298 / 11.78%`，持续有限且饱和率继续
+回落。
 
 ## 当前下一步
 

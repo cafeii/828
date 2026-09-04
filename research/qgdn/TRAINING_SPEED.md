@@ -362,6 +362,11 @@ step-4000 validation 中，固定 gamma=1 Recall→Delta/Parallel 的 loss/PPL �
 `0.442% / 0.227%` PPL，也都差于 GDN `19.57818`。两路全部训练记录的 gamma 仍严格
 为 `1/0/100%`，数值正常；连续两个共同验证点均显示固定强 recall 略差。
 
+step-6000 validation 再次复现：固定 gamma=1 Recall→Delta/Parallel 的 PPL 为
+`18.11486 / 18.10973`，比各自 beta-style 对照高 `0.448% / 0.268%`，比 GDN 高
+`0.250% / 0.221%`。门控严格为 `1/0/100%` 且无数值异常，因此连续三点的负向信号
+不能归因于实现漂移。
+
 ## 可训练高 gamma 初始化消融
 
 Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
@@ -406,6 +411,16 @@ beta-style gamma 分别高 `0.181% / 0.064%` PPL，但比固定 gamma=1 分别�
 `0.27076 / 0.15722`，gamma mean/std/饱和率为 `0.55068 / 0.31397 / 13.62%` 与
 `0.55053 / 0.31249 / 13.10%`。饱和率延续从 19% 向下回落的趋势，所有指标有限；
 两路距 step-4000 validation 仅约 150 step。
+
+高 gamma 的 step-4000 validation loss/PPL 为 Recall→Delta
+`2.975552 / 19.60045`、Parallel `2.974974 / 19.58912`。Recall→Delta 相对同顺序
+beta-style 高 `0.282%` PPL，而 Parallel 低 `0.023%`；两路均明显好于固定 gamma=1，
+但相对 GDN 仍高 `0.114% / 0.056%`。当前证据支持“gamma 可学习很重要”，不支持高
+gamma 初始化本身稳定优于 beta-style 初始化。
+
+共同 step `5081` 时，高 gamma Recall→Delta / Parallel 的近 20 点 loss 为
+`2.90062 / 2.89972`，gamma mean/std/饱和率为 `0.53337 / 0.31511 / 12.22%` 与
+`0.53536 / 0.31298 / 11.78%`；饱和率继续下降，数值和吞吐正常。
 
 ## 复现实验
 
