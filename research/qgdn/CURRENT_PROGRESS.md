@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-04 09:22（Asia/Shanghai）
+更新时间：2026-09-04 11:22（Asia/Shanghai）
 
 ## 当前目标
 
@@ -44,6 +44,11 @@
 | `55d66c80b9a8438d55ff8efc2e37d6550b26c3f3` | 融合物理 T 的块级状态扫描和块内输出恢复 |
 | `bb42be3df2fc4e627f266bcd9b75c387c55e20ad` | 增加 triangular / fused-WY / 全融合三后端诊断 |
 | `22a3b27fd0c7f286320199d18edea793e229f8a2` | 消除三顺序与三后端轮换的周期锁相 |
+| `1335ee690822ab72c736c94c2b6c49363d604e95` | 将全融合物理 T 接入显式 opt-in 训练路径 |
+| `69d9e6cae3f50cbb4d399bc878f872e382df4be8` | 保持整模型 A/B 父进程 CUDA-free |
+| `a1c1bd2be7848e24cfd6b5d7dd4a9fea4778b5a8` | 审计整个物理 T 算子 checkpoint |
+| `101f1f2fa9bf84b67813f08c69178adf13fadca3` | 只重算物理 T chunk-start 状态 |
+| `b1084a821a69dc654f82fc3102d9e00814cb3daa` | 用单一自定义 autograd 边界约束跨层保存张量 |
 
 ## 当前速度结论
 
@@ -145,10 +150,31 @@ Slurm 35896（实验 `20260904-094915-physical-chunk-training-audit-2ce53c`）�
 
 所有输出、状态和梯度均有限，远低于输出/状态 0.025、梯度 0.07 的 BF16 门槛。该结果通过了训练入口与实际形状的 CUDA 数值门禁，并在算子作用域相对虚拟 2T 降低约 12.9%–15.7% 峰值分配；它尚未给出整模型吞吐，因此默认开关继续关闭。
 
+## 整模型内存与 micro batch 4 门禁
+
+Slurm 35911 在一张干净 H800 上先完成了虚拟 2T、micro batch 8 基线：`40,121.94 token/s`、`74.58 GB`、中位 step `0.8169 s`，loss 有限。同一作业的第一个 no-recompute 物理 T 进程在后续层 forward 中 OOM：PyTorch 已分配 `78.53 GiB`，进程总使用 `79.17 GiB`，请求额外 64 MiB 失败。
+
+两个 micro batch 8 内存候选也未达标：
+
+- Slurm 35933 的整算子 checkpoint 可运行，CUDA JUnit 6/6、`run.exitcode=0`、loss 有限，峰值显存降到 `55.66 GB`；但吞吐仅 `6,856.94 token/s`，是虚拟 2T mb8 基线的 `0.171x`，因重算开销被否决。
+- Slurm 35959 只重算 chunk-start，CUDA JUnit 6/6 先通过，但整模型 mb8 仍在后续层 forward OOM：进程使用 `79.11 GiB`、PyTorch 分配 `78.46 GiB`；`run.exitcode=1`，未产出性能 JSON。
+
+用户建议的 micro batch 4 已在同一 dgx19、同一不可变 commit `69d9e6c`、340M、T=4096、关闭 checkpoint、fused loss 下做了直接对照：
+
+| 路径 | Slurm | 中位 step | 吞吐 | 峰值显存 | loss/门禁 |
+|---|---:|---:|---:|---:|---|
+| 虚拟 2T mb4 | 36061 | 0.4444 s | 36,863.50 token/s | 39.80 GB | finite；CUDA JUnit 6/6 |
+| no-recompute 物理 T mb4 | 36054 | 2.3731 s | 6,903.17 token/s | 62.62 GB | finite；CUDA JUnit 6/6 |
+
+物理 T 只有同 mb4 虚拟 2T 吞吐的 `0.187x`（慢 `5.34x`），显存反而是 `1.573x`。它相对当前生产虚拟 2T mb8 也只有 `0.172x` 吞吐；虽然显存为 `0.840x`，但 8 卡 global batch 128 需要从 mb8/GA2 改为 mb4/GA4，累积开销不会扭转这一差距。
+
+因此 mb4 路径在第一个最快预期的 no-recompute 候选上就同时失败了 `>1.25x` 吞吐门槛和“显存不劣化”门槛。不再执行三顺序×多重复的完整 A/B，也不提交 8 卡 DDP smoke。`QGDN_USE_PHYSICAL_T=False` 保持不变。
+
 ## 下一任务的第一步
 
-1. 跑同卡、同模型、同 micro batch 8、同序列 4096、关闭 checkpoint、fused loss 的单卡整模型“物理 T vs 虚拟 2T”稳定 A/B，分别配对三种更新顺序。
-2. 只有三种顺序均稳定超过 `1.25x`、loss/梯度有限且峰值显存不恶化，才形成可复现的默认启用候选；目标仍约为 `1.5x`。
-3. 整模型通过后再做 8 卡 DDP smoke；若吞吐或显存门槛失败，保留默认关闭并根据 profiler 证据继续优化或否决。
+1. 不再围绕 batch size 或整算子 checkpoint 调参；当前根因是物理 T 整模型每层 forward/backward 执行成本，不是单纯容量问题。
+2. 用 profiler 将物理 T 的 WY 准备、chunk-state 扫描、output 恢复和 backward 以及 18 层调用开销分开，找出为何局部 2.2x 优势在整模型中变成 0.187x。
+3. commit `b1084a8` 的单自定义 autograd 边界已通过 138 项 CPU/FP64 回归，但在当前 no-recompute mb4 已严重失速的证据下，只有 profiler 证明 backward graph/launch 是主因时才值得补 CUDA 门禁。
+4. 新设计仍须先过三顺序的 CPU/FP64 与短 H800 CUDA 门禁；只有整模型同 mb4 稳定 `>1.25x`、显存不劣化，再做 mb4/GA4 的 8 卡 DDP smoke。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

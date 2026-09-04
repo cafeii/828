@@ -91,6 +91,25 @@ Commit `1335ee690822ab72c736c94c2b6c49363d604e95` 已将全融合 chunk-16 rank-
 
 因此训练入口与 CUDA 数值门禁已通过，下一步可以进行 micro batch 8、序列 4096、关闭 checkpoint、fused loss 的单卡整模型同配置 A/B。这里的 `0.843x–0.871x` 仍是算子审计的显存比例，不是整模型结果；在整模型三顺序都稳定超过 `1.25x` 且显存不恶化前，`QGDN_USE_PHYSICAL_T=False` 不变。
 
+## 整模型容量修复与 micro batch 4 结论
+
+Slurm 35911 在干净 H800 上给出了 micro batch 8 的可用虚拟 2T 基线：`40,121.94 token/s`、`74.58 GB`、中位 step `0.8169 s`。同配置 no-recompute 物理 T 在后续层 forward OOM，进程使用达 `79.17 GiB`。
+
+两种 mb8 重算方案均无法同时保住速度和容量：Slurm 35933 的整物理算子 checkpoint 将峰值降至 `55.66 GB`，但仅有 `6,856.94 token/s`（虚拟 2T mb8 的 `0.171x`）；Slurm 35959 的 chunk-start-only 重算在 CUDA JUnit 6/6 通过后仍以 `79.11 GiB` 进程占用 OOM，未产生吞吐数据。
+
+降低到 micro batch 4 后，no-recompute 物理 T 确实能运行，但同机直接对照否决了这条训练路径：
+
+| 路径 | Slurm | micro batch | 中位 step | 吞吐 | 峰值显存 |
+|---|---:|---:|---:|---:|---:|
+| 虚拟 2T | 36061 | 4 | 0.4444 s | 36,863.50 token/s | 39.80 GB |
+| no-recompute 物理 T | 36054 | 4 | 2.3731 s | 6,903.17 token/s | 62.62 GB |
+
+两个作业均为 `COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6，loss 有限。物理 T 的同 mb4 吞吐比只有 `0.187x`，中位 step 慢 `5.34x`，峰值显存反而为 `1.573x`。相对当前虚拟 2T mb8 生产基线，物理 mb4 吞吐也只有 `0.172x`，峰值显存为 `0.840x`。
+
+在 8 卡 global batch 128 下，mb4 需要 GA4，而当前 mb8 只需要 GA2。梯度累积次数加倍不会改变上述单卡核心吞吐比，还会额外增加 Python/DDP/优化器边界开销。因此不做三顺序完整稳定 A/B，不做 8 卡 mb4/GA4 smoke，也不改写上面的生产推荐配置。
+
+这组数据还说明：局部物理 T 算子相对 triangular oracle 的 `2.20x–2.24x` 加速没有转化为整模型收益。下一步必须 profiler 分解 18 层中的 WY 准备、chunk-state、output、backward 与调用开销，而不是继续调 batch size 或扩展 checkpoint 组合。`QGDN_USE_PHYSICAL_T=False` 继续保持。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -119,3 +138,7 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 全融合状态/输出首次门禁：Slurm 35894（6/6 门禁；数值通过，性能编排发现三周期锁相）
 - 去相位全融合状态/输出诊断：Slurm 35895（6/6 门禁；三顺序配对中位 2.199x–2.239x，p10 1.987x–2.012x）
 - 训练入口与实际 340M BF16 数值门禁：Slurm 35896（6/6 门禁；最坏输入梯度相对 RMSE 0.00881；算子 peak allocated 为虚拟 2T 的 0.843x–0.871x）
+- 干净 H800 整模型 mb8 容量门禁：Slurm 35911（虚拟 2T 40,121.94 token/s；no-recompute 物理 T 在 79.17 GiB OOM）
+- 整物理算子 checkpoint 否决：Slurm 35933（55.66 GB，但仅 6,856.94 token/s）
+- chunk-start-only 重算容量门禁：Slurm 35959（CUDA JUnit 6/6，整模型仍于 79.11 GiB OOM）
+- 同机 micro batch 4 物理/虚拟对照：Slurm 36054 / 36061（6,903.17 vs 36,863.50 token/s；62.62 vs 39.80 GB）
