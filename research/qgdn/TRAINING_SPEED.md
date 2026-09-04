@@ -123,6 +123,15 @@ Slurm `COMPLETED / 0:0`、`run.exitcode=0`、summary `completed`、preflight JUn
 beta mean/std 为 `0.29295 / 0.17039`，gamma mean/std/饱和率为
 `0.38905 / 0.29873 / 4.55%`。小型日志与指标已完整回收，权重按规则保留在远端。
 
+Delta→Recall Slurm 36312 也已成功完成并回收：Slurm `COMPLETED / 0:0`、
+`run.exitcode=0`、summary `completed`、preflight JUnit `6/6`，终点同为 step `19073` 和
+`9,999,745,024` tokens。训练计算/墙钟为 `11.139/11.379 h`，有效训练/墙钟吞吐为
+`249.36k/244.11k token/s`，峰值显存 `77.0617 GB/GPU`。最终 validation loss/PPL 为
+`2.698694 / 14.86030`；相对 GDN 高 `0.134%` PPL，相对 Parallel 高 `0.212%` PPL。
+末步 beta mean/std 为 `0.27745 / 0.16940`，gamma mean/std/饱和率为
+`0.16184 / 0.18106 / 0.481%`，全部数值有限。其运行时吞吐受 dgx01 共址 I/O/CPU 争用
+拖累，因此不把这组墙钟差解释为更新顺序本身的纯算子差异。
+
 四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
 `2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
 `2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`
@@ -332,6 +341,12 @@ fused loss、无 activation checkpointing、seed 3407、每 2000 step 验证 160
 `344,353,984` 参数、`recall_parameters=0`，gamma 指标持续为 `1/0/100%`，暂无 OOM、
 非有限数值或配置偏离。
 
+首个 step-2000 validation 已完成，gamma 仍在所有训练记录中严格为 `1/0/100%`。
+Recall→Delta loss/PPL 为 `3.144389 / 23.20549`，相对同顺序 beta-style gamma 的
+`3.140643 / 23.11873` 高 `0.375%` PPL；Parallel 为 `3.146042 / 23.24387`，相对
+同顺序 beta-style gamma 的 `3.142662 / 23.16546` 高 `0.338%` PPL。两路最近 20 点
+吞吐约 `316.02k / 313.21k token/s`，峰值显存不变；单个早期节点尚不足以下最终结论。
+
 ## 可训练高 gamma 初始化消融
 
 Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
@@ -351,6 +366,14 @@ mb8/GB128/GA2、fused loss、无 activation checkpointing 和同一验证口径�
 step 31，Recall→Delta 为 `0.888909 / 0.031800 / 0.714%`，Parallel 为
 `0.888854 / 0.031824 / 0.657%`。目前吞吐约 `312.1k / 309.8k token/s`，峰值显存
 `77.03 / 77.06 GB/GPU`，无 OOM 或非有限数值。
+
+到共同 step `1291`，Recall→Delta / Parallel 的近 20 点 loss 为
+`3.28581 / 3.28671`，beta mean/std 为 `0.27866 / 0.16357` 与
+`0.27854 / 0.16267`；gamma mean/std/饱和率已变为
+`0.63251 / 0.30221 / 19.46%` 与 `0.63557 / 0.30007 / 19.11%`。两路仍高度对齐，
+loss、grad norm 和 gate 值均有限，但约 19% 的 token gate 在 1.3K step 时已进入饱和区，
+说明高初值没有被整体维持，而是迅速产生明显极化。最近 20 点吞吐约
+`312.34k / 309.42k token/s`，两路 step-1000 checkpoint 均完整存在。
 
 ## 复现实验
 
