@@ -342,6 +342,15 @@ PPL 领先约 `0.152%`。共同 step 6691 的近 20 点训练 loss 为 `2.85331 
 `0.40765 / 0.30031 / 5.19%` 和 `0.19141 / 0.19779 / 0.91%`。Delta→Recall 的最近
 40 点吞吐中位已恢复到 `297.6k token/s`，但均值 `270.6k` 仍反映少量节点争用长尾。
 
+17:41 的后续观察显示 dgx01 争用再次加重：Delta→Recall 最近 40 点吞吐中位/均值降至
+`188.3k / 191.9k token/s`，而 Parallel 保持 `306.4k token/s`。节点快照有 36--45 个
+blocked process 和约 14% I/O wait，与训练数值无关。共同 step 7501 的近 20 点 loss
+仍为 `2.82758 / 2.82857`；beta mean/std 为 `0.28673 / 0.16486` 与
+`0.27436 / 0.16497`，gamma mean/std/饱和率为 `0.40637 / 0.30111 / 5.18%` 与
+`0.18623 / 0.19535 / 0.84%`。两边 loss、grad norm 和门控统计仍全部有限，checkpoint
+持续写入；按当前受扰吞吐 Delta→Recall 纯训练尚需约 9 小时，仍在 18 小时 Slurm 上限内，
+因此不丢弃已完成的 39.3% 进度、不重提，仅继续监控节点争用是否解除。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
