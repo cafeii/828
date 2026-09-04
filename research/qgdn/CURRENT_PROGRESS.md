@@ -367,6 +367,13 @@ activation checkpointing、每 2000 step 验证 1600 条序列及 19073-step/10B
 作业已原子查重并记录，当前 `PENDING (Priority)`；现有半小时监控已扩展为三路同 step/token
 对齐，不再把历史 mbs1/GA16、2560-sequence GDN 曲线当作严格配对结论。
 
+同样配方的 Recall→Delta 也已补齐：实验
+`20260904-194217-qgdn-recall-delta-340m-10bt-s3407-11ef45`、Slurm `37183`，模型配置
+`qgdn_340M` 在冻结快照中明确对应 `recall_then_delta`，并使用当前 beta-style 独立随机
+gamma 初始化。它与 GDN、Parallel、Delta→Recall 的 commit、数据、seed、批量、loss、
+checkpointing、验证口径和 10BT 终点完全相同；作业已原子查重并记录，当前
+`PENDING (Priority)`。半小时监控现扩展为四路严格对齐。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；

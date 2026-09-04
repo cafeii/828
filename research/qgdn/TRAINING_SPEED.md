@@ -80,6 +80,12 @@ fused loss、无 activation checkpointing、seed 3407、1600-sequence validation
 目标均与 Parallel 和 Delta→Recall 一致；当前为 `PENDING (Priority)`，后续只在共同
 step/token 与 validation 节点比较三者。
 
+Recall→Delta 的严格对齐训练也已提交：实验
+`20260904-194217-qgdn-recall-delta-340m-10bt-s3407-11ef45`、Slurm `37183`，冻结 commit
+和 mbs8/GA2、fused loss、无 activation checkpointing、seed 3407、1600-sequence
+validation、10BT 配方均与另外三路一致，gamma 为当前 beta-style 独立 Xavier 随机初始化。
+当前 `PENDING (Priority)`；后续报告将以 GDN 加三种更新顺序组成四路共同节点比较。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |
