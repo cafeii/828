@@ -473,16 +473,50 @@ validation loss/PPL 分别为 Recall→Delta `10.532466 / 37513.86`、Parallel
 `316.5k token/s / 75.68 GB`，Parallel 约 `313.2k token/s / 75.72 GB`；loss、grad norm、
 beta 与 gamma 统计全部有限，gamma 在所有已观测 step 上严格为 `1.0 / 0.0 / 100%`。
 
+## 可训练 gamma∼U(0.85, 0.95) 消融已启动
+
+Commit `9e381f0ecb1a8c2fcd8397446003cf6fdf0530b7` 新增 Recall→Delta 和 Parallel
+两个高 gamma 可训练配置。每层、每个 head 在 gate 空间独立采样
+`gamma∼U(0.85,0.95)`，再用 logit 写入可训练 bias；token-wise projection weight 从零开始但
+仍可训练。因此初始 gamma 对 token 恒定但在 head/layer 之间随机，并且从第一次更新起
+可学出 token 依赖；初始值不会因输入激活超出指定区间。
+
+CPU 聚焦回归为 `7 passed / 186 deselected`，确认初值范围、随机性、weight/bias 的
+有限非零梯度，以及与同顺序 beta-style gamma 模型的共享 backbone 初始化逐参数一致。
+CUDA 门禁同时增加 `gamma=0.9` 作用点，与 `0.1/1.0` 一起覆盖三种更新顺序。
+
+| 模型 | 实验 | Slurm | 节点 | 当前状态 |
+|---|---|---:|---|---|
+| Recall→Delta, trainable gamma∼U(0.85,0.95) | `20260904-234011-qgdn-recall-delta-gamma-uniform-085-095-340m-10bt-s3407-78f438` | 37413 | dgx37 | RUNNING; preflight 13/13 |
+| Parallel, trainable gamma∼U(0.85,0.95) | `20260904-234011-qgdn-parallel-gamma-uniform-085-095-340m-10bt-s3407-374799` | 37414 | dgx38 | RUNNING; preflight 13/13 |
+
+两个作业仍完全沿用对齐的 10BT recipe 和虚拟 2T 默认路径。高 gamma 区间只是
+初始条件，训练后 gamma 可自由离开该区间；后续需与同顺序 beta-style 初始化、固定
+gamma=1 和 GDN 在相同 step/token 及共同 validation 节点对齐比较。
+两路 H800 preflight 均为 `13 passed / 0 failed / 0 errors`，包括 gamma=0.9 下三顺序
+BF16 输出、末状态和全输入梯度门禁。
+
+首批训练指标确认了实际 340M 配置：两路均为 `344,681,984` 参数、
+`recall_parameters=328,000`，共享初始化 SHA-256 与既有对照同为
+`2ce1c8431c5ab5ff8080b71fe92e84a2ef93791222d5fb7d29dd91a2cf6c36fb`。初始
+validation loss/PPL 为 Recall→Delta `10.532419 / 37512.09`、Parallel
+`10.532419 / 37512.12`。step 1 两路 gamma mean/std/饱和率完全相同，为
+`0.898251 / 0.028024 / 0%`；到共同 step 31，Recall→Delta 为
+`0.888909 / 0.031800 / 0.714%`，Parallel 为 `0.888854 / 0.031824 / 0.657%`。
+这说明 gate 已开始产生 token 依赖，暂无塌缩或异常饱和。同一 step 31 的 loss 为
+`7.54924 / 7.54941`，稳态样本约为 `312.1k / 309.8k token/s`，峰值显存为
+`77.03 / 77.06 GB/GPU`；loss、grad norm 和 beta/gamma 统计全部有限。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
    在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
 2. 36311 和 37118 已成功完成并回收，不得重提；冻结保留仍在运行的
-   36312/37183/37379/37380，继续检查 loss、grad norm、门控统计、吞吐、峰值显存、
+   36312/37183/37379/37380/37413/37414，继续检查 loss、grad norm、门控统计、吞吐、峰值显存、
    日志新鲜度和 checkpoint 完整性。固定 gamma 两路必须保持 `1/0/100%` 统计。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
    micro batch/科学配置时先保留证据并停止，不盲目重跑。
-4. 其余四个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；对齐比较
-   固定 gamma=1、可学习 gamma 与 GDN，判断强 recall 是改善还是伤害 loss/PPL。
+4. 其余六个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；对齐比较
+   高区间可训练 gamma、固定 gamma=1、beta-style 可学习 gamma 与 GDN，判断强 recall 是改善还是伤害 loss/PPL。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

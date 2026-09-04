@@ -332,6 +332,26 @@ fused loss、无 activation checkpointing、seed 3407、每 2000 step 验证 160
 `344,353,984` 参数、`recall_parameters=0`，gamma 指标持续为 `1/0/100%`，暂无 OOM、
 非有限数值或配置偏离。
 
+## 可训练高 gamma 初始化消融
+
+Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
+为保证初始 gate 严格在指定区间，每层每 head 先在 gate 空间采样，再将 logit 写入
+可训练 bias；token projection weight 从零开始但保留梯度。该初始器在 forked RNG 中执行，
+不改变共享 backbone 的 seed-3407 初始化。CPU 聚焦测试 `7/7` 通过，同时确认 gate
+weight/bias 都收到有限非零梯度。
+
+Slurm 37413（Recall→Delta）与 37414（Parallel）已分别启动于 dgx37/dgx38，冻结
+commit `9e381f0ecb1a8c2fcd8397446003cf6fdf0530b7`。两路沿用 8×H800、T=4096、
+mb8/GB128/GA2、fused loss、无 activation checkpointing 和同一验证口径；依然是虚拟 2T。
+两路 H800 preflight 均为 `13/13` 通过，包括 gamma=0.9 的三顺序 BF16 输出、
+末状态和全输入梯度检查。
+
+实际启动后，两路共享初始化 hash 完全相同，均含 `328,000` 个可训练 gamma
+参数。step 1 的 gamma mean/std/饱和率为 `0.898251 / 0.028024 / 0%`；到共同
+step 31，Recall→Delta 为 `0.888909 / 0.031800 / 0.714%`，Parallel 为
+`0.888854 / 0.031824 / 0.657%`。目前吞吐约 `312.1k / 309.8k token/s`，峰值显存
+`77.03 / 77.06 GB/GPU`，无 OOM 或非有限数值。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -366,3 +386,4 @@ fused loss、无 activation checkpointing、seed 3407、每 2000 step 验证 160
 - output BV64 / state BV16 hybrid：Slurm 36448/36451（CPU 138 passed；CUDA 6/6；split backward 1.482x；峰值显存持平）
 - 完整 physical/virtual kernel 根因对照：Slurm 36830/36862（38.689 vs 15.773 ms；确认 rank-row/chunk 数未下降，串行 state VJP 与 FP32 WY 为关键差距）
 - 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练进行中）
+- 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，进行中）
