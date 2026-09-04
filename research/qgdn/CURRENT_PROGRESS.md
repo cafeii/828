@@ -359,6 +359,14 @@ blocked process 和约 14% I/O wait，与训练数值无关。共同 step 7501 �
 吞吐中位恢复至 `297.1k token/s`（均值 `271.5k`），节点 I/O wait 降到 6%--8%；
 此前的吞吐下降确认是可逆的共址争用，不改训练配置。
 
+为判断 recall rule 是否真正改善语言建模质量，已追加严格对齐的 GDN control：实验
+`20260904-190833-gdn-aligned-340m-10bt-s3407-1b99be`、Slurm `37118`，冻结在同一 commit
+`7eb73ca89411c54d4fe7a8ffb427df44e7709cfa`。它与两条 QGDN 完全共用数据、seed 3407、
+T=4096、global batch 128、micro batch 8、gradient accumulation 2、fused loss、关闭
+activation checkpointing、每 2000 step 验证 1600 条序列及 19073-step/10BT 终点。
+作业已原子查重并记录，当前 `PENDING (Priority)`；现有半小时监控已扩展为三路同 step/token
+对齐，不再把历史 mbs1/GA16、2560-sequence GDN 曲线当作严格配对结论。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；

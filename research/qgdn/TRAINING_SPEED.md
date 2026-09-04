@@ -73,6 +73,13 @@ Delta→Recall `2.839986 / 17.11553`，Parallel PPL 仅低约 `0.085%`。共同 
 `0.40398 / 0.29998 / 5.04%` 与 `0.18398 / 0.19339 / 0.78%`。Delta→Recall 最近
 40 点吞吐中位已回升至 `297.1k token/s`（均值 `271.5k`），无需干预。
 
+为排除历史 GDN 的 micro-batch、checkpointing、loss kernel 和验证集条数差异，已提交同一
+冻结 commit 和当前训练配方的 GDN control：实验
+`20260904-190833-gdn-aligned-340m-10bt-s3407-1b99be`、Slurm `37118`。其 mbs8/GA2、
+fused loss、无 activation checkpointing、seed 3407、1600-sequence validation、10BT
+目标均与 Parallel 和 Delta→Recall 一致；当前为 `PENDING (Priority)`，后续只在共同
+step/token 与 validation 节点比较三者。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |
