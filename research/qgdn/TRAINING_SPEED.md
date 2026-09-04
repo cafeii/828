@@ -75,6 +75,18 @@ Commit `f09b36e81f59d73d5767173b48a20bb5e40f4d0c` 又将伴随求解和四组 WY
 
 融合后同配置 forward+backward 为 8.78、6.37、6.10 ms，相对 triangular 的速度比分别为 Recall→Delta `0.798x`、Delta→Recall `1.068x`、Parallel `1.071x`；peak allocated memory 比为 `0.975x`，incremental peak 比为 `0.957x`。这比 Python 重算的约 48 ms 大幅改善，但第一种顺序仍存在 6.23–10.24 ms 的明显波动，不能据此声称三种顺序稳定加速。下一步先做顺序轮换的交错 A/B，再决定是否值得融合 chunk-state/output；整模型门禁与 `QGDN_USE_PHYSICAL_T=False` 均保持不变。
 
+Commit `7c7d237bbecf3f0832ec3b403d28c0f84946ab75` 将 fused-WY 测量改为顺序轮换、backend 交错、固定输出梯度和每样本 8 次 forward+backward。Slurm 35893 的 JUnit 为 6/6，通过三种顺序的数值与有限梯度门禁。50 组样本的配对中位速度比均约 `1.058x`，bootstrap 中位数 95% 下界分别为 `1.032`、`1.047`、`1.037`；peak allocated 比约 `0.975x`。这确认了 WY kernel 的小幅稳定收益，也说明更大的机会在剩余 chunk-state/output 部分。
+
+Commit `55d66c80b9a8438d55ff8efc2e37d6550b26c3f3` 将块级状态扫描与块内输出恢复改写为专用 Triton forward/backward。块级状态只跨 chunk 递推；输出对所有 chunk 并行计算，不物化 token 级 K×V 状态。prepared-chunk 的 CPU/FP64 密集合约在 chunk 1/3/8 上验证了查询、decay、左右因子、write-read、写入向量、value 和初态全部梯度，原 rank-2 聚焦集继续 102 passed。
+
+Slurm 35894 首先通过 6/6 CUDA 门禁并给出约 `2.21x` 信号，但其三模型顺序与三后端轮换发生周期锁相，因此只保留数值证据。Commit `22a3b27fd0c7f286320199d18edea793e229f8a2` 修复编排并强制每个模型顺序覆盖三种后端排列；Slurm 35895 再次 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed。
+
+35895 的 FP32 B=2/T=128/H=4/K=V=64/chunk=16、50 组×8 次 forward+backward 结果为：Recall→Delta、Delta→Recall、Parallel 相对 triangular 的配对中位加速分别为 `2.199x`、`2.212x`、`2.239x`，配对 p10 为 `1.987x`、`2.004x`、`2.012x`，150 个配对全部大于 1。全融合中位时延为 4.143、4.103、4.023 ms，而 triangular 为 9.153、9.106、9.093 ms。peak allocated memory 比约 `0.522x`，incremental peak 比为 `0.111–0.114x`。
+
+数值方面，最大输出、末状态和七组模型输入梯度相对 RMSE 为 `1.80e-7`、`6.23e-8`、`1.84e-6`，全部有限。结果文件与 JUnit 已按 SHA-256 与远端一致回收；回收脚本仍因 manifest 的 `outputs/` 双拼路径返回 1，但实际声明产物都存在。
+
+这仍是 diagnostic 物理-T 算子对 triangular 物理-T oracle 的结果，不是 340M 整模型相对虚拟 2T 的加速。下一步是接入显式 opt-in 训练分支、验证 BF16 与实际形状，再做同卡整模型 A/B；在达到稳定 `>1.25x` 且显存不恶化之前，`QGDN_USE_PHYSICAL_T=False` 不变。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -99,3 +111,6 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - forward-only Triton WY CUDA 数值与算子诊断：Slurm 35628（6/6 门禁通过；速度信号混合）
 - 手写重算 WY backward 数值与算子诊断：Slurm 35642（6/6 全梯度门禁通过；Python/einsum 路径因仅有 0.182x–0.270x 速度而否决）
 - 融合 Triton WY backward 数值与算子诊断：Slurm 35649（6/6 全梯度门禁通过；两种顺序约 1.07x，一种受抖动影响为 0.798x）
+- 块摊销、顺序轮换的 fused-WY 交错 A/B：Slurm 35893（6/6 门禁；三顺序配对中位约 1.058x，bootstrap 95% 下界均大于 1）
+- 全融合状态/输出首次门禁：Slurm 35894（6/6 门禁；数值通过，性能编排发现三周期锁相）
+- 去相位全融合状态/输出诊断：Slurm 35895（6/6 门禁；三顺序配对中位 2.199x–2.239x，p10 1.987x–2.012x）

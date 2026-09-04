@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-03 23:04（Asia/Shanghai）
+更新时间：2026-09-04 09:22（Asia/Shanghai）
 
 ## 当前目标
 
@@ -40,6 +40,10 @@
 | `d157fcb2fa190ad05d3c7d67f1f52e0cc7ff5b4b` | 根据 H800 结果保留双 solve 默认 |
 | `189100afe783d4d1fb701780d1f0b57c55ea4f0e` | 增加不物化 2C×2C system 的流式 WY 前代数 |
 | `d1706b46f021a6d0e6d29d8a2cb87320d3a9f856` | 增加流式 WY CUDA 数值与性能门控 |
+| `7c7d237bbecf3f0832ec3b403d28c0f84946ab75` | 增加块摊销、顺序轮换和交错 WY A/B |
+| `55d66c80b9a8438d55ff8efc2e37d6550b26c3f3` | 融合物理 T 的块级状态扫描和块内输出恢复 |
+| `bb42be3df2fc4e627f266bcd9b75c387c55e20ad` | 增加 triangular / fused-WY / 全融合三后端诊断 |
+| `22a3b27fd0c7f286320199d18edea793e229f8a2` | 消除三顺序与三后端轮换的周期锁相 |
 
 ## 当前速度结论
 
@@ -111,11 +115,29 @@ H800 作业 35649（实验 `20260903-225903-qgdn-wy-triton-bwd-ec36b5`）为 `CO
 
 同一算子配置的 fused forward+backward 中位数为 Recall→Delta 8.78 ms、Delta→Recall 6.37 ms、Parallel 6.10 ms，相对 triangular 分别为 `0.798x`、`1.068x`、`1.071x`；peak allocated memory 比仍为 `0.975x`，incremental peak 比为 `0.957x`。相比上一版 Python 重算的约 48 ms，launch 开销已经基本消除，但 Recall→Delta 的 10 次样本仍在 6.23–10.24 ms 间波动。当前结论是 fused backward 数值通过、两种顺序有约 7% 算子收益，尚未证明三种顺序稳定加速，也没有整模型结果。
 
+Commit `ab679003af3c8aa2520cc556bf959bad3cc4924b` 和 `7c7d237bbecf3f0832ec3b403d28c0f84946ab75` 随后将计时改为顺序轮换、后端交错、固定输出梯度，并用每样本 8 次 forward+backward 摊销单次调度噪声。Slurm 35893（实验 `20260904-084515-qgdn-wy-block-ab-e88ce0`）为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed。50 组样本中，三种顺序的配对中位速度比均约 `1.058x`，bootstrap 中位数 95% 下界分别为 `1.032`、`1.047`、`1.037`，AB/BA 两个方向的中位数也全部大于 1；peak allocated 比约 `0.975x`，incremental peak 比约 `0.957x`。因此 fused WY 本身的三顺序收益被确认稳定，但幅度只有约 6%。
+
+Commit `55d66c80b9a8438d55ff8efc2e37d6550b26c3f3` 新增了两个专用 Triton 阶段：块级状态 kernel 只跨 chunk 递推，不逐 token 串行；输出 kernel 对全部 chunk 并行计算 query 对 chunk 起始状态、rank-2 WY 更新和直接写入的因果投影，不物化每个 token 的 K×V 状态。配套 backward 反向扫描 chunk，并手写查询、decay、左右因子、write-read、写入向量、value 和初态梯度。独立 prepared-chunk FP64 合约在 chunk 1/3/8 上 3/3 通过，原 rank-2 聚焦集仍为 102 passed。
+
+Slurm 35894 首次验证该全融合路径：`COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed，最大输出、末状态和七组模型输入梯度相对 RMSE 为 `1.80e-7`、`6.23e-8`、`1.82e-6`。它显示约 `2.21x` 的算子速度信号，但审计发现三种模型顺序与三后端使用同周期轮换，导致每个模型顺序内部的后端位置固定；数值证据保留，稳定性能结论由修正版复测取代。
+
+Commit `22a3b27fd0c7f286320199d18edea793e229f8a2` 将后端轮换去相位，并加入必须覆盖全部三种排列的运行时断言。Slurm 35895（实验 `20260904-091430-qgdn-fused-state-output-dephased-e7e1bf`）为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed；每个更新顺序都实际覆盖三种后端排列。B=2/T=128/H=4/K=V=64/chunk=16、50 组且每组 8 次 forward+backward 的结果如下：
+
+| 更新顺序 | triangular 中位数 | 全融合中位数 | 配对中位加速 | 配对 p10 | 全部配对 >1 |
+|---|---:|---:|---:|---:|---:|
+| Recall→Delta | 9.153 ms | 4.143 ms | 2.199x | 1.987x | 50/50 |
+| Delta→Recall | 9.106 ms | 4.103 ms | 2.212x | 2.004x | 50/50 |
+| Parallel | 9.093 ms | 4.023 ms | 2.239x | 2.012x | 50/50 |
+
+全融合相对只融合 WY 的配对中位加速仍为 `2.121x`、`2.100x`、`2.135x`。peak allocated memory 相对 triangular 为 `0.522x`，incremental peak 为 `0.111–0.114x`；相对 fused-WY-only 的 peak 比为 `0.532–0.533x`。最大输出、末状态和模型输入梯度相对 RMSE 为 `1.80e-7`、`6.23e-8`、`1.84e-6`，全部有限。
+
+这证明物理 T 的完整参考算子分解已经具备强而稳定的局部速度/显存收益，但它仍运行在 diagnostic reference 接口，尚未接入 340M 训练模块，也不是相对生产虚拟 2T 的整模型结果。`QGDN_USE_PHYSICAL_T=False` 继续保持；下一门禁是训练路径接入、BF16/实际形状数值检查和单卡整模型同配置 A/B。
+
 ## 下一任务的第一步
 
-1. 用顺序轮换、交错 A/B 和更多稳态样本复测 fused forward+backward，排除 Recall→Delta 的首组/调度抖动；性能结论必须覆盖三种顺序。
-2. 若三种顺序的 WY 收益稳定，再接入块间状态 kernel 与块内输出 kernel，并以当前 triangular 路径作为数值 oracle。
-3. 全部 CUDA 数值、有限梯度及显存门槛通过后，再跑同卡、同配置的整模型虚拟 2T 对照。
-4. 只有整模型明确加速后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
+1. 将已验证的全融合物理 T 路径接入 `qgdn_rule` 的显式 opt-in 训练分支，保持三种更新顺序和默认开关不变。
+2. 补齐 BF16/实际 340M head shape、序列 4096 和尾 chunk 的输出、末状态、全部参数梯度与有限性门禁；若 kernel envelope 不适合实际形状，先修实现而不是启用默认。
+3. 数值通过后跑同卡、同模型、同 batch、同训练配置的单卡整模型“物理 T vs 虚拟 2T”交错 A/B，最低启用门槛为稳定 `>1.25x`，目标约 `1.5x`，且显存不得恶化。
+4. 只有整模型通过后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
