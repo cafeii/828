@@ -24,6 +24,20 @@ QGDN 340M、序列长度 4096、8 张 H800 的推荐训练配置为：
 
 这套配置不改变 QGDN 的状态转移、门控、数据顺序、global batch 或优化器更新次数。
 
+## 10BT 正式训练
+
+2026-09-04 已将推荐配置用于两条同初始化正式训练：Parallel 为 Slurm 36311，Delta→Recall
+为 Slurm 36312，冻结代码均为 `7eb73ca89411c54d4fe7a8ffb427df44e7709cfa`。两者使用 seed
+3407、`max_steps=19073`（9,999,745,024 prediction tokens）、每 2000 step 验证 1600
+sequences、每 1000 step 保存 checkpoint。gamma 与 beta 同方案独立 Xavier 随机初始化，物理 T
+保持关闭。
+
+由于提交时没有空闲整节点，没有单独排队一个 8 卡 smoke；相同的初始化与三顺序 CUDA
+前向/末状态/反向测试被放在每个正式 allocation 的入口，JUnit 门禁失败会直接阻止训练启动。
+初始排队状态分别是 36311 `PENDING (Resources)`、36312 `PENDING (Priority)`。按既有 8 卡
+实测，纯训练投影约 8.17 小时；计入首次 kernel 编译、验证和 checkpoint，预计单作业约
+8.5–9.2 小时，实际起始时间取决于整节点排队。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |

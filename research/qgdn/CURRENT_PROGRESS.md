@@ -16,7 +16,8 @@
    已完成的 Recall→Delta 10B 结果仍属于旧初始化，不能与新初始化的 Parallel 解释为
    只改变更新顺序的严格配对实验。
 
-目前没有继续 QR-GDN、DT-GDN、JQC-GDN，也没有提交新的 Parallel FineWeb 正式预训练。
+目前没有继续 QR-GDN、DT-GDN、JQC-GDN。已在同一新 gamma 初始化下提交
+Parallel 与 Delta→Recall 两个 10BT FineWeb 正式预训练，均保持虚拟 2T 默认路径。
 
 ## 已完成
 
@@ -195,14 +196,31 @@ Slurm 36084 随后完成整模型 mb4 单臂：中位 step `1.0351 s`、`15,819.
 
 这是显著的工程改进，但当前候选仍同时达不到同 mb4 `>1.25x` 门槛和 mb4/GA4 相对现有 mb8 的有效吞吐门槛，因此不跑完整三顺序 A/B 或 8 卡 smoke，默认开关不变。
 
+## 虚拟 2T 正式训练已提交
+
+2026-09-04 在冻结 commit `7eb73ca89411c54d4fe7a8ffb427df44e7709cfa` 上直接提交了两个
+10BT 作业；因当时没有空闲 8 卡节点，不另占节点提交独立 smoke，而是在每个正式作业开头执行
+gamma 初始化和三顺序虚拟 2T CUDA 输出/状态/反向门禁，门禁失败时不会进入训练：
+
+| 模型 | 实验 | Slurm | 初始状态 |
+|---|---|---:|---|
+| Parallel | `20260904-124542-qgdn-parallel-340m-10bt-s3407-1268f4` | 36311 | PENDING (Resources) |
+| Delta→Recall | `20260904-124920-qgdn-delta-recall-340m-10bt-s3407-retry-a11400` | 36312 | PENDING (Priority) |
+
+两者均为 8×H800、T=4096、micro batch 8、global batch 128、gradient accumulation 2、
+fused loss、关闭 activation checkpointing、seed 3407；`max_steps=19073`，即
+9,999,745,024 个 prediction tokens。验证每 2000 step、1600 sequences，checkpoint 每 1000
+step。gamma 与 beta 使用同方案的独立 Xavier 随机初始化，`QGDN_USE_PHYSICAL_T=False`。
+
 ## 当前下一步
 
 1. 不再继续物理 T profiler 或 kernel 修改；现状与恢复门槛已归档到
    [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。
-2. 若决定训练 Parallel，先用虚拟 2T、micro batch 8、global batch 128 做短 8 卡 smoke，
-   自动得到 gradient accumulation 2。
-3. 若目标只是评估新默认 Parallel，可在 smoke 后训练该版本；若要把差异归因于更新顺序，
-   必须用相同新初始化至少重训 Recall→Delta 与 Parallel，不能复用旧 10B QGDN 结果。
-4. 正式训练前再单独决定 FineWeb token budget、seed 及验证/checkpoint 频率；当前没有提交训练。
+2. 每 30 分钟监控 36311/36312。排队阶段不重复提交；启动后先检查内置 JUnit 门禁，再检查
+   loss、grad norm、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
+3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
+   micro batch/科学配置时先保留证据并停止，不盲目重跑。
+4. 两个作业到终态后回收 JUnit、退出码、日志、metrics、summary 与 checkpoint，并记录实际
+   有效吞吐、峰值显存、墙钟和验证指标。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
