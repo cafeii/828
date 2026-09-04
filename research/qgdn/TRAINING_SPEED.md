@@ -1,5 +1,9 @@
 # QGDN 训练加速报告
 
+> 2026-09-04 路线决定：物理 T 优化暂停，完整状态、失败路线和以后恢复门槛见
+> [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。当前训练继续使用虚拟 2T，
+> `QGDN_USE_PHYSICAL_T=False`。
+
 ## 推荐配置
 
 QGDN 340M、序列长度 4096、8 张 H800 的推荐训练配置为：

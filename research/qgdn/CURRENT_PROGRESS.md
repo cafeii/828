@@ -1,15 +1,18 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-04 11:57（Asia/Shanghai）
+更新时间：2026-09-04（Asia/Shanghai）
 
 ## 当前目标
 
-当前只做两件事：
+当前路线已经切回虚拟 2T：
 
-1. 保持单一记忆矩阵，实现并比较三种双监督更新顺序：Recall→Delta、Delta→Recall、Parallel。
-2. 优化 QGDN 训练速度，重点移除现有实现中的显式虚拟 2T 序列。
+1. 保持单一记忆矩阵，使用已验证的虚拟 2T 实现比较三种双监督更新顺序。
+2. 下一训练候选为 `qgdn_parallel_340M`，推荐 8 卡、micro batch 8、global batch 128、
+   gradient accumulation 2、关闭 activation checkpointing、fused loss。
+3. 物理 T 优化暂停，生产默认保持 `QGDN_USE_PHYSICAL_T=False`。完整接力信息见
+   [物理 T 优化暂存](PHYSICAL_T_DEFERRED.md)。
 
-目前没有继续 QR-GDN、DT-GDN、JQC-GDN，也没有提交新的 FineWeb 正式预训练。
+目前没有继续 QR-GDN、DT-GDN、JQC-GDN，也没有提交新的 Parallel FineWeb 正式预训练。
 
 ## 已完成
 
@@ -188,11 +191,12 @@ Slurm 36084 随后完成整模型 mb4 单臂：中位 step `1.0351 s`、`15,819.
 
 这是显著的工程改进，但当前候选仍同时达不到同 mb4 `>1.25x` 门槛和 mb4/GA4 相对现有 mb8 的有效吞吐门槛，因此不跑完整三顺序 A/B 或 8 卡 smoke，默认开关不变。
 
-## 下一任务的第一步
+## 当前下一步
 
-1. 继续将新 `19.10 ms` 的 split backward 分为 chunk-parallel output adjoint 和 compact state adjoint scan 两段独立计时，确定下一主瓶颈。
-2. 若 output adjoint 占主导，优先减少 65,536 个 program 和对 query/left/effective/write/decay 的 atomic 竞争；若 state scan 占主导，改成分层 associative chunk scan，而不再对 256 个 chunk 做单 program 逆扫。
-3. 同时优化已测得的 WY backward `5.62 ms` 与 prepared-input VJP `4.55 ms`；仅优化 split backward 到零也不足以达到当前 1.25x 门槛。
-4. 新候选仍须先过三顺序 CPU/FP64 和 CUDA 全梯度门禁；单臂同 mb4 不超过虚拟 2T 就不扩展完整 A/B 和 8 卡 DDP。
+1. 不再继续物理 T profiler 或 kernel 修改；现状与恢复门槛已归档到
+   [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。
+2. 若决定训练 Parallel，先用虚拟 2T、micro batch 8、global batch 128 做短 8 卡 smoke，
+   自动得到 gradient accumulation 2。
+3. smoke 通过后再单独决定 FineWeb token budget、seed 及验证/checkpoint 频率；当前没有提交正式训练。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
