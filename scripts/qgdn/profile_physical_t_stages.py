@@ -15,6 +15,7 @@ if __name__ == "__main__":
     configure_device_from_cli()
 
 import torch
+from torch.profiler import ProfilerActivity, profile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "model"))
@@ -80,6 +81,7 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--measured", type=int, default=7)
+    parser.add_argument("--kernel-profile-iterations", type=int, default=3)
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This diagnostic requires exactly one allocated CUDA GPU")
@@ -87,6 +89,8 @@ def main() -> None:
         raise ValueError("the diagnostic shape must contain whole chunks")
     if args.measured < 3:
         raise ValueError("at least three measured samples are required")
+    if args.kernel_profile_iterations < 1:
+        raise ValueError("kernel profile iterations must be positive")
 
     numerics = configure_numerics()
     from lit_gpt.mixers.qgdn_rule import qgdn_rule
@@ -280,6 +284,29 @@ def main() -> None:
         name: measure(function, warmup=args.warmup, measured=args.measured)
         for name, function in functions.items()
     }
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=False,
+    ) as kernel_profiler:
+        for _ in range(args.kernel_profile_iterations):
+            result = state_output_backward()
+            del result
+        torch.cuda.synchronize()
+    kernel_events = []
+    for event in kernel_profiler.key_averages():
+        self_device_time = float(event.self_device_time_total)
+        if self_device_time > 0:
+            kernel_events.append(
+                {
+                    "key": event.key,
+                    "count": event.count,
+                    "self_device_time_total_us": self_device_time,
+                    "device_time_total_us": float(event.device_time_total),
+                }
+            )
+    kernel_events.sort(
+        key=lambda event: event["self_device_time_total_us"], reverse=True
+    )
     chunks = args.sequence_length // args.chunk_size
     physical_ms = timings["physical_rule_forward_backward"]["median_ms"]
     virtual_ms = timings["virtual_rule_forward_backward"]["median_ms"]
@@ -312,6 +339,7 @@ def main() -> None:
             "note": "the split backward makes output adjoints chunk-parallel; only the compact state adjoint loops over chunks",
         },
         "timings": timings,
+        "split_backward_kernel_profile": kernel_events,
         "physical_to_virtual_rule_time_ratio": physical_ms / virtual_ms,
         "virtual_to_physical_rule_speed_ratio": virtual_ms / physical_ms,
         "all_finite": bool(
