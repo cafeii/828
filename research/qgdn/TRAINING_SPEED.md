@@ -162,6 +162,15 @@ step-16000 的 Recall→Delta loss/PPL 为 `2.713727 / 15.08540`，相对 GDN
 mean/std/饱和率为 `0.39832 / 0.30204 / 4.81%`，近 20 点 loss `2.67928`、稳态约
 `310.9k token/s`。八个节点虽同向，但幅度继续是小于千分之一的信号。
 
+Recall→Delta Slurm 37183 已成功完成并回收：step `19073`、
+`9,999,745,024` tokens，Slurm/`run.exitcode` 为 `COMPLETED 0:0 / 0`，JUnit `6/6`。
+训练计算/墙钟为 `8.893 / 9.019 h`，对应 `312.33k / 307.99k token/s`，峰值显存
+`77.0250 GB/GPU`。最终 loss/PPL `2.696375 / 14.82588`，比 GDN、Parallel、
+Delta→Recall 分别低 `0.098% / 0.020% / 0.232%` PPL。末步 beta mean/std
+`0.29414 / 0.17227`，gamma mean/std/饱和率 `0.39617 / 0.30182 / 4.76%`，全部
+有限。四路严格对齐的最终排名为 Recall→Delta、Parallel、GDN、Delta→Recall，
+但第一名对 GDN 的改善仍只有约千分之一，不是明确的大收益。
+
 四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
 `2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
 `2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`
@@ -413,6 +422,13 @@ step `12761 / 12631`，beta mean/std 为 `0.26120 / 0.15812` 与
 `0.25920 / 0.15711`，gamma 继续严格为 `1/0/100%`；近 20 点 loss 为
 `2.72785 / 2.72884`。连续六个共同节点均否决固定强 recall 的效果收益。
 
+step-14000 validation 继续复现：固定 gamma=1 Recall→Delta/Parallel 的
+loss/PPL 为 `2.737784 / 15.45271`、`2.737444 / 15.44745`，相对各自 beta-style
+对照高 `0.379% / 0.289%` PPL，相对 GDN 高 `0.277% / 0.243%`。两路现至
+step `14141 / 14001`，beta mean/std 为 `0.26212 / 0.15805` 与
+`0.25812 / 0.15711`，gamma 继续全程严格为 `1/0/100%`。连续七个节点均否决
+固定强 recall 的效果收益。
+
 ## 可训练高 gamma 初始化消融
 
 Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
@@ -499,6 +515,14 @@ step-10000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
 `0.28998 / 0.16540` 与 `0.28834 / 0.16574`，gamma mean/std/饱和率为
 `0.50631 / 0.31321 / 9.94%` 与 `0.50592 / 0.31201 / 9.70%`。五个共同节点均说明
 高初值可训练 gate 优于固定 1，但没有超过 beta-style 初始化。
+
+step-12000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
+`2.763985 / 15.86294`、`2.763101 / 15.84892`。相对同顺序 beta-style 的 PPL 差为
+`+0.269% / +0.108%`，相对固定 gamma=1 则低 `0.089% / 0.182%`，相对 GDN 高
+`0.173% / 0.084%`。两路现至 step `13161 / 13061`，beta mean/std 为
+`0.29208 / 0.16637` 与 `0.29047 / 0.16630`，gamma mean/std/饱和率为
+`0.50085 / 0.31353 / 9.70%` 与 `0.49780 / 0.31186 / 9.31%`。六个共同节点仍然
+只支持可训练优于固定 1，不支持高 gamma 初值优于 beta-style。
 
 ## 复现实验
 

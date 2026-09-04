@@ -486,6 +486,19 @@ mean/std `0.29524 / 0.17125`，gamma mean/std/饱和率
 `0.39832 / 0.30204 / 4.81%`，稳态吞吐约 `310.9k token/s`。八个共同验证点方向一致，
 但相对 GDN 的收益仍不足千分之一，最终结论需等终点。
 
+Recall→Delta Slurm `37183` 已成功跑完并回收：Slurm `COMPLETED / 0:0`、
+`run.exitcode=0`、summary `completed`、preflight JUnit `6/6`，终点 step `19073`、
+prediction tokens `9,999,745,024`。训练计算/完整墙钟为 `8.893 / 9.019 h`，
+有效训练/墙钟吞吐为 `312.33k / 307.99k token/s`，峰值显存
+`77.0250 GB/GPU`。最终 validation loss/PPL 为 `2.696375 / 14.82588`，相对
+GDN `14.84041` 低 `0.098%`，相对 Parallel `14.82890` 低 `0.020%`，相对
+Delta→Recall `14.86030` 低 `0.232%`。末步 beta mean/std 为
+`0.29414 / 0.17227`，gamma mean/std/饱和率为
+`0.39617 / 0.30182 / 4.76%`，loss、grad norm 和门控统计全部有限。这使
+Recall→Delta 在四路终点中排名第一，但相对 GDN 仍只是约千分之一的小信号。
+本地/远端 preflight、metrics、summary 的 SHA-256 均一致，约 `4.14 GB` checkpoint
+按回收规则保留在远端。
+
 ## 固定 gamma=1 消融已启动
 
 为直接检验可学习 gamma 是否将 recall 压弱，commit
@@ -568,6 +581,14 @@ step `12761 / 12631`，beta mean/std 为 `0.26120 / 0.15812` 与
 `0.25920 / 0.15711`，gamma 仍逐点严格为 `1.0 / 0.0 / 100%`；近 20 点 loss 为
 `2.72785 / 2.72884`，全部 loss、梯度、日志和 checkpoint 健康。固定强 recall 的负向
 信号已经跨六个验证点复现。
+
+第七个共同 step-14000 validation 继续复现：固定 gamma=1 的
+Recall→Delta/Parallel loss/PPL 为 `2.737784 / 15.45271`、
+`2.737444 / 15.44745`，比各自 beta-style 对照高 `0.379% / 0.289%` PPL，
+也比 GDN 高 `0.277% / 0.243%`。两路现至 step `14141 / 14001`，
+beta mean/std 为 `0.26212 / 0.15805` 与 `0.25812 / 0.15711`，gamma 仍全程严格为
+`1.0 / 0.0 / 100%`；近 20 点 loss 为 `2.71083 / 2.71541`。无 OOM、非有限值或
+配置偏离，连续七个共同验证点都不支持固定强 recall。
 
 ## 可训练 gamma∼U(0.85, 0.95) 消融已启动
 
@@ -685,16 +706,26 @@ gamma=1 低 `0.145%`；高 gamma Parallel 为 `2.797475 / 16.40318`，比 beta-s
 checkpoint 和日志持续更新。五个验证点一致表明可训练高 gamma 优于固定 1，但没有优于
 beta-style 初始化。
 
+第六个共同 step-12000 validation 仍是同一排序。高 gamma
+Recall→Delta/Parallel loss/PPL 为 `2.763985 / 15.86294`、
+`2.763101 / 15.84892`；相对同顺序 beta-style 高 `0.269% / 0.108%` PPL，
+相对固定 gamma=1 低 `0.089% / 0.182%`，相对 GDN 高
+`0.173% / 0.084%`。现至 step `13161 / 13061`，beta mean/std 为
+`0.29208 / 0.16637` 与 `0.29047 / 0.16630`，gamma mean/std/饱和率为
+`0.50085 / 0.31353 / 9.70%` 与 `0.49780 / 0.31186 / 9.31%`；近 20 点 loss 为
+`2.72337 / 2.72699`，loss、梯度、日志和 checkpoint 继续健康。六个共同节点
+均支持“可训练比固定 1 好，但高初值没有超过 beta-style”。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
    在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
-2. 36311、36312 和 37118 已成功完成并回收，不得重提；冻结保留仍在运行的
-   37183/37379/37380/37413/37414，继续检查 loss、grad norm、门控统计、吞吐、峰值显存、
+2. 36311、36312、37118 和 37183 已成功完成并回收，不得重提；冻结保留仍在运行的
+   37379/37380/37413/37414，继续检查 loss、grad norm、门控统计、吞吐、峰值显存、
    日志新鲜度和 checkpoint 完整性。固定 gamma 两路必须保持 `1/0/100%` 统计。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
    micro batch/科学配置时先保留证据并停止，不盲目重跑。
-4. 其余五个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；对齐比较
+4. 其余四个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；对齐比较
    高区间可训练 gamma、固定 gamma=1、beta-style 可学习 gamma 与 GDN，判断强 recall 是改善还是伤害 loss/PPL。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
