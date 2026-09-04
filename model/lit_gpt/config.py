@@ -60,7 +60,9 @@ class Config:
     # Learned token-wise gamma follows beta's initialization by default:
     # independent Xavier-uniform projection with the same gain and zero bias.
     recall_init: float = 0.5
-    recall_weight_init: str = "beta"  # beta | zero (legacy zero-weight ablation only)
+    recall_weight_init: str = "beta"  # beta | zero | uniform_gate
+    recall_uniform_min: float = 0.85
+    recall_uniform_max: float = 0.95
 
     def __post_init__(self):
         # error checking
@@ -192,6 +194,14 @@ configs += [
     ),
     dict(
         _recall_base,
+        name="qgdn_recall_then_delta_gamma_uniform_085_095_340M",
+        mixer="qgdn",
+        recall_weight_init="uniform_gate",
+        recall_uniform_min=0.85,
+        recall_uniform_max=0.95,
+    ),
+    dict(
+        _recall_base,
         name="qgdn_delta_then_recall_340M",
         mixer="qgdn",
         recall_order="delta_then_recall",
@@ -209,6 +219,15 @@ configs += [
         recall_order="parallel",
         recall_gate="fixed",
         recall_init=1.0,
+    ),
+    dict(
+        _recall_base,
+        name="qgdn_parallel_gamma_uniform_085_095_340M",
+        mixer="qgdn",
+        recall_order="parallel",
+        recall_weight_init="uniform_gate",
+        recall_uniform_min=0.85,
+        recall_uniform_max=0.95,
     ),
     # Backward-compatible alias; beta-style gamma initialization is now the default.
     dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn"),

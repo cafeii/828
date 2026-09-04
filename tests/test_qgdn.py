@@ -990,6 +990,83 @@ def test_gamma_one_configs_are_fixed_and_preserve_shared_initialization(
         torch.testing.assert_close(moments["forgetting_margin"][:2], torch.zeros(2, dtype=torch.float64))
 
 
+@pytest.mark.parametrize(
+    "uniform_name,learned_name,update_order",
+    [
+        (
+            "qgdn_recall_then_delta_gamma_uniform_085_095_340M",
+            "qgdn_recall_tiny",
+            "recall_then_delta",
+        ),
+        (
+            "qgdn_parallel_gamma_uniform_085_095_340M",
+            "qgdn_parallel_tiny",
+            "parallel",
+        ),
+    ],
+)
+def test_uniform_high_gamma_configs_are_trainable_and_preserve_shared_initialization(
+    uniform_name, learned_name, update_order
+):
+    overrides = dict(
+        use_short_conv=False,
+        _norm_class="RMSNorm",
+        n_layer=2,
+        n_embd=128,
+        n_head=2,
+        head_dim=64,
+        intermediate_size=352,
+        vocab_size=256,
+        block_size=128,
+    )
+    uniform_config = Config.from_name(uniform_name, **overrides)
+    assert uniform_config.recall_gate == "token"
+    assert uniform_config.recall_weight_init == "uniform_gate"
+    assert uniform_config.recall_uniform_min == 0.85
+    assert uniform_config.recall_uniform_max == 0.95
+    assert uniform_config.recall_order == update_order
+
+    models = []
+    for config in (uniform_config, Config.from_name(learned_name, **overrides)):
+        torch.manual_seed(3407)
+        model = GPT(config)
+        model.apply(lambda module: model._init_weights(module, n_layer=config.n_layer))
+        models.append(model)
+    uniform, learned = models
+    uniform_parameters = dict(uniform.named_parameters())
+    for name, parameter in learned.named_parameters():
+        if ".recall_" not in name:
+            torch.testing.assert_close(uniform_parameters[name], parameter, rtol=0, atol=0)
+
+    initial_gammas = []
+    sample = torch.randn(2, 13, uniform_config.n_embd)
+    for block in uniform.transformer.h:
+        assert block.attn.recall_proj.weight.requires_grad
+        assert block.attn.recall_proj.bias.requires_grad
+        assert torch.count_nonzero(block.attn.recall_proj.weight) == 0
+        initialized = block.attn.recall_proj.bias.detach().sigmoid()
+        assert torch.all(initialized >= 0.85)
+        assert torch.all(initialized <= 0.95)
+        actual = block.attn.recall_gamma(sample)
+        torch.testing.assert_close(
+            actual,
+            initialized.view(1, 1, -1).expand_as(actual),
+            rtol=0,
+            atol=0,
+        )
+        initial_gammas.append(initialized)
+        block.attn.mode = "naive"
+    assert torch.cat(initial_gammas).std() > 0
+
+    logits = uniform(torch.randint(0, 256, (2, 13)))
+    F.cross_entropy(logits.flatten(0, 1), torch.randint(0, 256, (26,))).backward()
+    for block in uniform.transformer.h:
+        for parameter in (block.attn.recall_proj.weight, block.attn.recall_proj.bias):
+            assert parameter.grad is not None
+            assert parameter.grad.isfinite().all()
+            assert parameter.grad.abs().sum() > 0
+
+
 def test_physical_t_training_path_remains_disabled_by_default():
     import importlib
 
@@ -1062,7 +1139,7 @@ def test_cuda_output_state_and_backward(T, recall_mode):
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
-@pytest.mark.parametrize("gamma_value", [0.1, 1.0])
+@pytest.mark.parametrize("gamma_value", [0.1, 0.9, 1.0])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity requires an allocated GPU")
 def test_cuda_update_order_output_state_and_backward(update_order, gamma_value):
     xs = inputs(T=257, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=gamma_value)

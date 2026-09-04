@@ -253,6 +253,8 @@ class Block(nn.Module):
                 recall_gate=config.recall_gate,
                 recall_init=config.recall_init,
                 recall_weight_init=config.recall_weight_init,
+                recall_uniform_min=config.recall_uniform_min,
+                recall_uniform_max=config.recall_uniform_max,
             )
         else:
             self.attn = CausalSelfAttention(config, n_embd=config.n_embd, layer_idx=layer_idx)
