@@ -131,13 +131,24 @@ Commit `22a3b27fd0c7f286320199d18edea793e229f8a2` 将后端轮换去相位，并
 
 全融合相对只融合 WY 的配对中位加速仍为 `2.121x`、`2.100x`、`2.135x`。peak allocated memory 相对 triangular 为 `0.522x`，incremental peak 为 `0.111–0.114x`；相对 fused-WY-only 的 peak 比为 `0.532–0.533x`。最大输出、末状态和模型输入梯度相对 RMSE 为 `1.80e-7`、`6.23e-8`、`1.84e-6`，全部有限。
 
-这证明物理 T 的完整参考算子分解已经具备强而稳定的局部速度/显存收益，但它仍运行在 diagnostic reference 接口，尚未接入 340M 训练模块，也不是相对生产虚拟 2T 的整模型结果。`QGDN_USE_PHYSICAL_T=False` 继续保持；下一门禁是训练路径接入、BF16/实际形状数值检查和单卡整模型同配置 A/B。
+这证明物理 T 的完整参考算子分解具备强而稳定的局部速度/显存收益；当时它仍运行在 diagnostic reference 接口，也不是相对生产虚拟 2T 的整模型结果。
+
+Commit `1335ee690822ab72c736c94c2b6c49363d604e95` 随后将这条全融合路径接入 `qgdn_rule` 的显式 opt-in chunk 训练分支。新分支支持 query/key recall、三种更新顺序、末状态和尾 chunk；旧的串行物理 T 分支不再由生产入口调用。物理 chunk size 独立固定为 16，默认开关仍为 `QGDN_USE_PHYSICAL_T=False`。提交前显式隐藏 CUDA 的完整 CPU 回归为 135 passed / 48 skipped。
+
+Slurm 35896（实验 `20260904-094915-physical-chunk-training-audit-2ce53c`）为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6 passed / 0 failed。入口级 BF16 测试覆盖 query/key、三种更新顺序、尾 chunk、输出、末状态和 q/k/v/g/beta/gamma/初态全部梯度。实际 340M 算子形状 `B=1/T=4096/H=16/K=V=64` 与生产虚拟 2T 路径的结果如下：
+
+| 更新顺序 | 输出相对 RMSE | 末状态相对 RMSE | 最大输入梯度相对 RMSE | 物理/虚拟 peak allocated |
+|---|---:|---:|---:|---:|
+| Recall→Delta | 0.004375 | 0.002561 | 0.006391 | 0.843x |
+| Delta→Recall | 0.004581 | 0.002620 | 0.008812 | 0.871x |
+| Parallel | 0.004394 | 0.002623 | 0.005034 | 0.849x |
+
+所有输出、状态和梯度均有限，远低于输出/状态 0.025、梯度 0.07 的 BF16 门槛。该结果通过了训练入口与实际形状的 CUDA 数值门禁，并在算子作用域相对虚拟 2T 降低约 12.9%–15.7% 峰值分配；它尚未给出整模型吞吐，因此默认开关继续关闭。
 
 ## 下一任务的第一步
 
-1. 将已验证的全融合物理 T 路径接入 `qgdn_rule` 的显式 opt-in 训练分支，保持三种更新顺序和默认开关不变。
-2. 补齐 BF16/实际 340M head shape、序列 4096 和尾 chunk 的输出、末状态、全部参数梯度与有限性门禁；若 kernel envelope 不适合实际形状，先修实现而不是启用默认。
-3. 数值通过后跑同卡、同模型、同 batch、同训练配置的单卡整模型“物理 T vs 虚拟 2T”交错 A/B，最低启用门槛为稳定 `>1.25x`，目标约 `1.5x`，且显存不得恶化。
-4. 只有整模型通过后才做 8 卡 DDP smoke；在此之前保持 `QGDN_USE_PHYSICAL_T=False`。
+1. 跑同卡、同模型、同 micro batch 8、同序列 4096、关闭 checkpoint、fused loss 的单卡整模型“物理 T vs 虚拟 2T”稳定 A/B，分别配对三种更新顺序。
+2. 只有三种顺序均稳定超过 `1.25x`、loss/梯度有限且峰值显存不恶化，才形成可复现的默认启用候选；目标仍约为 `1.5x`。
+3. 整模型通过后再做 8 卡 DDP smoke；若吞吐或显存门槛失败，保留默认关闭并根据 profiler 证据继续优化或否决。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

@@ -87,6 +87,10 @@ Slurm 35894 首先通过 6/6 CUDA 门禁并给出约 `2.21x` 信号，但其三�
 
 这仍是 diagnostic 物理-T 算子对 triangular 物理-T oracle 的结果，不是 340M 整模型相对虚拟 2T 的加速。下一步是接入显式 opt-in 训练分支、验证 BF16 与实际形状，再做同卡整模型 A/B；在达到稳定 `>1.25x` 且显存不恶化之前，`QGDN_USE_PHYSICAL_T=False` 不变。
 
+Commit `1335ee690822ab72c736c94c2b6c49363d604e95` 已将全融合 chunk-16 rank-2/WY 路径接入显式 opt-in 训练分支，同时保持默认关闭。Slurm 35896（实验 `20260904-094915-physical-chunk-training-audit-2ce53c`）为 `COMPLETED / 0:0`、`run.exitcode=0`，JUnit 6/6；实际 340M 算子形状 `B=1/T=4096/H=16/K=V=64` 的三顺序 BF16 检查中，输出相对 RMSE 为 `0.00438–0.00458`，末状态为 `0.00256–0.00262`，七组输入梯度最坏为 `0.00881`，全部有限。物理路径 peak allocated 是生产虚拟 2T 的 `0.843x–0.871x`。
+
+因此训练入口与 CUDA 数值门禁已通过，下一步可以进行 micro batch 8、序列 4096、关闭 checkpoint、fused loss 的单卡整模型同配置 A/B。这里的 `0.843x–0.871x` 仍是算子审计的显存比例，不是整模型结果；在整模型三顺序都稳定超过 `1.25x` 且显存不恶化前，`QGDN_USE_PHYSICAL_T=False` 不变。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -114,3 +118,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 块摊销、顺序轮换的 fused-WY 交错 A/B：Slurm 35893（6/6 门禁；三顺序配对中位约 1.058x，bootstrap 95% 下界均大于 1）
 - 全融合状态/输出首次门禁：Slurm 35894（6/6 门禁；数值通过，性能编排发现三周期锁相）
 - 去相位全融合状态/输出诊断：Slurm 35895（6/6 门禁；三顺序配对中位 2.199x–2.239x，p10 1.987x–2.012x）
+- 训练入口与实际 340M BF16 数值门禁：Slurm 35896（6/6 门禁；最坏输入梯度相对 RMSE 0.00881；算子 peak allocated 为虚拟 2T 的 0.843x–0.871x）
