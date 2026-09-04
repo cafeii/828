@@ -98,12 +98,32 @@ prepared-input VJP 分别为 `5.589 ms` 和 `4.607 ms`。完整物理算子 `44.
 对 `BV=16/32/64` 做全梯度与去相位 A/B，验证减少 V 无关计算的重复加载及共享梯度的
 atomic 竞争是否有实质收益。
 
-若以后恢复，优先顺序应为：
+联合加宽已经否决。Commit `620a6e0` 的 CPU Slurm 36443 为 138 passed / 48 CUDA
+skipped；H800 Slurm 36445 为 `COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6、
+全部梯度有限。BV16/32/64 的 backward 中位数为 `19.068/42.285/54.802 ms`：output
+确实由约 `9.14 ms` 降至 `5.50/2.90 ms`，但 256-chunk 串行 state 逆扫由约
+`9.54 ms` 恶化为 `36.39/51.48 ms`。
 
-1. 分离测量 chunk-parallel output adjoint、compact state-adjoint scan、WY backward 和
-   prepared-input VJP。
-2. 若 output adjoint 主导，减少 program 数、原子竞争和重复读取；若 state scan 主导，改为
-   分层 associative reverse scan。
+Commit `5b1c92e9de7735f10c229f42b21ba5a7a82cb0f2` 保留 state BV16、仅将 output 改为
+BV64。CPU Slurm 36448 再次获得 138 passed / 48 skipped；H800 Slurm 36451
+（`20260904-132840-physical-bwd-hybrid-cuda-7bbde6`）为 `COMPLETED / 0:0`、
+`run.exitcode=0`、CUDA JUnit 6/6、全输入梯度有限，最坏相对 RMSE `2.06e-7`。48 轮
+去相位 A/B 中 hybrid `12.887 ms` 对 BV16 `19.087 ms`，配对加速中位 `1.482x`
+（p10/p90 `1.476x/1.488x`，48/48 均快），四种配置 peak allocated 都是
+`4,288,676,352` bytes。output kernel `9.135 -> 2.900 ms`，state kernel 保持
+`9.587 ms`。
+
+完整物理算子从 `44.898 ms` 降到 `38.673 ms`（约 `1.161x`），但同次虚拟 2T 为
+`15.798 ms`，物理路径仍有 `2.448x` 时延。WY backward `5.625 ms` 中融合 kernel 占
+`5.498 ms`；prepared-input VJP `4.554 ms` 则主要由 mul `1.222 ms`、div
+`1.044 ms`、sum `0.594 ms`、add_ `0.584 ms`、neg `0.278 ms` 组成。
+
+接下来的优先顺序应为：
+
+1. 为 compact state-adjoint scan 设计分层 associative reverse scan，同时保留 BV16 作为
+   数值和性能对照。
+2. 若 state scan 不能取得实质收益，再把 prepared-input VJP 的完整闭式链融合为少量 kernel；
+   不对已是单一主 kernel 的 WY backward 做无证据微调。
 3. 每个候选先通过三种顺序的 CPU/FP64 与 H800 全梯度门禁。
 4. 只有实际 T=4096 算子超过虚拟 2T，并且整模型 micro batch 8 不 OOM，才进入完整 A/B。
 5. 只有整模型相对虚拟 2T 稳定快 `>1.25x` 且显存不恶化，才能考虑打开默认开关。

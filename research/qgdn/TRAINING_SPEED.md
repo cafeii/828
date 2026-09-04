@@ -169,6 +169,26 @@ kernel 级拆分：作业 `COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6�
 closure/响应重算以及 prepared-input 的通用 autograd 各自只占当前整物理算子约
 `12.4%` 和 `10.3%`，本轮不先改动。
 
+Slurm 36443/36445 随后分别通过 CPU/FP64 与实际形状 H800 全梯度门禁，但否决了
+state/output 同时加宽：BV16/32/64 的交错中位数为 `19.068/42.285/54.802 ms`。
+output adjoint 随 block 加宽降到 `5.50/2.90 ms`，state adjoint 却因 256-chunk 串行
+逆扫失去并行度而增至 `36.39/51.48 ms`。
+
+Commit `5b1c92e9de7735f10c229f42b21ba5a7a82cb0f2` 改为 output BV64、state BV16。
+Slurm 36448 的 CPU/FP64 回归为 138 passed / 48 CUDA skipped；Slurm 36451 为
+`COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6，全部数值有限，实际形状最坏
+prepared-gradient 相对 RMSE `2.06e-7`。48 轮去相位 A/B 中 hybrid 为 `12.887 ms`，
+对 BV16 的 `19.087 ms` 配对加速中位 `1.482x`（p10 `1.476x`，p90 `1.488x`，48/48
+均快），peak allocated 同为 `4,288,676,352` bytes。kernel 级 output 从 `9.135 ms`
+降至 `2.900 ms`，state 保持 `9.587 ms`。
+
+完整物理算子中位 `38.673 ms`，相对 Slurm 36440 的 `44.898 ms` 提速约 `1.161x`，
+但仍是同次虚拟 2T `15.798 ms` 的 `2.448x` 时延。WY backward 的 `5.625 ms` 几乎全部
+落在单一融合 kernel（`5.498 ms`）；prepared-input VJP 的 `4.554 ms` 则主要分散在
+mul/div/sum/add/neg。当前最佳下一方向是 compact state adjoint 的分层 reverse scan，
+其次才是整条 prepared-input VJP 融合。由于算子尚未超过虚拟 2T，本轮不进入整模型
+A/B，生产默认继续关闭物理 T。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -205,3 +225,5 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 并行 output backward CUDA/性能门禁：Slurm 36080（6/6 数值与全梯度门禁；backward 4.86x，整算子 2.63x）
 - 并行 output backward 整模型 mb4 单臂：Slurm 36084（15,819.91 token/s，31.52 GB；同 mb4 虚拟吞吐比 0.429x）
 - split backward kernel 级拆分：Slurm 36440（state 9.469 ms / output 9.067 ms / fill 0.399 ms；CUDA JUnit 6/6）
+- 联合 BV16/32/64 审计：Slurm 36443/36445（全梯度通过；state/output 同时加宽因 state 逆扫恶化而否决）
+- output BV64 / state BV16 hybrid：Slurm 36448/36451（CPU 138 passed；CUDA 6/6；split backward 1.482x；峰值显存持平）

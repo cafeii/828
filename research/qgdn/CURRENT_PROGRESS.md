@@ -216,6 +216,40 @@ Slurm 36440（实验 `20260904-120154-split-bwd-kernel-profile-mb4-5e584e`，com
 4 次，并对共享梯度做 4 路 atomic add。先对 `BV=32/64` 做实际形状数值与交错 A/B；
 若不能稳定降低整段时延则直接否决。
 
+这一联合候选已被实测否决。Commit `620a6e0` 先加入 `BV=16/32/64` 审计；Slurm 36443
+完成 CPU/FP64 全输入梯度回归（138 passed / 48 CUDA skipped），Slurm 36445 完成 H800
+实际形状门禁（`COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6、全部梯度有限）。
+但 state/output 同时加宽时，交错中位数由 `19.068 ms` 恶化为 `42.285/54.802 ms`。
+kernel 事件说明两支响应相反：output adjoint 从约 `9.14 ms` 降到 `5.50/2.90 ms`，而
+包含 256-chunk 串行逆扫的 state adjoint 从约 `9.54 ms` 增至 `36.39/51.48 ms`。
+
+Commit `5b1c92e9de7735f10c229f42b21ba5a7a82cb0f2` 因此将两支解耦：output 使用覆盖完整
+V=64 的 `BV=64`，消除共享梯度 atomic；state 保持 `BV=16` 维持并行度。Slurm 36448
+再次完成 CPU/FP64 回归（138 passed / 48 skipped）。Slurm 36451（实验
+`20260904-132840-physical-bwd-hybrid-cuda-7bbde6`）在 B=4/T=4096/H=16/K=V=64 上完成
+最终 H800 审计：
+
+- 作业 `COMPLETED / 0:0`、`run.exitcode=0`，CUDA JUnit 6/6，输出、状态和全部 prepared
+  input 梯度有限；相对 BV16 对照的最坏梯度相对 RMSE 为 `2.06e-7`；
+- 48 轮去相位交错 A/B 中，每个后端在四个位置各出现 12 次；hybrid 中位
+  `12.887 ms`，对 BV16 的 `19.087 ms` 配对加速中位 `1.482x`，p10/p90 为
+  `1.476x/1.488x`，48/48 样本均快；
+- state kernel 保持 `9.587 ms`，output kernel 由 `9.135 ms` 降到 `2.900 ms`
+  （`3.15x`），清零约 `0.399 ms`；四种配置的 peak allocated 均为
+  `4,288,676,352` bytes，没有显存恶化；
+- 完整物理算子由 Slurm 36440 的 `44.898 ms` 降至 `38.673 ms`（约 `1.161x`），但
+  同次虚拟 2T 为 `15.798 ms`，物理路径仍是 `2.448x` 时延、只有 `0.409x` 吞吐。
+
+同次审计也覆盖了另外两段。WY backward 中位 `5.625 ms`，其中融合
+`_qgdn_streaming_wy_bwd_kernel` 约 `5.498 ms`、清零 `0.125 ms`，已经是单一主 kernel。
+prepared-input VJP 中位 `4.554 ms`，是通用 autograd 的碎片化点算子链；profiler 每次约含
+`1.222 ms` mul、`1.044 ms` div、`0.594 ms` sum、`0.584 ms` in-place add 和
+`0.278 ms` neg。后续应优先验证 compact state adjoint 的分层 reverse scan；若继续处理
+prepared-input VJP，应一次融合整条闭式链，而不是微调单个点算子。
+
+hybrid 是有效的算子级改进，但完整物理算子仍未超过虚拟 2T，因此按门禁不启动整模型
+A/B、不提交新 FineWeb 训练，也不讨论打开默认路径。`QGDN_USE_PHYSICAL_T=False` 不变。
+
 ## 虚拟 2T 正式训练已提交
 
 2026-09-04 在冻结 commit `7eb73ca89411c54d4fe7a8ffb427df44e7709cfa` 上直接提交了两个
