@@ -266,6 +266,21 @@ fused loss、关闭 activation checkpointing、seed 3407；`max_steps=19073`，�
 9,999,745,024 个 prediction tokens。验证每 2000 step、1600 sequences，checkpoint 每 1000
 step。gamma 与 beta 使用同方案的独立 Xavier 随机初始化，`QGDN_USE_PHYSICAL_T=False`。
 
+首次训练后对齐检查已完成。两作业内置 CUDA/JUnit 均为 6/6，通过 step 2000 后均有完整
+checkpoint，日志持续更新且 loss、grad norm、gamma 统计和吞吐均为有限值。相同 step 2000
+的 validation 如下：
+
+| 模型 | validation loss | PPL |
+|---|---:|---:|
+| Parallel | 3.142662 | 23.16546 |
+| Delta→Recall | 3.143802 | 23.19188 |
+
+在共同 step 2671 对齐，最近 20 个日志点的训练 loss 均值为 Parallel `3.049501`、
+Delta→Recall `3.050772`，当前尚无显著优化差距。gamma 动态已经分化：Parallel 的
+mean/std/饱和率为 `0.44296 / 0.31147 / 8.05%`，Delta→Recall 为
+`0.22305 / 0.21491 / 1.57%`。两者仍有限，暂不判定异常；后续继续在相同 token/step 和
+validation 边界追踪，而不按墙钟错位比较。
+
 ## 当前下一步
 
 1. 对 `BV=16/32/64` 做 CPU/FP64 合约回归、实际 B=4/T=4096 全输入梯度门禁和去相位交错 A/B；
