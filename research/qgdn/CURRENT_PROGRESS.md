@@ -1,6 +1,6 @@
 # QGDN 当前进度与接力说明
 
-更新时间：2026-09-04 11:22（Asia/Shanghai）
+更新时间：2026-09-04 11:57（Asia/Shanghai）
 
 ## 当前目标
 
@@ -49,6 +49,8 @@
 | `a1c1bd2be7848e24cfd6b5d7dd4a9fea4778b5a8` | 审计整个物理 T 算子 checkpoint |
 | `101f1f2fa9bf84b67813f08c69178adf13fadca3` | 只重算物理 T chunk-start 状态 |
 | `b1084a821a69dc654f82fc3102d9e00814cb3daa` | 用单一自定义 autograd 边界约束跨层保存张量 |
+| `9ced1c8d7fb8eb83df224de973c0dd17e7298306` | 增加实际 mb4/T4096 物理 T 分阶段 profiler |
+| `e79e48c651961d8a7c0e413f2829cadeff9b8b35` | 将每 chunk 输出反向从跨 chunk 状态逆扫中分离并行化 |
 
 ## 当前速度结论
 
@@ -170,11 +172,27 @@ Slurm 35911 在一张干净 H800 上先完成了虚拟 2T、micro batch 8 基线
 
 因此 mb4 路径在第一个最快预期的 no-recompute 候选上就同时失败了 `>1.25x` 吞吐门槛和“显存不劣化”门槛。不再执行三顺序×多重复的完整 A/B，也不提交 8 卡 DDP smoke。`QGDN_USE_PHYSICAL_T=False` 保持不变。
 
+## 并行输出 backward 里程碑
+
+Slurm 36076（commit `9ced1c8`）首先用当前单 autograd 边界将 B=4/T=4096/H=16/K=V=64/chunk=16 的物理算子拆段。作业 `COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6、全部量有限。forward 的 prepare/WY/state+output 中位分别只有 `1.43/3.41/2.52 ms`，WY backward 为 `5.62 ms`，prepared-input VJP 为 `4.54 ms`；原 `state+output backward` 却达 `92.24 ms`，占完整物理算子 `118.33 ms` 的约 78%。同形状虚拟 2T 算子只有 `15.38 ms`。
+
+根因是旧 backward 只启动 128 个 B/H/value-block program，每个 program 在内部串行逆扫 256 个 chunk，并把每个 chunk 的输出反向所有矩阵乘也放进这个循环。Commit `e79e48c` 将输出反向改为 65,536 个 chunk/value-block 并行 program，只把紧凑状态伴随传播留在跨 chunk 逆扫中。提交前 CPU/FP64 回归为 138 passed / 48 CUDA skipped。
+
+Slurm 36080 验证了新 backward：`COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6，三种更新顺序的输出、末状态和七组输入梯度门禁均通过。同一 profiler 中：
+
+- `state+output backward`：`92.79 -> 19.10 ms`，加速 `4.86x`；
+- 完整物理算子 forward+backward：`118.33 -> 45.07 ms`，加速 `2.63x`；
+- 新物理算子仍是虚拟 2T `15.70 ms` 的 `2.87x` 时延，吞吐比为 `0.348x`。
+
+Slurm 36084 随后完成整模型 mb4 单臂：中位 step `1.0351 s`、`15,819.91 token/s`、`31.52 GB`、loss 有限，作业与 JUnit 均为 0 失败。相对旧 no-recompute 物理 mb4，吞吐提高 `2.29x`、峰值显存降到 `0.503x`；但相对同机虚拟 mb4 仍只有 `0.429x` 吞吐，显存为 `0.792x`。相对虚拟 mb8 生产基线的吞吐也只有 `0.394x`。
+
+这是显著的工程改进，但当前候选仍同时达不到同 mb4 `>1.25x` 门槛和 mb4/GA4 相对现有 mb8 的有效吞吐门槛，因此不跑完整三顺序 A/B 或 8 卡 smoke，默认开关不变。
+
 ## 下一任务的第一步
 
-1. 不再围绕 batch size 或整算子 checkpoint 调参；当前根因是物理 T 整模型每层 forward/backward 执行成本，不是单纯容量问题。
-2. 用 profiler 将物理 T 的 WY 准备、chunk-state 扫描、output 恢复和 backward 以及 18 层调用开销分开，找出为何局部 2.2x 优势在整模型中变成 0.187x。
-3. commit `b1084a8` 的单自定义 autograd 边界已通过 138 项 CPU/FP64 回归，但在当前 no-recompute mb4 已严重失速的证据下，只有 profiler 证明 backward graph/launch 是主因时才值得补 CUDA 门禁。
-4. 新设计仍须先过三顺序的 CPU/FP64 与短 H800 CUDA 门禁；只有整模型同 mb4 稳定 `>1.25x`、显存不劣化，再做 mb4/GA4 的 8 卡 DDP smoke。
+1. 继续将新 `19.10 ms` 的 split backward 分为 chunk-parallel output adjoint 和 compact state adjoint scan 两段独立计时，确定下一主瓶颈。
+2. 若 output adjoint 占主导，优先减少 65,536 个 program 和对 query/left/effective/write/decay 的 atomic 竞争；若 state scan 占主导，改成分层 associative chunk scan，而不再对 256 个 chunk 做单 program 逆扫。
+3. 同时优化已测得的 WY backward `5.62 ms` 与 prepared-input VJP `4.55 ms`；仅优化 split backward 到零也不足以达到当前 1.25x 门槛。
+4. 新候选仍须先过三顺序 CPU/FP64 和 CUDA 全梯度门禁；单臂同 mb4 不超过虚拟 2T 就不扩展完整 A/B 和 8 卡 DDP。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

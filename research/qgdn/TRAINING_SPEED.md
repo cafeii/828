@@ -110,6 +110,29 @@ Slurm 35911 在干净 H800 上给出了 micro batch 8 的可用虚拟 2T 基线�
 
 这组数据还说明：局部物理 T 算子相对 triangular oracle 的 `2.20x–2.24x` 加速没有转化为整模型收益。下一步必须 profiler 分解 18 层中的 WY 准备、chunk-state、output、backward 与调用开销，而不是继续调 batch size 或扩展 checkpoint 组合。`QGDN_USE_PHYSICAL_T=False` 继续保持。
 
+## 并行 output backward 优化
+
+Slurm 36076 将 B=4/T=4096/H=16/K=V=64/chunk=16 的单层物理算子分段，找到了与整模型失速一致的主瓶颈：
+
+| 阶段 | 中位时延 |
+|---|---:|
+| prepare forward | 1.43 ms |
+| WY forward | 3.41 ms |
+| state + output forward | 2.52 ms |
+| 旧 state + output backward | 92.24 ms |
+| WY backward | 5.62 ms |
+| prepared-input VJP | 4.54 ms |
+| 完整物理算子 forward+backward | 118.33 ms |
+| 同形状虚拟 2T 算子 | 15.38 ms |
+
+旧 backward 把每 chunk 的输出反向放在跨 256 chunk 的单 program 逆扫里，整个 B=4/H=16/V=64 形状只有 128 个 program。Commit `e79e48c651961d8a7c0e413f2829cadeff9b8b35` 将输出反向拆成 65,536 个 chunk/value-block 并行 program，另外用轻量紧凑状态逆扫传播跨 chunk 伴随。CPU/FP64 回归为 138 passed / 48 CUDA skipped。
+
+Slurm 36080 的三顺序 CUDA 门禁 6/6 通过，`run.exitcode=0`，全部输出、状态和七组梯度通过既定 BF16 门槛。新 backward 中位从 `92.79 ms` 降至 `19.10 ms`（`4.86x`），物理算子从 `118.33 ms` 降至 `45.07 ms`（`2.63x`）。但同次虚拟 2T 算子为 `15.70 ms`，因此新物理算子仍只有 `0.348x` 相对吞吐。
+
+Slurm 36084 的整模型 mb4 单臂为 `15,819.91 token/s`、`31.52 GB`、中位 step `1.0351 s`，loss 有限且 CUDA JUnit 6/6。这相对旧物理 mb4 的 `6,903.17 token/s / 62.62 GB` 是 `2.29x` 加速和 `0.503x` 显存，但相对同机虚拟 mb4 仍只有 `0.429x` 吞吐和 `0.792x` 显存；相对虚拟 mb8 生产基线吞吐只有 `0.394x`。
+
+因此该拆分作为后续优化基线保留，但当前版本不扩展到三顺序稳定 A/B 或 8 卡 mb4/GA4 smoke。下一步先将新 `19.10 ms` 拆成 parallel output adjoint 和 compact state adjoint 分别计时，再决定减少 atomic/program 数还是将状态逆扫改为分层 associative scan。`QGDN_USE_PHYSICAL_T=False` 不变。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -142,3 +165,6 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 整物理算子 checkpoint 否决：Slurm 35933（55.66 GB，但仅 6,856.94 token/s）
 - chunk-start-only 重算容量门禁：Slurm 35959（CUDA JUnit 6/6，整模型仍于 79.11 GiB OOM）
 - 同机 micro batch 4 物理/虚拟对照：Slurm 36054 / 36061（6,903.17 vs 36,863.50 token/s；62.62 vs 39.80 GB）
+- mb4/T4096 单层分阶段 profiler：Slurm 36076（旧 state+output backward 92.24 ms，占物理算子约 78%）
+- 并行 output backward CUDA/性能门禁：Slurm 36080（6/6 数值与全梯度门禁；backward 4.86x，整算子 2.63x）
+- 并行 output backward 整模型 mb4 单臂：Slurm 36084（15,819.91 token/s，31.52 GB；同 mb4 虚拟吞吐比 0.429x）
