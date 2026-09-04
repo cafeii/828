@@ -561,6 +561,14 @@ mean/std 为 `0.25772 / 0.15607` 与 `0.25611 / 0.15540`，gamma 仍在全部记
 严格为 `1.0 / 0.0 / 100%`；近 20 点 loss 为 `2.77451 / 2.77693`，loss、梯度、
 日志和 checkpoint 均正常。连续五个验证点已经较稳定地否决固定强 recall 的效果收益。
 
+第六个共同 step-12000 validation 仍然略差。固定 gamma=1 的 Recall→Delta/Parallel
+loss/PPL 为 `2.764880 / 15.87714`、`2.764925 / 15.87785`，比各自 beta-style
+对照高 `0.358% / 0.290%` PPL，也比 GDN 高 `0.262% / 0.267%`。两路现至
+step `12761 / 12631`，beta mean/std 为 `0.26120 / 0.15812` 与
+`0.25920 / 0.15711`，gamma 仍逐点严格为 `1.0 / 0.0 / 100%`；近 20 点 loss 为
+`2.72785 / 2.72884`，全部 loss、梯度、日志和 checkpoint 健康。固定强 recall 的负向
+信号已经跨六个验证点复现。
+
 ## 可训练 gamma∼U(0.85, 0.95) 消融已启动
 
 Commit `9e381f0ecb1a8c2fcd8397446003cf6fdf0530b7` 新增 Recall→Delta 和 Parallel
