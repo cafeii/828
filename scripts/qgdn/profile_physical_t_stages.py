@@ -444,6 +444,8 @@ def main() -> None:
         **value_block_functions,
         "wy_backward": wy_backward,
         "prepared_input_vjp": prepared_input_vjp,
+        "physical_rule_forward_backward": physical_rule_forward_backward,
+        "virtual_rule_forward_backward": virtual_rule_forward_backward,
     }
     kernel_profiles = {
         name: profile_cuda_events(
