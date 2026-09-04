@@ -9,8 +9,8 @@
 1. 保持单一记忆矩阵，使用已验证的虚拟 2T 实现比较三种双监督更新顺序。
 2. 下一训练候选为 `qgdn_parallel_340M`，推荐 8 卡、micro batch 8、global batch 128、
    gradient accumulation 2、关闭 activation checkpointing、fused loss。
-3. 物理 T 优化暂停，生产默认保持 `QGDN_USE_PHYSICAL_T=False`。完整接力信息见
-   [物理 T 优化暂存](PHYSICAL_T_DEFERRED.md)。
+3. 物理 T 优化已在不触及正式训练的独立短诊断路径上恢复；生产默认仍保持
+   `QGDN_USE_PHYSICAL_T=False`。完整接力信息见 [物理 T 优化暂存](PHYSICAL_T_DEFERRED.md)。
 4. 新训练的 token-wise gamma 默认改为与 beta 相同的初始化方案：独立
    Xavier-uniform 权重（相同 gain）和零 bias；不再使用零权重加 `logit(0.1)`。
    已完成的 Recall→Delta 10B 结果仍属于旧初始化，不能与新初始化的 Parallel 解释为
@@ -196,6 +196,26 @@ Slurm 36084 随后完成整模型 mb4 单臂：中位 step `1.0351 s`、`15,819.
 
 这是显著的工程改进，但当前候选仍同时达不到同 mb4 `>1.25x` 门槛和 mb4/GA4 相对现有 mb8 的有效吞吐门槛，因此不跑完整三顺序 A/B 或 8 卡 smoke，默认开关不变。
 
+Slurm 36440（实验 `20260904-120154-split-bwd-kernel-profile-mb4-5e584e`，commit
+`7e6d198bc719914e1837863916fa280c7b260121`）已完成 split backward 的 kernel 级拆分。
+作业为 `COMPLETED / 0:0`、`run.exitcode=0`，CUDA JUnit 6/6，所有分段结果有限。
+在 B=4/T=4096/H=16/K=V=64/chunk=16 上，`state+output backward` 中位数为
+`19.017 ms`；5 次 profiler 迭代按 CUDA self time 分解为：
+
+- compact state adjoint：`9.469 ms`，占整段 `49.8%`；
+- parallel output adjoint：`9.067 ms`，占 `47.7%`；
+- `fill_`/清零：`0.399 ms`，占 `2.1%`。
+
+两个主 kernel 在自身 CUDA 时间中分别占 `51.1%` 和 `48.9%`，状态逆扫只是略高，
+不能把剩余瓶颈归因于单一分支。同次 WY backward 为 `5.589 ms`，prepared-input VJP
+为 `4.607 ms`；完整物理算子为 `44.898 ms`，对虚拟 2T 的 `15.668 ms` 仍是
+`2.866x` 时延。
+
+当前选定的下一候选是合并 state/output backward 的 value block：当 V=64 且
+`BV=16` 时，两个 kernel 都会将与 value 维无关的 left/effective/write 载入和计算重复
+4 次，并对共享梯度做 4 路 atomic add。先对 `BV=32/64` 做实际形状数值与交错 A/B；
+若不能稳定降低整段时延则直接否决。
+
 ## 虚拟 2T 正式训练已提交
 
 2026-09-04 在冻结 commit `7eb73ca89411c54d4fe7a8ffb427df44e7709cfa` 上直接提交了两个
@@ -214,9 +234,9 @@ step。gamma 与 beta 使用同方案的独立 Xavier 随机初始化，`QGDN_US
 
 ## 当前下一步
 
-1. 不再继续物理 T profiler 或 kernel 修改；现状与恢复门槛已归档到
-   [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。
-2. 每 30 分钟监控 36311/36312。排队阶段不重复提交；启动后先检查内置 JUnit 门禁，再检查
+1. 对 `BV=16/32/64` 做 CPU/FP64 合约回归、实际 B=4/T=4096 全输入梯度门禁和去相位交错 A/B；
+   继续记录 WY backward 和 prepared-input VJP 的 kernel 开销。
+2. 冻结保留 36311/36312，不修改、取消或重提；其原有监控仍先检查内置 JUnit 门禁，再检查
    loss、grad norm、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
    micro batch/科学配置时先保留证据并停止，不盲目重跑。

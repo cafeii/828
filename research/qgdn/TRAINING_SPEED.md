@@ -1,7 +1,7 @@
 # QGDN 训练加速报告
 
-> 2026-09-04 路线决定：物理 T 优化暂停，完整状态、失败路线和以后恢复门槛见
-> [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。当前训练继续使用虚拟 2T，
+> 2026-09-04 物理 T 已在独立短诊断路径上恢复优化，完整状态、失败路线和启用门槛见
+> [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。已冻结正式训练和生产默认继续使用虚拟 2T，
 > `QGDN_USE_PHYSICAL_T=False`。
 
 ## 推荐配置
@@ -151,6 +151,24 @@ Slurm 36084 的整模型 mb4 单臂为 `15,819.91 token/s`、`31.52 GB`、中位
 
 因此该拆分作为后续优化基线保留，但当前版本不扩展到三顺序稳定 A/B 或 8 卡 mb4/GA4 smoke。下一步先将新 `19.10 ms` 拆成 parallel output adjoint 和 compact state adjoint 分别计时，再决定减少 atomic/program 数还是将状态逆扫改为分层 associative scan。`QGDN_USE_PHYSICAL_T=False` 不变。
 
+Slurm 36440 在不可变 commit `7e6d198bc719914e1837863916fa280c7b260121` 上完成了
+kernel 级拆分：作业 `COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6、
+全部数值有限。B=4/T=4096/H=16/K=V=64/chunk=16 的结果为：
+
+| 分支 | 每次 CUDA self time | 占 19.017 ms backward |
+|---|---:|---:|
+| compact state adjoint | 9.469 ms | 49.8% |
+| parallel output adjoint | 9.067 ms | 47.7% |
+| 清零 / `fill_` | 0.399 ms | 2.1% |
+
+两个主 kernel 的合计占比为 `51.1% / 48.9%`，状态逆扫略高但没有单支压倒性瓶颈。
+同次 WY backward 为 `5.589 ms`，prepared-input VJP 为 `4.607 ms`，物理/虚拟算子时延为
+`44.898/15.668 ms = 2.866x`。因此先审计 state/output 的 value-block 粒度：当
+`BV=16` 时，V=64 造成 4 份与 V 无关的因子载入/计算和 4 路原子累加。下一个候选
+将交错比较 `BV=16/32/64`，并要求实际形状全输入梯度仍通过。WY 内部的
+closure/响应重算以及 prepared-input 的通用 autograd 各自只占当前整物理算子约
+`12.4%` 和 `10.3%`，本轮不先改动。
+
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
 ```text
@@ -186,3 +204,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - mb4/T4096 单层分阶段 profiler：Slurm 36076（旧 state+output backward 92.24 ms，占物理算子约 78%）
 - 并行 output backward CUDA/性能门禁：Slurm 36080（6/6 数值与全梯度门禁；backward 4.86x，整算子 2.63x）
 - 并行 output backward 整模型 mb4 单臂：Slurm 36084（15,819.91 token/s，31.52 GB；同 mb4 虚拟吞吐比 0.429x）
+- split backward kernel 级拆分：Slurm 36440（state 9.469 ms / output 9.067 ms / fill 0.399 ms；CUDA JUnit 6/6）

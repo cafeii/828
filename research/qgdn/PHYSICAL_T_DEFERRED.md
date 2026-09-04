@@ -2,7 +2,7 @@
 
 更新时间：2026-09-04（Asia/Shanghai）
 
-## 暂停决定
+## 暂存决定与本次恢复
 
 物理 T 优化已暂停，代码和实验记录保留，当前训练路线恢复为经过验证的虚拟 2T
 generalized-DPLR 实现。生产默认必须保持：
@@ -14,6 +14,10 @@ QGDN_USE_PHYSICAL_T=False
 暂停原因不是数值公式未解决，而是当前物理 T 实现在真实 340M、T=4096 整模型上仍显著
 慢于虚拟 2T。后续 FineWeb 训练不应启用物理 T，也不应为了容纳物理 T 将 micro batch
 从 8 降到 4。
+
+2026-09-04 13:04 起，只在独立不可变快照和短 H800 诊断中恢复优化。已冻结的
+Parallel Slurm 36311 和 Delta→Recall Slurm 36312 不修改、不取消、不重提；不提交新的
+FineWeb 正式训练。本次恢复不改变上述生产默认和启用门槛。
 
 ## 已完成的实现
 
@@ -76,11 +80,23 @@ split-backward 使物理整模型相对旧版本提速 `2.29x`，峰值显存降
 - chunk-start-only 重算在 micro batch 8 下仍 OOM。
 - no-recompute 物理 T 在 micro batch 8 下使用约 `79.17 GiB` 后 OOM。
 
-## 以后重启时的起点
+## 本次重启的起点
 
 当前开发分支起点为 commit `7e6d198bc719914e1837863916fa280c7b260121`。该提交加入了
 split backward 的 kernel 事件级 profiler；为它准备的实验
-`20260904-120154-split-bwd-kernel-profile-mb4-5e584e` **没有提交 Slurm**，不能当作已有结果。
+`20260904-120154-split-bwd-kernel-profile-mb4-5e584e` 在当时只完成准备、**没有提交 Slurm**，
+因此当时不能当作已有结果。
+
+该快照后于 Slurm 36440 唯一提交并完成：`COMPLETED / 0:0`、`run.exitcode=0`、
+CUDA JUnit 6/6，分段结果全部有限。B=4/T=4096/H=16/K=V=64/chunk=16 上，
+split backward 中位数 `19.017 ms`，其中 compact state adjoint `9.469 ms` (`49.8%`)，
+parallel output adjoint `9.067 ms` (`47.7%`)，清零 `0.399 ms` (`2.1%`)。WY backward 与
+prepared-input VJP 分别为 `5.589 ms` 和 `4.607 ms`。完整物理算子 `44.898 ms`，
+虚拟 2T 算子 `15.668 ms`。
+
+因 state/output 两支近似五五开，本轮先选择同时作用于两支的 value-block 合并候选：
+对 `BV=16/32/64` 做全梯度与去相位 A/B，验证减少 V 无关计算的重复加载及共享梯度的
+atomic 竞争是否有实质收益。
 
 若以后恢复，优先顺序应为：
 
