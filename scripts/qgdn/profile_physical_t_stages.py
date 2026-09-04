@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import statistics
@@ -50,6 +51,96 @@ def measure(function, *, warmup: int, measured: int) -> dict:
     return summarize(samples)
 
 
+def measure_interleaved(functions: dict[str, object], *, warmup: int, measured: int) -> dict:
+    names = tuple(functions)
+    orders = list(itertools.permutations(names))
+    for _ in range(warmup):
+        for name in names:
+            result = functions[name]()
+            torch.cuda.synchronize()
+            del result
+    samples = {name: [] for name in names}
+    position_counts = {name: [0] * len(names) for name in names}
+    rounds = []
+    for sample_index in range(measured):
+        order = orders[sample_index % len(orders)]
+        round_times = {}
+        for position, name in enumerate(order):
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            result = functions[name]()
+            end.record()
+            end.synchronize()
+            elapsed = float(start.elapsed_time(end))
+            del result
+            samples[name].append(elapsed)
+            round_times[name] = elapsed
+            position_counts[name][position] += 1
+        rounds.append({"order": order, "timings_ms": round_times})
+    if measured >= len(orders):
+        assert all(all(count > 0 for count in counts) for counts in position_counts.values())
+    control = names[0]
+    summaries = {name: summarize(values) for name, values in samples.items()}
+    paired_speedups = {
+        name: [
+            round_result["timings_ms"][control] / round_result["timings_ms"][name]
+            for round_result in rounds
+        ]
+        for name in names[1:]
+    }
+    return {
+        "control": control,
+        "summaries": summaries,
+        "paired_speedups_vs_control": {
+            name: {
+                **summarize(values),
+                "all_above_one": all(value > 1 for value in values),
+            }
+            for name, values in paired_speedups.items()
+        },
+        "position_counts": position_counts,
+        "rounds": rounds,
+    }
+
+
+def profile_cuda_events(function, *, iterations: int) -> list[dict]:
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=False,
+    ) as kernel_profiler:
+        for _ in range(iterations):
+            result = function()
+            del result
+        torch.cuda.synchronize()
+    kernel_events = []
+    for event in kernel_profiler.key_averages():
+        self_device_time = float(event.self_device_time_total)
+        if self_device_time > 0:
+            kernel_events.append(
+                {
+                    "key": event.key,
+                    "count": event.count,
+                    "self_device_time_total_us": self_device_time,
+                    "device_time_total_us": float(event.device_time_total),
+                }
+            )
+    kernel_events.sort(
+        key=lambda event: event["self_device_time_total_us"], reverse=True
+    )
+    return kernel_events
+
+
+def peak_allocated(function) -> int:
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    result = function()
+    torch.cuda.synchronize()
+    peak = torch.cuda.max_memory_allocated()
+    del result
+    return peak
+
+
 def make_inputs(batch: int, length: int, heads: int, width: int):
     generator = torch.Generator(device="cuda").manual_seed(3407)
     shape = (batch, length, heads)
@@ -81,7 +172,9 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--measured", type=int, default=7)
+    parser.add_argument("--candidate-measured", type=int, default=30)
     parser.add_argument("--kernel-profile-iterations", type=int, default=3)
+    parser.add_argument("--skip-serial", action="store_true")
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This diagnostic requires exactly one allocated CUDA GPU")
@@ -91,6 +184,8 @@ def main() -> None:
         raise ValueError("at least three measured samples are required")
     if args.kernel_profile_iterations < 1:
         raise ValueError("kernel profile iterations must be positive")
+    if args.candidate_measured < 6:
+        raise ValueError("candidate measurements must cover all six backend orders")
 
     numerics = configure_numerics()
     from lit_gpt.mixers.qgdn_rule import qgdn_rule
@@ -215,6 +310,16 @@ def main() -> None:
             args.width**-0.5,
         )
 
+    def state_output_backward_with_block(value_block):
+        return _qgdn_chunk_state_output_cuda_bwd(
+            state_inputs,
+            chunk_starts,
+            grad_outputs,
+            grad_final_state,
+            args.width**-0.5,
+            value_block=value_block,
+        )
+
     def state_output_backward_serial():
         return _qgdn_chunk_state_output_cuda_bwd_serial(
             state_inputs,
@@ -273,40 +378,74 @@ def main() -> None:
         "wy_forward": wy_forward,
         "state_scan_forward": state_scan_forward,
         "state_plus_output_forward": state_output_forward,
-        "state_plus_output_backward_serial": state_output_backward_serial,
         "state_plus_output_backward": state_output_backward,
         "wy_backward": wy_backward,
         "prepared_input_vjp": prepared_input_vjp,
         "physical_rule_forward_backward": physical_rule_forward_backward,
         "virtual_rule_forward_backward": virtual_rule_forward_backward,
     }
+    if not args.skip_serial:
+        functions = {
+            **dict(list(functions.items())[:4]),
+            "state_plus_output_backward_serial": state_output_backward_serial,
+            **dict(list(functions.items())[4:]),
+        }
     timings = {
         name: measure(function, warmup=args.warmup, measured=args.measured)
         for name, function in functions.items()
     }
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        record_shapes=False,
-    ) as kernel_profiler:
-        for _ in range(args.kernel_profile_iterations):
-            result = state_output_backward()
-            del result
-        torch.cuda.synchronize()
-    kernel_events = []
-    for event in kernel_profiler.key_averages():
-        self_device_time = float(event.self_device_time_total)
-        if self_device_time > 0:
-            kernel_events.append(
-                {
-                    "key": event.key,
-                    "count": event.count,
-                    "self_device_time_total_us": self_device_time,
-                    "device_time_total_us": float(event.device_time_total),
-                }
-            )
-    kernel_events.sort(
-        key=lambda event: event["self_device_time_total_us"], reverse=True
+    value_block_functions = {
+        f"bv{value_block}": (
+            lambda value_block=value_block: state_output_backward_with_block(value_block)
+        )
+        for value_block in (16, 32, 64)
+    }
+    value_block_numerics = {}
+    with torch.no_grad():
+        control_gradients = state_output_backward_with_block(16)
+        for name, function in value_block_functions.items():
+            candidate_gradients = function()
+            relative_rmse = []
+            all_finite = True
+            for candidate, control in zip(candidate_gradients, control_gradients):
+                all_finite = all_finite and bool(candidate.isfinite().all())
+                error = (
+                    (candidate.float() - control.float()).square().mean().sqrt()
+                    / control.float().square().mean().sqrt().clamp_min(1e-6)
+                )
+                relative_rmse.append(float(error))
+            maximum_relative_rmse = max(relative_rmse)
+            if not all_finite or maximum_relative_rmse >= 0.02:
+                raise AssertionError(
+                    f"{name} failed the prepared-gradient gate: "
+                    f"finite={all_finite}, maximum_relative_rmse={maximum_relative_rmse}"
+                )
+            value_block_numerics[name] = {
+                "all_prepared_gradients_finite": all_finite,
+                "prepared_gradient_relative_rmse": relative_rmse,
+                "maximum_prepared_gradient_relative_rmse": maximum_relative_rmse,
+            }
+            del candidate_gradients
+        del control_gradients
+    value_block_timings = measure_interleaved(
+        value_block_functions,
+        warmup=args.warmup,
+        measured=args.candidate_measured,
     )
+    value_block_peaks = {
+        name: peak_allocated(function) for name, function in value_block_functions.items()
+    }
+    profiled_functions = {
+        **value_block_functions,
+        "wy_backward": wy_backward,
+        "prepared_input_vjp": prepared_input_vjp,
+    }
+    kernel_profiles = {
+        name: profile_cuda_events(
+            function, iterations=args.kernel_profile_iterations
+        )
+        for name, function in profiled_functions.items()
+    }
     chunks = args.sequence_length // args.chunk_size
     physical_ms = timings["physical_rule_forward_backward"]["median_ms"]
     virtual_ms = timings["virtual_rule_forward_backward"]["median_ms"]
@@ -331,17 +470,51 @@ def main() -> None:
         "structural_concurrency": {
             "wy_programs": args.batch_size * args.heads * chunks,
             "state_scan_programs": args.batch_size * args.heads * 2,
-            "parallel_output_backward_programs": (
-                args.batch_size * args.heads * chunks * 4
-            ),
-            "compact_state_backward_programs": args.batch_size * args.heads * 4,
+            "parallel_output_backward_programs": {
+                str(value_block): (
+                    args.batch_size
+                    * args.heads
+                    * chunks
+                    * math.ceil(args.width / value_block)
+                )
+                for value_block in (16, 32, 64)
+            },
+            "compact_state_backward_programs": {
+                str(value_block): (
+                    args.batch_size
+                    * args.heads
+                    * math.ceil(args.width / value_block)
+                )
+                for value_block in (16, 32, 64)
+            },
             "serial_chunks_per_state_program": chunks,
             "note": "the split backward makes output adjoints chunk-parallel; only the compact state adjoint loops over chunks",
         },
         "timings": timings,
-        "split_backward_kernel_profile": kernel_events,
+        "value_block_audit": {
+            "default_value_block": 32,
+            "numerics_vs_bv16": value_block_numerics,
+            "interleaved_timings": value_block_timings,
+            "peak_allocated_bytes": value_block_peaks,
+            "tokens_per_second": {
+                name: (
+                    args.batch_size
+                    * args.sequence_length
+                    * 1000
+                    / summary["median_ms"]
+                )
+                for name, summary in value_block_timings["summaries"].items()
+            },
+        },
+        "kernel_profiles": kernel_profiles,
         "physical_to_virtual_rule_time_ratio": physical_ms / virtual_ms,
         "virtual_to_physical_rule_speed_ratio": virtual_ms / physical_ms,
+        "physical_rule_tokens_per_second": (
+            args.batch_size * args.sequence_length * 1000 / physical_ms
+        ),
+        "virtual_rule_tokens_per_second": (
+            args.batch_size * args.sequence_length * 1000 / virtual_ms
+        ),
         "all_finite": bool(
             all(
                 tensor.isfinite().all()

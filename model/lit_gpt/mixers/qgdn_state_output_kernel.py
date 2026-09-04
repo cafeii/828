@@ -674,25 +674,44 @@ def _qgdn_chunk_output_bwd_kernel(
     p_grad_queries = (
         grad_queries + query_base + o_t[:, None] * K + o_k[None, :]
     )
-    tl.atomic_add(
-        p_grad_queries,
-        b_grad_queries,
-        mask=m_t[:, None] & m_k[None, :],
-    )
+    if BV >= V:
+        tl.store(
+            p_grad_queries,
+            b_grad_queries,
+            mask=m_t[:, None] & m_k[None, :],
+        )
+    else:
+        tl.atomic_add(
+            p_grad_queries,
+            b_grad_queries,
+            mask=m_t[:, None] & m_k[None, :],
+        )
     p_grad_left = grad_left + factor_base + o_m[:, None] * K + o_k[None, :]
     p_grad_effective = (
         grad_effective + factor_base + o_m[:, None] * K + o_k[None, :]
     )
-    tl.atomic_add(
-        p_grad_left,
-        b_grad_left,
-        mask=m_m[:, None] & m_k[None, :],
-    )
-    tl.atomic_add(
-        p_grad_effective,
-        b_grad_effective,
-        mask=m_m[:, None] & m_k[None, :],
-    )
+    if BV >= V:
+        tl.store(
+            p_grad_left,
+            b_grad_left,
+            mask=m_m[:, None] & m_k[None, :],
+        )
+        tl.store(
+            p_grad_effective,
+            b_grad_effective,
+            mask=m_m[:, None] & m_k[None, :],
+        )
+    else:
+        tl.atomic_add(
+            p_grad_left,
+            b_grad_left,
+            mask=m_m[:, None] & m_k[None, :],
+        )
+        tl.atomic_add(
+            p_grad_effective,
+            b_grad_effective,
+            mask=m_m[:, None] & m_k[None, :],
+        )
     p_grad_rank_values = (
         grad_write_reads
         + rank_value_base
@@ -705,22 +724,36 @@ def _qgdn_chunk_output_bwd_kernel(
         mask=m_m[:, None] & m_v[None, :],
     )
     p_grad_write = grad_write + write_base + o_t[:, None] * K + o_k[None, :]
-    tl.atomic_add(
-        p_grad_write,
-        b_grad_write,
-        mask=m_t[:, None] & m_k[None, :],
-    )
+    if BV >= V:
+        tl.store(
+            p_grad_write,
+            b_grad_write,
+            mask=m_t[:, None] & m_k[None, :],
+        )
+    else:
+        tl.atomic_add(
+            p_grad_write,
+            b_grad_write,
+            mask=m_t[:, None] & m_k[None, :],
+        )
     p_grad_values = grad_values + value_base + o_t[:, None] * V + o_v[None, :]
     tl.store(
         p_grad_values,
         b_grad_values,
         mask=m_t[:, None] & m_v[None, :],
     )
-    tl.atomic_add(
-        grad_decay + chunk_index * BT + o_t,
-        b_grad_decay,
-        mask=m_t,
-    )
+    if BV >= V:
+        tl.store(
+            grad_decay + chunk_index * BT + o_t,
+            b_grad_decay,
+            mask=m_t,
+        )
+    else:
+        tl.atomic_add(
+            grad_decay + chunk_index * BT + o_t,
+            b_grad_decay,
+            mask=m_t,
+        )
     p_grad_start = (
         grad_chunk_starts
         + chunk_index * K * V
@@ -888,16 +921,38 @@ def _qgdn_chunk_state_bwd_kernel(
             + o_m[:, None] * K
             + o_k[None, :]
         )
-        tl.atomic_add(
-            p_grad_left,
-            b_grad_left,
-            mask=m_m[:, None] & m_k[None, :],
-        )
-        tl.atomic_add(
-            p_grad_effective,
-            b_grad_effective,
-            mask=m_m[:, None] & m_k[None, :],
-        )
+        if BV >= V:
+            b_existing_left = tl.load(
+                p_grad_left,
+                mask=m_m[:, None] & m_k[None, :],
+                other=0.0,
+            )
+            b_existing_effective = tl.load(
+                p_grad_effective,
+                mask=m_m[:, None] & m_k[None, :],
+                other=0.0,
+            )
+            tl.store(
+                p_grad_left,
+                b_existing_left + b_grad_left,
+                mask=m_m[:, None] & m_k[None, :],
+            )
+            tl.store(
+                p_grad_effective,
+                b_existing_effective + b_grad_effective,
+                mask=m_m[:, None] & m_k[None, :],
+            )
+        else:
+            tl.atomic_add(
+                p_grad_left,
+                b_grad_left,
+                mask=m_m[:, None] & m_k[None, :],
+            )
+            tl.atomic_add(
+                p_grad_effective,
+                b_grad_effective,
+                mask=m_m[:, None] & m_k[None, :],
+            )
         p_grad_rank_values = (
             grad_write_reads
             + rank_value_base
@@ -917,11 +972,23 @@ def _qgdn_chunk_state_bwd_kernel(
         p_grad_write = (
             grad_write + write_base + o_t[:, None] * K + o_k[None, :]
         )
-        tl.atomic_add(
-            p_grad_write,
-            b_grad_write,
-            mask=m_t[:, None] & m_k[None, :],
-        )
+        if BV >= V:
+            b_existing_write = tl.load(
+                p_grad_write,
+                mask=m_t[:, None] & m_k[None, :],
+                other=0.0,
+            )
+            tl.store(
+                p_grad_write,
+                b_existing_write + b_grad_write,
+                mask=m_t[:, None] & m_k[None, :],
+            )
+        else:
+            tl.atomic_add(
+                p_grad_write,
+                b_grad_write,
+                mask=m_t[:, None] & m_k[None, :],
+            )
         p_grad_values = (
             grad_values + value_base + o_t[:, None] * V + o_v[None, :]
         )
@@ -935,10 +1002,12 @@ def _qgdn_chunk_state_bwd_kernel(
             b_existing_values + b_grad_values,
             mask=m_t[:, None] & m_v[None, :],
         )
-        tl.atomic_add(
-            grad_decay + chunk_index * BT + BT - 1,
-            b_grad_scale,
-        )
+        p_grad_scale = grad_decay + chunk_index * BT + BT - 1
+        if BV >= V:
+            b_existing_scale = tl.load(p_grad_scale)
+            tl.store(p_grad_scale, b_existing_scale + b_grad_scale)
+        else:
+            tl.atomic_add(p_grad_scale, b_grad_scale)
         b_grad_state = b_grad_start
 
     p_grad_initial = (
@@ -1222,6 +1291,8 @@ def _qgdn_chunk_state_output_cuda_bwd(
     grad_outputs,
     grad_final_state,
     output_scale,
+    *,
+    value_block=32,
 ):
     """Parallelize output adjoints, then scan only compact state adjoints."""
     (
@@ -1236,6 +1307,8 @@ def _qgdn_chunk_state_output_cuda_bwd(
     ) = saved_inputs
     batch, heads, chunks, chunk_size, _, key_dim = normalized_left.shape
     value_dim = values.shape[-1]
+    if value_block not in {16, 32, 64}:
+        raise ValueError("value_block must be one of 16, 32, or 64")
     grad_outputs = grad_outputs.contiguous()
     grad_final_state = grad_final_state.contiguous()
     grad_queries = torch.zeros_like(queries)
@@ -1248,7 +1321,6 @@ def _qgdn_chunk_state_output_cuda_bwd(
     grad_chunk_starts = torch.empty_like(chunk_starts)
     grad_initial_state = torch.empty_like(initial_state)
     block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
-    value_block = 16
     _qgdn_chunk_output_bwd_kernel[
         (batch * heads * chunks, triton.cdiv(value_dim, value_block))
     ](
