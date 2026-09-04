@@ -11,6 +11,10 @@
    gradient accumulation 2、关闭 activation checkpointing、fused loss。
 3. 物理 T 优化暂停，生产默认保持 `QGDN_USE_PHYSICAL_T=False`。完整接力信息见
    [物理 T 优化暂存](PHYSICAL_T_DEFERRED.md)。
+4. 新训练的 token-wise gamma 默认改为与 beta 相同的初始化方案：独立
+   Xavier-uniform 权重（相同 gain）和零 bias；不再使用零权重加 `logit(0.1)`。
+   已完成的 Recall→Delta 10B 结果仍属于旧初始化，不能与新初始化的 Parallel 解释为
+   只改变更新顺序的严格配对实验。
 
 目前没有继续 QR-GDN、DT-GDN、JQC-GDN，也没有提交新的 Parallel FineWeb 正式预训练。
 
@@ -197,6 +201,8 @@ Slurm 36084 随后完成整模型 mb4 单臂：中位 step `1.0351 s`、`15,819.
    [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。
 2. 若决定训练 Parallel，先用虚拟 2T、micro batch 8、global batch 128 做短 8 卡 smoke，
    自动得到 gradient accumulation 2。
-3. smoke 通过后再单独决定 FineWeb token budget、seed 及验证/checkpoint 频率；当前没有提交正式训练。
+3. 若目标只是评估新默认 Parallel，可在 smoke 后训练该版本；若要把差异归因于更新顺序，
+   必须用相同新初始化至少重训 Recall→Delta 与 Parallel，不能复用旧 10B QGDN 结果。
+4. 正式训练前再单独决定 FineWeb token budget、seed 及验证/checkpoint 频率；当前没有提交训练。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

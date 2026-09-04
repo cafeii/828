@@ -57,8 +57,10 @@ class Config:
     recall_mode: str = "query"  # query | key | isotropic (QGDN only)
     recall_order: str = "recall_then_delta"  # recall_then_delta | delta_then_recall | parallel
     recall_gate: str = "token"  # token | head | fixed
-    recall_init: float = 0.1
-    recall_weight_init: str = "zero"  # zero | beta (same Xavier gain as the GDN beta projection)
+    # Learned token-wise gamma follows beta's initialization by default:
+    # independent Xavier-uniform projection with the same gain and zero bias.
+    recall_init: float = 0.5
+    recall_weight_init: str = "beta"  # beta | zero (legacy zero-weight ablation only)
 
     def __post_init__(self):
         # error checking
@@ -193,7 +195,8 @@ configs += [
         mixer="qgdn",
         recall_order="parallel",
     ),
-    dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn", recall_weight_init="beta", recall_init=0.5),
+    # Backward-compatible alias; beta-style gamma initialization is now the default.
+    dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn"),
     dict(_recall_base, name="qgdn_key_340M", mixer="qgdn", recall_mode="key"),
     dict(_recall_base, name="qgdn_isotropic_340M", mixer="qgdn", recall_mode="isotropic"),
     dict(_recall_base, name="qgdn_fixed_340M", mixer="qgdn", recall_gate="fixed"),

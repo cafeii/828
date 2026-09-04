@@ -867,13 +867,11 @@ def test_cuda_compiled_dplr_inputs_match_eager_outputs_and_gradients(recall_mode
         assert relative_rmse < 1e-4
 
 
-@pytest.mark.parametrize("recall_weight_init,recall_init", [("zero", 0.1), ("beta", 0.5)])
-def test_backbone_initialization_and_gate_gradient(recall_weight_init, recall_init):
+def test_backbone_initialization_and_beta_style_gamma_gradient():
     models = []
     for mixer in ("gdn", "qgdn"):
         torch.manual_seed(3407)
-        cfg = Config.from_name(f"{mixer}_recall_tiny", use_short_conv=False, _norm_class="RMSNorm",
-                               recall_weight_init=recall_weight_init, recall_init=recall_init)
+        cfg = Config.from_name(f"{mixer}_recall_tiny", use_short_conv=False, _norm_class="RMSNorm")
         model = GPT(cfg)
         model.apply(lambda m: model._init_weights(m, n_layer=cfg.n_layer))
         for block in model.transformer.h:
@@ -890,10 +888,24 @@ def test_backbone_initialization_and_gate_gradient(recall_weight_init, recall_in
     for block in model.transformer.h:
         grad = block.attn.recall_proj.weight.grad
         assert grad is not None and grad.isfinite().all() and grad.abs().sum() > 0
-        assert torch.allclose(block.attn.recall_proj.bias.sigmoid(), torch.full((2,), recall_init))
-        if recall_weight_init == "beta":
-            assert block.attn.recall_proj.weight.abs().sum() > 0
+        assert block.attn.recall_weight_init == "beta"
+        assert block.attn.recall_init == 0.5
+        assert block.attn.recall_proj.weight.shape == block.attn.b_proj.weight.shape
+        assert block.attn.recall_proj.weight.abs().sum() > 0
+        assert torch.count_nonzero(block.attn.recall_proj.bias) == 0
+        assert torch.count_nonzero(block.attn.b_proj.bias) == 0
         assert not torch.equal(block.attn.recall_proj.weight, block.attn.b_proj.weight)
+
+
+def test_beta_style_gamma_rejects_point_one_bias_initialization():
+    cfg = Config.from_name(
+        "qgdn_recall_tiny",
+        use_short_conv=False,
+        _norm_class="RMSNorm",
+        recall_init=0.1,
+    )
+    with pytest.raises(ValueError, match="requires zero bias"):
+        GPT(cfg)
 
 
 def test_update_orders_share_identical_initialization():

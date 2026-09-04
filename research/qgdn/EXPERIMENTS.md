@@ -1,5 +1,10 @@
 # QGDN 正式实验结果
 
+> 历史初始化说明：本页的两次 QGDN 正式训练固定在 commit `f62322a5`，其 token-wise
+> gamma 使用零权重和 `logit(0.1)` bias。当前开发分支已按用户决策改为与 beta 相同的
+> 初始化方案，即独立 Xavier-uniform 权重（相同 gain）和零 bias。新初始化模型可以作为
+> 新方案评测，但不能与本页旧 QGDN 结果组成“只改变更新顺序”的严格配对实验。
+
 ## 设置
 
 GDN 与 QGDN 使用同一 340M 配置、FineWeb 10BT 数据、tokenizer、数据顺序、初始化、

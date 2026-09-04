@@ -13,8 +13,8 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
     """GDN with configurable ordering of Recall and Delta corrections."""
 
     def __init__(self, *args, recall_mode="query", recall_order="recall_then_delta",
-                 recall_gate="token", recall_init=0.1,
-                 recall_weight_init="zero", **kwargs):
+                 recall_gate="token", recall_init=0.5,
+                 recall_weight_init="beta", **kwargs):
         super().__init__(*args, **kwargs)
         if self.num_groups != self.num_heads or self.use_lsa:
             raise ValueError("The Recall study requires independent MHA states; GQA/LSA is not supported.")
@@ -30,10 +30,10 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             raise ValueError(f"Unknown recall_gate: {recall_gate}")
         if recall_weight_init not in {"zero", "beta"}:
             raise ValueError(f"Unknown recall_weight_init: {recall_weight_init}")
-        if recall_weight_init == "beta" and recall_gate != "token":
-            raise ValueError("beta weight initialization requires a token-dependent projection")
         if not 0 <= recall_init <= 1 or (recall_gate != "fixed" and not 0 < recall_init < 1):
             raise ValueError("Learned gates require 0 < recall_init < 1; fixed gates allow endpoints.")
+        if recall_gate == "token" and recall_weight_init == "beta" and recall_init != 0.5:
+            raise ValueError("beta-style gamma initialization requires zero bias (recall_init=0.5)")
         self.recall_mode = recall_mode
         self.recall_order = recall_order
         self.recall_gate, self.recall_init = recall_gate, recall_init
@@ -43,10 +43,15 @@ class QueryGuidedDeltaNet(GatedDeltaNet):
             with torch.random.fork_rng(devices=[]):
                 self.recall_proj = nn.Linear(self.hidden_size, self.num_heads, bias=True)
                 if recall_weight_init == "beta":
+                    # Match b_proj's initialization scheme without tying the two gates:
+                    # independent Xavier-uniform weights with the same gain.
                     nn.init.xavier_uniform_(self.recall_proj.weight, gain=2**-2.5)
                 else:
                     nn.init.zeros_(self.recall_proj.weight)
-            nn.init.constant_(self.recall_proj.bias, math.log(recall_init / (1 - recall_init)))
+            if recall_weight_init == "beta":
+                nn.init.zeros_(self.recall_proj.bias)
+            else:
+                nn.init.constant_(self.recall_proj.bias, math.log(recall_init / (1 - recall_init)))
             self.recall_proj.bias._no_reinit = True
         elif recall_gate == "head":
             self.recall_logit = nn.Parameter(torch.full((self.num_heads,), math.log(recall_init / (1 - recall_init))))
