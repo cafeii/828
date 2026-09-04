@@ -132,6 +132,12 @@ Delta→Recall Slurm 36312 也已成功完成并回收：Slurm `COMPLETED / 0:0`
 `0.16184 / 0.18106 / 0.481%`，全部数值有限。其运行时吞吐受 dgx01 共址 I/O/CPU 争用
 拖累，因此不把这组墙钟差解释为更新顺序本身的纯算子差异。
 
+Recall→Delta 到达 step 8000 后，四路 validation loss/PPL 为 Recall→Delta
+`2.837916 / 17.08014`、GDN `2.839041 / 17.09937`、Parallel
+`2.839141 / 17.10108`、Delta→Recall `2.839986 / 17.11553`。Recall→Delta 相对
+GDN 的 PPL 低约 `0.112%`；它在四个共同验证节点方向一致地领先，但量级仍只有千分之一，
+继续等待完整训练终点。
+
 四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
 `2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
 `2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`
@@ -374,6 +380,17 @@ step 31，Recall→Delta 为 `0.888909 / 0.031800 / 0.714%`，Parallel 为
 loss、grad norm 和 gate 值均有限，但约 19% 的 token gate 在 1.3K step 时已进入饱和区，
 说明高初值没有被整体维持，而是迅速产生明显极化。最近 20 点吞吐约
 `312.34k / 309.42k token/s`，两路 step-1000 checkpoint 均完整存在。
+
+高 gamma 两路的 step-2000 validation loss/PPL 分别为 Recall→Delta
+`3.142448 / 23.16049`、Parallel `3.143302 / 23.18028`。同顺序比较时，它们比
+beta-style gamma 分别高 `0.181% / 0.064%` PPL，但比固定 gamma=1 分别低
+`0.194% / 0.274%`，首个验证点呈现 beta-style、可训练高 gamma、固定 1 的由好到差排序。
+
+共同 step `2621` 时，高 gamma Recall→Delta / Parallel 的近 20 点 loss 为
+`3.05874 / 3.05883`，beta mean/std 为 `0.27061 / 0.15839` 与
+`0.26994 / 0.15825`，gamma mean/std/饱和率为 `0.57741 / 0.31262 / 15.75%` 与
+`0.57582 / 0.31047 / 15.26%`。饱和率从 step 1291 的约 19% 回落，暂未演变为单调塌缩；
+两路所有数值有限，最近 20 点吞吐约 `312.15k / 309.44k token/s`。
 
 ## 复现实验
 

@@ -449,6 +449,14 @@ validation loss/PPL 为 `2.698694 / 14.86030`，比严格对齐 GDN 高 `0.00134
 grad norm 和门控统计均有限。dgx01 的共址争用使实际吞吐低于 Parallel，但不影响终态
 模型效果比较。
 
+Recall→Delta 的 step-8000 validation 继续给出同方向的小幅领先：loss/PPL 为
+`2.837916 / 17.08014`，而严格对齐 GDN、Parallel、Delta→Recall 分别为
+`2.839041 / 17.09937`、`2.839141 / 17.10108`、`2.839986 / 17.11553`。Recall→Delta
+相对 GDN 低 `0.001125` loss、`0.112%` PPL；它已在 step 2000/4000/6000/8000 的共同
+节点持续领先，但绝对幅度仍小，尚不能视为确定收益。作业当前通过 step `8811`，近 20 点
+训练 loss `2.79276`，beta mean/std `0.29113 / 0.16856`，gamma
+mean/std/饱和率 `0.40867 / 0.30169 / 5.03%`，全部有限。
+
 ## 固定 gamma=1 消融已启动
 
 为直接检验可学习 gamma 是否将 recall 压弱，commit
@@ -532,6 +540,21 @@ mean/std/饱和率分别为 `0.63251 / 0.30221 / 19.46%` 与
 崩溃；但约五分之一 token gate 已进入饱和区，属于必须继续观察的明显极化，不能再描述为
 “暂无异常饱和”。两路最近 20 点吞吐约 `312.34k / 309.42k token/s`，峰值显存不变，
 完整 step-1000 checkpoint 已写入远端。
+
+首个 step-2000 validation 现已完成。Recall→Delta 高 gamma 的 loss/PPL 为
+`3.142448 / 23.16049`，比同顺序 beta-style gamma 高 `0.181%` PPL，但比固定 gamma=1
+低 `0.194%`；Parallel 高 gamma 为 `3.143302 / 23.18028`，比同顺序 beta-style 高
+`0.064%`，比固定 gamma=1 低 `0.274%`。因此第一点的排序是 beta-style 最好、
+`U(0.85,0.95)` 居中、固定 1 最差，但差异仍很小。
+
+共同 step `2621` 的近 20 点训练 loss 也符合这一弱信号：Recall→Delta beta-style、
+GDN、Parallel beta-style、Recall→Delta 高 gamma、Parallel 高 gamma、固定 gamma=1
+Recall→Delta/Parallel 依次为 `3.05604 / 3.05721 / 3.05844 / 3.05874 / 3.05883 /
+3.06036 / 3.06130`。此时高 gamma 两路的 beta mean/std 为
+`0.27061 / 0.15839` 与 `0.26994 / 0.15825`，gamma mean/std/饱和率为
+`0.57741 / 0.31262 / 15.75%` 与 `0.57582 / 0.31047 / 15.26%`。饱和率已从约 19%
+回落到约 15%，说明目前是可逆的 gate 极化而非持续塌缩；loss、梯度、吞吐和 checkpoint
+均正常。
 
 ## 当前下一步
 
