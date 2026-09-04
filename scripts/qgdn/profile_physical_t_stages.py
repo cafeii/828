@@ -93,6 +93,7 @@ def main() -> None:
     from lit_gpt.mixers.qgdn_state_output_kernel import (
         _qgdn_chunk_state_cuda_fwd,
         _qgdn_chunk_state_output_cuda_bwd,
+        _qgdn_chunk_state_output_cuda_bwd_serial,
         _qgdn_chunk_state_output_cuda_fwd,
     )
     from lit_gpt.mixers.qgdn_training_kernel import (
@@ -210,6 +211,15 @@ def main() -> None:
             args.width**-0.5,
         )
 
+    def state_output_backward_serial():
+        return _qgdn_chunk_state_output_cuda_bwd_serial(
+            state_inputs,
+            chunk_starts,
+            grad_outputs,
+            grad_final_state,
+            args.width**-0.5,
+        )
+
     def wy_backward():
         return _qgdn_streaming_wy_cuda_bwd(
             prepared[2],
@@ -259,6 +269,7 @@ def main() -> None:
         "wy_forward": wy_forward,
         "state_scan_forward": state_scan_forward,
         "state_plus_output_forward": state_output_forward,
+        "state_plus_output_backward_serial": state_output_backward_serial,
         "state_plus_output_backward": state_output_backward,
         "wy_backward": wy_backward,
         "prepared_input_vjp": prepared_input_vjp,
@@ -293,8 +304,12 @@ def main() -> None:
         "structural_concurrency": {
             "wy_programs": args.batch_size * args.heads * chunks,
             "state_scan_programs": args.batch_size * args.heads * 2,
+            "parallel_output_backward_programs": (
+                args.batch_size * args.heads * chunks * 4
+            ),
+            "compact_state_backward_programs": args.batch_size * args.heads * 4,
             "serial_chunks_per_state_program": chunks,
-            "note": "state scan launches two V=32 blocks per B/H lane and loops over every chunk inside each program",
+            "note": "the split backward makes output adjoints chunk-parallel; only the compact state adjoint loops over chunks",
         },
         "timings": timings,
         "physical_to_virtual_rule_time_ratio": physical_ms / virtual_ms,

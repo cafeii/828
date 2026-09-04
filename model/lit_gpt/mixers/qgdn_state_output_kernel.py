@@ -45,7 +45,7 @@ def _qgdn_chunk_state_fwd_kernel(
         p_initial, mask=m_k[:, None] & m_v[None, :], other=0.0
     ).to(tl.float32)
 
-    for chunk in range(0, N):
+    for chunk in range(N):
         chunk64 = chunk.to(tl.int64)
         chunk_index = lane * N + chunk64
         p_start = (
@@ -269,7 +269,7 @@ def _qgdn_chunk_state_output_bwd_kernel(
         p_grad_final, mask=m_k[:, None] & m_v[None, :], other=0.0
     ).to(tl.float32)
 
-    for reverse_chunk in range(0, N):
+    for reverse_chunk in range(N):
         chunk = N - 1 - reverse_chunk
         chunk64 = chunk.to(tl.int64)
         chunk_index = lane * N + chunk64
@@ -505,6 +505,455 @@ def _qgdn_chunk_state_output_bwd_kernel(
     )
 
 
+@triton.jit
+def _qgdn_chunk_output_bwd_kernel(
+    queries,
+    normalized_left,
+    effective_right,
+    write_reads,
+    normalized_write,
+    values,
+    decay_prefix,
+    chunk_starts,
+    grad_outputs,
+    grad_queries,
+    grad_left,
+    grad_effective,
+    grad_write_reads,
+    grad_write,
+    grad_values,
+    grad_decay,
+    grad_chunk_starts,
+    output_scale,
+    N,
+    K: tl.constexpr,
+    V: tl.constexpr,
+    BT: tl.constexpr,
+    BM: tl.constexpr,
+    BK: tl.constexpr,
+    BV: tl.constexpr,
+    BWT: tl.constexpr,
+):
+    """Differentiate each chunk's outputs independently and in parallel."""
+    chunk_index = tl.program_id(0).to(tl.int64)
+    value_block = tl.program_id(1).to(tl.int64)
+    rank: tl.constexpr = 2
+    rows: tl.constexpr = BT * rank
+    o_m = tl.arange(0, BM)
+    o_k = tl.arange(0, BK)
+    o_v = value_block * BV + tl.arange(0, BV)
+    o_t = tl.arange(0, BWT)
+    m_m = o_m < rows
+    m_k = o_k < K
+    m_v = o_v < V
+    m_t = o_t < BT
+
+    p_start = (
+        chunk_starts
+        + chunk_index * K * V
+        + o_k[:, None] * V
+        + o_v[None, :]
+    )
+    b_start = tl.load(
+        p_start, mask=m_k[:, None] & m_v[None, :], other=0.0
+    ).to(tl.float32)
+    query_base = chunk_index * BT * K
+    p_queries = queries + query_base + o_t[:, None] * K + o_k[None, :]
+    b_queries = tl.load(
+        p_queries, mask=m_t[:, None] & m_k[None, :], other=0.0
+    ).to(tl.float32)
+
+    factor_base = chunk_index * rows * K
+    p_left = normalized_left + factor_base + o_m[:, None] * K + o_k[None, :]
+    p_effective = (
+        effective_right + factor_base + o_m[:, None] * K + o_k[None, :]
+    )
+    b_left = tl.load(
+        p_left, mask=m_m[:, None] & m_k[None, :], other=0.0
+    ).to(tl.float32)
+    b_effective = tl.load(
+        p_effective, mask=m_m[:, None] & m_k[None, :], other=0.0
+    ).to(tl.float32)
+    rank_value_base = chunk_index * rows * V
+    p_write_reads = (
+        write_reads + rank_value_base + o_m[:, None] * V + o_v[None, :]
+    )
+    b_write_reads = tl.load(
+        p_write_reads, mask=m_m[:, None] & m_v[None, :], other=0.0
+    ).to(tl.float32)
+    b_reads = b_write_reads + tl.dot(
+        b_effective, b_start, input_precision="ieee"
+    )
+
+    write_base = chunk_index * BT * K
+    p_write = normalized_write + write_base + o_t[:, None] * K + o_k[None, :]
+    b_write = tl.load(
+        p_write, mask=m_t[:, None] & m_k[None, :], other=0.0
+    ).to(tl.float32)
+    value_base = chunk_index * BT * V
+    p_values = values + value_base + o_t[:, None] * V + o_v[None, :]
+    b_values = tl.load(
+        p_values, mask=m_t[:, None] & m_v[None, :], other=0.0
+    ).to(tl.float32)
+
+    b_query_left = tl.dot(b_queries, b_left.T, input_precision="ieee")
+    factor_token = o_m // rank
+    causal_rank = (
+        (o_t[:, None] >= factor_token[None, :])
+        & m_t[:, None]
+        & m_m[None, :]
+    )
+    b_query_left = tl.where(causal_rank, b_query_left, 0.0)
+    b_query_write = tl.dot(b_queries, b_write.T, input_precision="ieee")
+    causal_write = (
+        (o_t[:, None] >= o_t[None, :])
+        & m_t[:, None]
+        & m_t[None, :]
+    )
+    b_query_write = tl.where(causal_write, b_query_write, 0.0)
+
+    p_grad_output = grad_outputs + value_base + o_t[:, None] * V + o_v[None, :]
+    b_grad_output_raw = tl.load(
+        p_grad_output, mask=m_t[:, None] & m_v[None, :], other=0.0
+    ).to(tl.float32)
+    b_decay = tl.load(
+        decay_prefix + chunk_index * BT + o_t, mask=m_t, other=0.0
+    ).to(tl.float32)
+    b_grad_output = b_grad_output_raw * (output_scale * b_decay)[:, None]
+
+    b_unscaled_output = tl.dot(b_queries, b_start, input_precision="ieee")
+    b_unscaled_output += tl.dot(
+        b_query_left, b_reads, input_precision="ieee"
+    )
+    b_unscaled_output += tl.dot(
+        b_query_write, b_values, input_precision="ieee"
+    )
+    b_grad_decay = output_scale * tl.sum(
+        b_grad_output_raw * b_unscaled_output, axis=1
+    )
+
+    b_grad_query_left = tl.dot(
+        b_grad_output, b_reads.T, input_precision="ieee"
+    )
+    b_grad_query_left = tl.where(causal_rank, b_grad_query_left, 0.0)
+    b_grad_query_write = tl.dot(
+        b_grad_output, b_values.T, input_precision="ieee"
+    )
+    b_grad_query_write = tl.where(causal_write, b_grad_query_write, 0.0)
+    b_grad_queries = tl.dot(
+        b_grad_output, b_start.T, input_precision="ieee"
+    )
+    b_grad_queries += tl.dot(
+        b_grad_query_left, b_left, input_precision="ieee"
+    )
+    b_grad_queries += tl.dot(
+        b_grad_query_write, b_write, input_precision="ieee"
+    )
+    b_grad_left = tl.dot(
+        b_grad_query_left.T, b_queries, input_precision="ieee"
+    )
+    b_grad_reads = tl.dot(
+        b_query_left.T, b_grad_output, input_precision="ieee"
+    )
+    b_grad_write = tl.dot(
+        b_grad_query_write.T, b_queries, input_precision="ieee"
+    )
+    b_grad_values = tl.dot(
+        b_query_write.T, b_grad_output, input_precision="ieee"
+    )
+    b_grad_start = tl.dot(
+        b_queries.T, b_grad_output, input_precision="ieee"
+    )
+    b_grad_effective = tl.dot(
+        b_grad_reads, b_start.T, input_precision="ieee"
+    )
+    b_grad_start += tl.dot(
+        b_effective.T, b_grad_reads, input_precision="ieee"
+    )
+
+    p_grad_queries = (
+        grad_queries + query_base + o_t[:, None] * K + o_k[None, :]
+    )
+    tl.atomic_add(
+        p_grad_queries,
+        b_grad_queries,
+        mask=m_t[:, None] & m_k[None, :],
+    )
+    p_grad_left = grad_left + factor_base + o_m[:, None] * K + o_k[None, :]
+    p_grad_effective = (
+        grad_effective + factor_base + o_m[:, None] * K + o_k[None, :]
+    )
+    tl.atomic_add(
+        p_grad_left,
+        b_grad_left,
+        mask=m_m[:, None] & m_k[None, :],
+    )
+    tl.atomic_add(
+        p_grad_effective,
+        b_grad_effective,
+        mask=m_m[:, None] & m_k[None, :],
+    )
+    p_grad_rank_values = (
+        grad_write_reads
+        + rank_value_base
+        + o_m[:, None] * V
+        + o_v[None, :]
+    )
+    tl.store(
+        p_grad_rank_values,
+        b_grad_reads,
+        mask=m_m[:, None] & m_v[None, :],
+    )
+    p_grad_write = grad_write + write_base + o_t[:, None] * K + o_k[None, :]
+    tl.atomic_add(
+        p_grad_write,
+        b_grad_write,
+        mask=m_t[:, None] & m_k[None, :],
+    )
+    p_grad_values = grad_values + value_base + o_t[:, None] * V + o_v[None, :]
+    tl.store(
+        p_grad_values,
+        b_grad_values,
+        mask=m_t[:, None] & m_v[None, :],
+    )
+    tl.atomic_add(
+        grad_decay + chunk_index * BT + o_t,
+        b_grad_decay,
+        mask=m_t,
+    )
+    p_grad_start = (
+        grad_chunk_starts
+        + chunk_index * K * V
+        + o_k[:, None] * V
+        + o_v[None, :]
+    )
+    tl.store(
+        p_grad_start,
+        b_grad_start,
+        mask=m_k[:, None] & m_v[None, :],
+    )
+
+
+@triton.jit
+def _qgdn_chunk_state_bwd_kernel(
+    normalized_left,
+    effective_right,
+    write_reads,
+    normalized_write,
+    values,
+    decay_prefix,
+    chunk_starts,
+    grad_final_state,
+    grad_chunk_starts,
+    grad_left,
+    grad_effective,
+    grad_write_reads,
+    grad_write,
+    grad_values,
+    grad_decay,
+    grad_initial_state,
+    N,
+    K: tl.constexpr,
+    V: tl.constexpr,
+    BT: tl.constexpr,
+    BM: tl.constexpr,
+    BK: tl.constexpr,
+    BV: tl.constexpr,
+    BWT: tl.constexpr,
+):
+    """Reverse only the compact inter-chunk transition recurrence."""
+    lane = tl.program_id(0).to(tl.int64)
+    value_block = tl.program_id(1).to(tl.int64)
+    rank: tl.constexpr = 2
+    rows: tl.constexpr = BT * rank
+    o_m = tl.arange(0, BM)
+    o_k = tl.arange(0, BK)
+    o_v = value_block * BV + tl.arange(0, BV)
+    o_t = tl.arange(0, BWT)
+    m_m = o_m < rows
+    m_k = o_k < K
+    m_v = o_v < V
+    m_t = o_t < BT
+
+    state_base = lane * K * V
+    p_grad_final = (
+        grad_final_state
+        + state_base
+        + o_k[:, None] * V
+        + o_v[None, :]
+    )
+    b_grad_state = tl.load(
+        p_grad_final, mask=m_k[:, None] & m_v[None, :], other=0.0
+    ).to(tl.float32)
+
+    for reverse_chunk in range(N):
+        chunk = N - 1 - reverse_chunk
+        chunk64 = chunk.to(tl.int64)
+        chunk_index = lane * N + chunk64
+        p_start = (
+            chunk_starts
+            + chunk_index * K * V
+            + o_k[:, None] * V
+            + o_v[None, :]
+        )
+        b_start = tl.load(
+            p_start, mask=m_k[:, None] & m_v[None, :], other=0.0
+        ).to(tl.float32)
+        p_grad_start = (
+            grad_chunk_starts
+            + chunk_index * K * V
+            + o_k[:, None] * V
+            + o_v[None, :]
+        )
+        b_grad_start = tl.load(
+            p_grad_start, mask=m_k[:, None] & m_v[None, :], other=0.0
+        ).to(tl.float32)
+
+        factor_base = chunk_index * rows * K
+        p_left = normalized_left + factor_base + o_m[:, None] * K + o_k[None, :]
+        p_effective = (
+            effective_right + factor_base + o_m[:, None] * K + o_k[None, :]
+        )
+        b_left = tl.load(
+            p_left, mask=m_m[:, None] & m_k[None, :], other=0.0
+        ).to(tl.float32)
+        b_effective = tl.load(
+            p_effective, mask=m_m[:, None] & m_k[None, :], other=0.0
+        ).to(tl.float32)
+        rank_value_base = chunk_index * rows * V
+        p_write_reads = (
+            write_reads
+            + rank_value_base
+            + o_m[:, None] * V
+            + o_v[None, :]
+        )
+        b_write_reads = tl.load(
+            p_write_reads, mask=m_m[:, None] & m_v[None, :], other=0.0
+        ).to(tl.float32)
+        b_reads = b_write_reads + tl.dot(
+            b_effective, b_start, input_precision="ieee"
+        )
+
+        write_base = chunk_index * BT * K
+        p_write = normalized_write + write_base + o_t[:, None] * K + o_k[None, :]
+        b_write = tl.load(
+            p_write, mask=m_t[:, None] & m_k[None, :], other=0.0
+        ).to(tl.float32)
+        value_base = chunk_index * BT * V
+        p_values = values + value_base + o_t[:, None] * V + o_v[None, :]
+        b_values = tl.load(
+            p_values, mask=m_t[:, None] & m_v[None, :], other=0.0
+        ).to(tl.float32)
+
+        b_transition_state = b_start
+        b_transition_state += tl.dot(
+            b_left.T, b_reads, input_precision="ieee"
+        )
+        b_transition_state += tl.dot(
+            b_write.T, b_values, input_precision="ieee"
+        )
+        b_grad_scale = tl.sum(
+            tl.sum(b_grad_state * b_transition_state, axis=1), axis=0
+        )
+        scale = tl.load(decay_prefix + chunk_index * BT + BT - 1).to(
+            tl.float32
+        )
+        b_grad_transition = scale * b_grad_state
+        b_grad_left = tl.dot(
+            b_reads, b_grad_transition.T, input_precision="ieee"
+        )
+        b_grad_reads = tl.dot(
+            b_left, b_grad_transition, input_precision="ieee"
+        )
+        b_grad_write = tl.dot(
+            b_values, b_grad_transition.T, input_precision="ieee"
+        )
+        b_grad_values = tl.dot(
+            b_write, b_grad_transition, input_precision="ieee"
+        )
+        b_grad_start += b_grad_transition
+        b_grad_effective = tl.dot(
+            b_grad_reads, b_start.T, input_precision="ieee"
+        )
+        b_grad_start += tl.dot(
+            b_effective.T, b_grad_reads, input_precision="ieee"
+        )
+
+        p_grad_left = (
+            grad_left + factor_base + o_m[:, None] * K + o_k[None, :]
+        )
+        p_grad_effective = (
+            grad_effective
+            + factor_base
+            + o_m[:, None] * K
+            + o_k[None, :]
+        )
+        tl.atomic_add(
+            p_grad_left,
+            b_grad_left,
+            mask=m_m[:, None] & m_k[None, :],
+        )
+        tl.atomic_add(
+            p_grad_effective,
+            b_grad_effective,
+            mask=m_m[:, None] & m_k[None, :],
+        )
+        p_grad_rank_values = (
+            grad_write_reads
+            + rank_value_base
+            + o_m[:, None] * V
+            + o_v[None, :]
+        )
+        b_existing_reads = tl.load(
+            p_grad_rank_values,
+            mask=m_m[:, None] & m_v[None, :],
+            other=0.0,
+        )
+        tl.store(
+            p_grad_rank_values,
+            b_existing_reads + b_grad_reads,
+            mask=m_m[:, None] & m_v[None, :],
+        )
+        p_grad_write = (
+            grad_write + write_base + o_t[:, None] * K + o_k[None, :]
+        )
+        tl.atomic_add(
+            p_grad_write,
+            b_grad_write,
+            mask=m_t[:, None] & m_k[None, :],
+        )
+        p_grad_values = (
+            grad_values + value_base + o_t[:, None] * V + o_v[None, :]
+        )
+        b_existing_values = tl.load(
+            p_grad_values,
+            mask=m_t[:, None] & m_v[None, :],
+            other=0.0,
+        )
+        tl.store(
+            p_grad_values,
+            b_existing_values + b_grad_values,
+            mask=m_t[:, None] & m_v[None, :],
+        )
+        tl.atomic_add(
+            grad_decay + chunk_index * BT + BT - 1,
+            b_grad_scale,
+        )
+        b_grad_state = b_grad_start
+
+    p_grad_initial = (
+        grad_initial_state
+        + state_base
+        + o_k[:, None] * V
+        + o_v[None, :]
+    )
+    tl.store(
+        p_grad_initial,
+        b_grad_state,
+        mask=m_k[:, None] & m_v[None, :],
+    )
+
+
 def _validate_inputs(
     queries: torch.Tensor,
     decay_prefix: torch.Tensor,
@@ -693,7 +1142,7 @@ def _qgdn_chunk_state_output_cuda_fwd(
     return outputs, final_state, chunk_starts, tuple(inputs)
 
 
-def _qgdn_chunk_state_output_cuda_bwd(
+def _qgdn_chunk_state_output_cuda_bwd_serial(
     saved_inputs,
     chunk_starts,
     grad_outputs,
@@ -744,6 +1193,113 @@ def _qgdn_chunk_state_output_cuda_bwd(
         grad_decay,
         grad_initial_state,
         output_scale,
+        N=chunks,
+        K=key_dim,
+        V=value_dim,
+        BT=chunk_size,
+        BM=block_rows,
+        BK=block_key,
+        BV=value_block,
+        BWT=block_time,
+        num_warps=8,
+        num_stages=2,
+    )
+    return (
+        grad_queries,
+        grad_decay,
+        grad_left,
+        grad_effective,
+        grad_write_reads,
+        grad_write,
+        grad_values,
+        grad_initial_state,
+    )
+
+
+def _qgdn_chunk_state_output_cuda_bwd(
+    saved_inputs,
+    chunk_starts,
+    grad_outputs,
+    grad_final_state,
+    output_scale,
+):
+    """Parallelize output adjoints, then scan only compact state adjoints."""
+    (
+        queries,
+        decay_prefix,
+        normalized_left,
+        effective_right,
+        write_reads,
+        normalized_write,
+        values,
+        initial_state,
+    ) = saved_inputs
+    batch, heads, chunks, chunk_size, _, key_dim = normalized_left.shape
+    value_dim = values.shape[-1]
+    grad_outputs = grad_outputs.contiguous()
+    grad_final_state = grad_final_state.contiguous()
+    grad_queries = torch.zeros_like(queries)
+    grad_decay = torch.zeros_like(decay_prefix)
+    grad_left = torch.zeros_like(normalized_left)
+    grad_effective = torch.zeros_like(effective_right)
+    grad_write_reads = torch.empty_like(write_reads)
+    grad_write = torch.zeros_like(normalized_write)
+    grad_values = torch.empty_like(values)
+    grad_chunk_starts = torch.empty_like(chunk_starts)
+    grad_initial_state = torch.empty_like(initial_state)
+    block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
+    value_block = 16
+    _qgdn_chunk_output_bwd_kernel[
+        (batch * heads * chunks, triton.cdiv(value_dim, value_block))
+    ](
+        queries,
+        normalized_left,
+        effective_right,
+        write_reads,
+        normalized_write,
+        values,
+        decay_prefix,
+        chunk_starts,
+        grad_outputs,
+        grad_queries,
+        grad_left,
+        grad_effective,
+        grad_write_reads,
+        grad_write,
+        grad_values,
+        grad_decay,
+        grad_chunk_starts,
+        output_scale,
+        N=chunks,
+        K=key_dim,
+        V=value_dim,
+        BT=chunk_size,
+        BM=block_rows,
+        BK=block_key,
+        BV=value_block,
+        BWT=block_time,
+        num_warps=8,
+        num_stages=2,
+    )
+    _qgdn_chunk_state_bwd_kernel[
+        (batch * heads, triton.cdiv(value_dim, value_block))
+    ](
+        normalized_left,
+        effective_right,
+        write_reads,
+        normalized_write,
+        values,
+        decay_prefix,
+        chunk_starts,
+        grad_final_state,
+        grad_chunk_starts,
+        grad_left,
+        grad_effective,
+        grad_write_reads,
+        grad_write,
+        grad_values,
+        grad_decay,
+        grad_initial_state,
         N=chunks,
         K=key_dim,
         V=value_dim,
