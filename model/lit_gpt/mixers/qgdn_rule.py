@@ -23,6 +23,10 @@ QGDN_TRAIN_CHUNK_SIZE = 32
 QGDN_COMPILE_DPLR_INPUTS = True
 QGDN_DISABLE_DPLR_RECOMPUTE = False
 QGDN_USE_PHYSICAL_T = False
+# The fused physical-token implementation specializes one exact rank-two WY
+# map per 16 real tokens.  Keep this independent of the virtual 2T DPLR row
+# count above: changing one backend must not silently retune the other.
+QGDN_PHYSICAL_T_CHUNK_SIZE = 16
 # Optional audited lower bound for the physical log-decay.  Supplying it lets
 # FLA select its tensor-core DPLR backend.  The production default remains
 # unset until the candidate has passed the numerical and throughput gates.
@@ -152,18 +156,31 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
     if (
         mode == "chunk"
         and QGDN_USE_PHYSICAL_T
-        and recall_mode == "query"
+        and recall_mode in {"query", "key"}
         and cu_seqlens is None
-        and not output_final_state
     ):
-        from ..qgdn_physical import qgdn_physical
+        # Exact physical-token path: every chunk's rank-two WY map is prepared
+        # in parallel, then fused Triton kernels scan only the compact chunk
+        # states and recover all within-chunk outputs.  This replaces the old
+        # token-serial physical kernel; it never constructs virtual 2T rows.
+        from .qgdn_reference import qgdn_rank2_parallel_wy_reference
 
-        qn, kn = _normalized(q).to(q.dtype).contiguous(), _normalized(k).to(k.dtype).contiguous()
-        output = qgdn_physical(
-            qn, kn, v.contiguous(), g.contiguous(), beta.contiguous(), gamma.contiguous(),
-            update_order=update_order, scale=scale, initial_state=initial_state,
+        output, state = qgdn_rank2_parallel_wy_reference(
+            q,
+            k,
+            v,
+            g,
+            beta,
+            gamma,
+            recall_mode=recall_mode,
+            update_order=update_order,
+            scale=scale,
+            initial_state=initial_state,
+            chunk_size=QGDN_PHYSICAL_T_CHUNK_SIZE,
+            wy_backend="triton",
+            state_backend="triton",
         )
-        return output, None
+        return output.to(q.dtype), state if output_final_state else None
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
     inputs = dplr_inputs(

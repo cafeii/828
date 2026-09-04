@@ -843,6 +843,14 @@ def test_update_orders_share_identical_initialization():
             torch.testing.assert_close(parameter, expected[name], rtol=0, atol=0)
 
 
+def test_physical_t_training_path_remains_disabled_by_default():
+    import importlib
+
+    rule_module = importlib.import_module("lit_gpt.mixers.qgdn_rule")
+    assert rule_module.QGDN_USE_PHYSICAL_T is False
+    assert rule_module.QGDN_PHYSICAL_T_CHUNK_SIZE == 16
+
+
 @pytest.mark.parametrize("mixer", ["gdn", "qgdn"])
 def test_gate_moments_are_complete_and_observation_is_noninvasive(mixer):
     torch.manual_seed(3407)
@@ -947,46 +955,55 @@ def test_cuda_update_order_output_state_and_backward(update_order):
         assert relative_rmse < 0.07
 
 
+@pytest.mark.parametrize("recall_mode", ["query", "key"])
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="physical-T CUDA kernel requires a GPU")
-def test_cuda_physical_t_output_state_and_backward(update_order):
-    from lit_gpt.qgdn_physical import qgdn_physical, qgdn_physical_forward
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="physical-T CUDA path requires a GPU")
+def test_cuda_fused_physical_t_rule_dispatch_output_state_and_backward(
+    monkeypatch, recall_mode, update_order
+):
+    import importlib
 
-    xs = inputs(T=64, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=0.1)
-    gpu = [
-        x.detach().to(torch.bfloat16 if i < 3 else torch.float32).requires_grad_()
-        for i, x in enumerate(xs)
+    rule_module = importlib.import_module("lit_gpt.mixers.qgdn_rule")
+    monkeypatch.setattr(rule_module, "QGDN_USE_PHYSICAL_T", True)
+    xs = inputs(T=17, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=0.1)
+    actual_inputs = [
+        value.detach()
+        .to(torch.bfloat16 if index < 3 else torch.float32)
+        .requires_grad_()
+        for index, value in enumerate(xs)
     ]
-    qn = F.normalize(gpu[0].float(), dim=-1).to(torch.bfloat16)
-    kn = F.normalize(gpu[1].float(), dim=-1).to(torch.bfloat16)
-    output, _, final_state = qgdn_physical_forward(
-        qn, kn, *gpu[2:6],
-        update_order=update_order,
-        initial_state=gpu[6],
+    reference_inputs = [
+        value.detach().float().requires_grad_() for value in actual_inputs
+    ]
+    actual = rule_module.qgdn_rule(
+        *actual_inputs[:6],
+        initial_state=actual_inputs[6],
         output_final_state=True,
+        recall_mode=recall_mode,
+        update_order=update_order,
     )
-    reference_inputs = [value.detach().float().requires_grad_() for value in gpu]
-    reference_output, reference_state = qgdn_reference(
-        *reference_inputs[:6], initial_state=reference_inputs[6], update_order=update_order
+    expected = qgdn_reference(
+        *reference_inputs[:6],
+        initial_state=reference_inputs[6],
+        recall_mode=recall_mode,
+        update_order=update_order,
     )
-    for value, reference in ((output, reference_output), (final_state, reference_state)):
+    for value, reference in zip(actual, expected):
+        assert value.isfinite().all()
         relative_rmse = (
             (value.float() - reference).square().mean().sqrt()
             / reference.square().mean().sqrt().clamp_min(1e-6)
         )
         assert relative_rmse < 0.025
 
-    differentiable_output = qgdn_physical(
-        qn, kn, *gpu[2:6],
-        update_order=update_order,
-        initial_state=gpu[6],
-    )
-    weight = torch.randn_like(reference_output)
+    weights = [torch.randn_like(value).float() for value in expected]
     actual_gradients = torch.autograd.grad(
-        (differentiable_output.float() * weight).sum(), gpu
+        sum((value.float() * weight).sum() for value, weight in zip(actual, weights)),
+        actual_inputs,
     )
     expected_gradients = torch.autograd.grad(
-        (reference_output * weight).sum(), reference_inputs
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        reference_inputs,
     )
     for value, reference in zip(actual_gradients, expected_gradients):
         assert value.isfinite().all()
@@ -994,4 +1011,4 @@ def test_cuda_physical_t_output_state_and_backward(update_order):
             (value.float() - reference).square().mean().sqrt()
             / reference.square().mean().sqrt().clamp_min(1e-6)
         )
-        assert relative_rmse < 0.1
+        assert relative_rmse < 0.07
