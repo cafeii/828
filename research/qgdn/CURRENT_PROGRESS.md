@@ -465,6 +465,14 @@ activation checkpointing、每 2000 step 验证 1600 条序列，以 step 19073 
 `QGDN_USE_PHYSICAL_T=False`。训练日志中 gamma 统计必须始终严格为
 mean `1.0`、std `0.0`、saturated fraction `1.0`；任一偏离都视为配置或实现错误。
 
+首批训练指标已进一步确认配置生效。两路的参数量均为 `344,353,984`、
+`recall_parameters=0`，共享初始化 SHA-256 均为
+`2ce1c8431c5ab5ff8080b71fe92e84a2ef93791222d5fb7d29dd91a2cf6c36fb`。初始
+validation loss/PPL 分别为 Recall→Delta `10.532466 / 37513.86`、Parallel
+`10.532462 / 37513.70`。排除首次编译 step 后，Recall→Delta 最新稳态样本约
+`316.5k token/s / 75.68 GB`，Parallel 约 `313.2k token/s / 75.72 GB`；loss、grad norm、
+beta 与 gamma 统计全部有限，gamma 在所有已观测 step 上严格为 `1.0 / 0.0 / 100%`。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；

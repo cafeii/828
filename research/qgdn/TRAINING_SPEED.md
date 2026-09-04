@@ -327,6 +327,11 @@ fused loss、无 activation checkpointing、seed 3407、每 2000 step 验证 160
 这两路仍使用虚拟 2T，预期吞吐和显存与同顺序可学习 gamma 近似；本消融的目的是
 模型效果，不是速度优化。
 
+首批训练样本显示 Recall→Delta 约 `316.5k token/s / 75.68 GB`，Parallel 约
+`313.2k token/s / 75.72 GB`；首 step 因 kernel 编译而耗时约 113 秒，不纳入稳态。两路均为
+`344,353,984` 参数、`recall_parameters=0`，gamma 指标持续为 `1/0/100%`，暂无 OOM、
+非有限数值或配置偏离。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
