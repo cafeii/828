@@ -928,6 +928,68 @@ def test_update_orders_share_identical_initialization():
             torch.testing.assert_close(parameter, expected[name], rtol=0, atol=0)
 
 
+@pytest.mark.parametrize(
+    "fixed_name,learned_name,update_order",
+    [
+        (
+            "qgdn_recall_then_delta_gamma_one_340M",
+            "qgdn_recall_tiny",
+            "recall_then_delta",
+        ),
+        (
+            "qgdn_parallel_gamma_one_340M",
+            "qgdn_parallel_tiny",
+            "parallel",
+        ),
+    ],
+)
+def test_gamma_one_configs_are_fixed_and_preserve_shared_initialization(
+    fixed_name, learned_name, update_order
+):
+    overrides = dict(
+        use_short_conv=False,
+        _norm_class="RMSNorm",
+        n_layer=2,
+        n_embd=128,
+        n_head=2,
+        head_dim=64,
+        intermediate_size=352,
+        vocab_size=256,
+        block_size=128,
+    )
+    fixed_config = Config.from_name(fixed_name, **overrides)
+    assert fixed_config.recall_gate == "fixed"
+    assert fixed_config.recall_init == 1.0
+    assert fixed_config.recall_order == update_order
+
+    models = []
+    for config in (fixed_config, Config.from_name(learned_name, **overrides)):
+        torch.manual_seed(3407)
+        model = GPT(config)
+        model.apply(lambda module: model._init_weights(module, n_layer=config.n_layer))
+        models.append(model)
+    fixed, learned = models
+    fixed_parameters = dict(fixed.named_parameters())
+    assert not any(".recall_" in name for name in fixed_parameters)
+    for name, parameter in learned.named_parameters():
+        if ".recall_" not in name:
+            torch.testing.assert_close(fixed_parameters[name], parameter, rtol=0, atol=0)
+
+    for block in fixed.transformer.h:
+        block.attn.mode = "naive"
+        block.attn.collect_gate_stats = True
+    fixed(torch.randint(0, 256, (2, 13)))
+    for block in fixed.transformer.h:
+        moments = block.attn.gate_moments()
+        total, square_total, count = moments["gamma"]
+        torch.testing.assert_close(total, count, rtol=0, atol=0)
+        torch.testing.assert_close(square_total, count, rtol=0, atol=0)
+        saturated_total, saturated_square_total, saturated_count = moments["gamma_saturated"]
+        torch.testing.assert_close(saturated_total, saturated_count, rtol=0, atol=0)
+        torch.testing.assert_close(saturated_square_total, saturated_count, rtol=0, atol=0)
+        torch.testing.assert_close(moments["forgetting_margin"][:2], torch.zeros(2, dtype=torch.float64))
+
+
 def test_physical_t_training_path_remains_disabled_by_default():
     import importlib
 

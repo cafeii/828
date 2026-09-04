@@ -185,6 +185,13 @@ configs += [
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
     dict(
         _recall_base,
+        name="qgdn_recall_then_delta_gamma_one_340M",
+        mixer="qgdn",
+        recall_gate="fixed",
+        recall_init=1.0,
+    ),
+    dict(
+        _recall_base,
         name="qgdn_delta_then_recall_340M",
         mixer="qgdn",
         recall_order="delta_then_recall",
@@ -194,6 +201,14 @@ configs += [
         name="qgdn_parallel_340M",
         mixer="qgdn",
         recall_order="parallel",
+    ),
+    dict(
+        _recall_base,
+        name="qgdn_parallel_gamma_one_340M",
+        mixer="qgdn",
+        recall_order="parallel",
+        recall_gate="fixed",
+        recall_init=1.0,
     ),
     # Backward-compatible alias; beta-style gamma initialization is now the default.
     dict(_recall_base, name="qgdn_beta_init_340M", mixer="qgdn"),
