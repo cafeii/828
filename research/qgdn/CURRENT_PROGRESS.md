@@ -281,6 +281,18 @@ mean/std/饱和率为 `0.44296 / 0.31147 / 8.05%`，Delta→Recall 为
 `0.22305 / 0.21491 / 1.57%`。两者仍有限，暂不判定异常；后续继续在相同 token/step 和
 validation 边界追踪，而不按墙钟错位比较。
 
+第二个共同 validation（step 4000、2,097,152,000 tokens）继续接近：Parallel 的
+loss/PPL 为 `2.975204 / 19.59361`，Delta→Recall 为 `2.976156 / 19.61229`，Parallel
+仅领先约 `0.095%` PPL。共同 step 4551 的近 20 点训练 loss 均值也只差 `0.00145`
+（`2.93801` vs `2.93946`）。Parallel 的 gamma mean/std/饱和率为
+`0.42114 / 0.30414 / 6.08%`，Delta→Recall 为 `0.20319 / 0.20486 / 1.17%`；两边饱和率
+均较上一观察下降。
+
+Delta→Recall 所在 dgx01 曾因同时运行大量 CPU scoring 作业出现不规则 step 抖动，最近 40
+个日志点吞吐中位约 `244.8k token/s`，但最新 step 已回升到 `295.6k token/s`；同一时段
+Parallel 稳定为 `306.3k token/s`。没有 OOM、Traceback、非有限数值或 checkpoint 损坏，且
+18 小时上限仍充足，因此保留当前作业继续运行，不为瞬态节点争用丢弃训练进度。
+
 ## 当前下一步
 
 1. 对 `BV=16/32/64` 做 CPU/FP64 合约回归、实际 B=4/T=4096 全输入梯度门禁和去相位交错 A/B；
