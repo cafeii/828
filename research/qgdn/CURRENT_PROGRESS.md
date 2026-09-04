@@ -431,15 +431,50 @@ mean/std/饱和率为 `0.27915 / 0.16282`、`0.42653 / 0.30771 / 6.77%`；Parall
 Delta→Recall/GDN/Recall→Delta 分别到达约 step `16321/17341/4301`，无异常日志或
 非有限数值。
 
+GDN control Slurm `37118` 随后自然完成：Slurm `COMPLETED / 0:0`、
+`run.exitcode=0`、summary 为 `completed`，最终 step `19073`、prediction tokens
+`9,999,745,024`。训练计算时间 `3.174 h`、完整墙钟 `3.277 h`，对应
+`875.07k / 847.73k token/s`；峰值显存 `56.8215 GB/GPU`。最终 validation
+loss/PPL 为 `2.697354 / 14.84041`，末步 alpha mean/std 为
+`0.68316 / 0.34822`，beta mean/std 为 `0.28844 / 0.16865`。日志、JUnit、metrics
+与 summary 已回收，大模型产物依规则保留在远端。
+
+## 固定 gamma=1 消融已启动
+
+为直接检验可学习 gamma 是否将 recall 压弱，commit
+`538712cc64d3fa4fa32aa348d8e252a03cb5b62f` 新增 Recall→Delta 和 Parallel 两个
+340M 固定门控配置：`recall_gate="fixed"`、`recall_init=1.0`。这是严格的
+`gamma_t ≡ 1`，gamma 不是可训练参数，不引入 recall-gate 投影参数。测试还确认
+两个模型与各自可学习 gamma 对照的共享 backbone 在 seed 3407 下保持相同初始化。
+
+Commit `49898cb61973bf619c3256436b0d7bfc43e18326` 将 CUDA 顺序门禁扩展到
+`gamma=0.1/1.0 × 三种更新顺序`，仍逐一核对 BF16 输出、末状态和全部输入梯度。
+提交前 CPU 聚焦回归为 `11 passed / 6 skipped / 174 deselected`。两个不可变快照作业均已
+通过 H800 preflight：`10 passed / 0 failed / 0 errors`，其中包含 gamma=1 三顺序的
+CUDA 输出、状态和全梯度检查：
+
+| 模型 | 实验 | Slurm | 节点 | 当前状态 |
+|---|---|---:|---|---|
+| Recall→Delta, gamma=1 | `20260904-231927-qgdn-recall-delta-gamma-one-340m-10bt-s3407-2b34ac` | 37379 | dgx24 | RUNNING |
+| Parallel, gamma=1 | `20260904-231927-qgdn-parallel-gamma-one-340m-10bt-s3407-63bf96` | 37380 | dgx25 | RUNNING |
+
+两者均使用与现有严格对齐实验相同的 FineWeb 数据、seed 3407、8×H800、
+T=4096、micro batch 8、global batch 128、gradient accumulation 2、fused loss、关闭
+activation checkpointing、每 2000 step 验证 1600 条序列，以 step 19073 /
+`9,999,745,024` prediction tokens 为终点。生产路径仍是虚拟 2T，
+`QGDN_USE_PHYSICAL_T=False`。训练日志中 gamma 统计必须始终严格为
+mean `1.0`、std `0.0`、saturated fraction `1.0`；任一偏离都视为配置或实现错误。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
    在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
-2. 36311 已成功完成并回收，不得重提；冻结保留仍在运行的 36312/37118/37183，继续检查
-   loss、grad norm、门控统计、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
+2. 36311 和 37118 已成功完成并回收，不得重提；冻结保留仍在运行的
+   36312/37183/37379/37380，继续检查 loss、grad norm、门控统计、吞吐、峰值显存、
+   日志新鲜度和 checkpoint 完整性。固定 gamma 两路必须保持 `1/0/100%` 统计。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
    micro batch/科学配置时先保留证据并停止，不盲目重跑。
-4. 其余三个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；四路均完成后
-   汇总有效吞吐、峰值显存、墙钟、门控轨迹和严格对齐的验证指标。
+4. 其余四个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；对齐比较
+   固定 gamma=1、可学习 gamma 与 GDN，判断强 recall 是改善还是伤害 loss/PPL。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

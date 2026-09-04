@@ -312,6 +312,21 @@ prepared-input VJP 融合。当前算子若要达到虚拟的 `1.25x`，需从 `
 python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 ```
 
+## 固定 gamma=1 消融作业
+
+Commit `538712c` 新增 Recall→Delta 和 Parallel 的 `recall_gate="fixed"` / `recall_init=1.0`
+配置；commit `49898cb` 将 CUDA 数值门禁扩展到 gamma=1 的三种更新顺序。固定 gamma
+不参与训练，因此模型参数不含 recall-gate projection；变量统计应恒为
+`gamma_mean=1.0`、`gamma_std=0.0`、`gamma_saturated_fraction=1.0`。
+
+Slurm 37379（Recall→Delta）和 37380（Parallel）均已在独占 H800 节点上通过
+`10 passed / 0 failed / 0 errors` preflight，包括 gamma=1 的 BF16 输出、末状态和全输入
+梯度检查。两个作业都冻结在 `49898cb61973bf619c3256436b0d7bfc43e18326`，
+使用与既有 GDN/可学习 gamma 对照一致的 10BT recipe：8×H800、T=4096、mb8/GB128/GA2、
+fused loss、无 activation checkpointing、seed 3407、每 2000 step 验证 1600 条序列。
+这两路仍使用虚拟 2T，预期吞吐和显存与同顺序可学习 gamma 近似；本消融的目的是
+模型效果，不是速度优化。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -345,3 +360,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - 联合 BV16/32/64 审计：Slurm 36443/36445（全梯度通过；state/output 同时加宽因 state 逆扫恶化而否决）
 - output BV64 / state BV16 hybrid：Slurm 36448/36451（CPU 138 passed；CUDA 6/6；split backward 1.482x；峰值显存持平）
 - 完整 physical/virtual kernel 根因对照：Slurm 36830/36862（38.689 vs 15.773 ms；确认 rank-row/chunk 数未下降，串行 state VJP 与 FP32 WY 为关键差距）
+- 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练进行中）
