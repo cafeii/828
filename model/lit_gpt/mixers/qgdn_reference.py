@@ -380,6 +380,95 @@ def qgdn_rank2_chunk_batched_reference(
     return torch.cat(outputs, dim=2).permute(0, 2, 1, 3), state
 
 
+def _qgdn_chunk_state_output_torch(
+    queries,
+    decay_prefix,
+    normalized_left,
+    effective_right,
+    write_reads,
+    normalized_write,
+    values,
+    initial_state,
+    output_scale,
+):
+    """Apply prepared physical-T WY chunks and recover their outputs.
+
+    All tensors expose the physical chunk axis directly: queries and writes
+    use ``[B,H,N,C,K]``, rank-two factors use ``[B,H,N,C,2,K]``, values use
+    ``[B,H,N,C,V]``, and the state uses ``[B,H,K,V]``.  This differentiable
+    implementation is the FP64 contract for the fused chunk-state/output
+    kernels; it does not construct token states outside this reference path.
+    """
+    if normalized_left.shape != effective_right.shape:
+        raise ValueError("left and effective-right factors must share a shape")
+    if normalized_left.ndim != 6 or normalized_left.shape[-2] != 2:
+        raise ValueError("rank-two factors must use [B,H,N,C,2,K]")
+    batch, heads, chunks, chunk_size, rank, key_dim = normalized_left.shape
+    value_dim = values.shape[-1]
+    if queries.shape != (batch, heads, chunks, chunk_size, key_dim):
+        raise ValueError("queries have incompatible shape")
+    if decay_prefix.shape != (batch, heads, chunks, chunk_size):
+        raise ValueError("decay prefixes have incompatible shape")
+    if write_reads.shape != (
+        batch,
+        heads,
+        chunks,
+        chunk_size,
+        rank,
+        value_dim,
+    ):
+        raise ValueError("write reads have incompatible shape")
+    if normalized_write.shape != queries.shape:
+        raise ValueError("normalized writes have incompatible shape")
+    if values.shape != (batch, heads, chunks, chunk_size, value_dim):
+        raise ValueError("values have incompatible shape")
+    if initial_state.shape != (batch, heads, key_dim, value_dim):
+        raise ValueError("initial state has incompatible shape")
+
+    state = initial_state
+    chunk_starts = []
+    for chunk in range(chunks):
+        chunk_starts.append(state)
+        reads = torch.einsum(
+            "bhrk,bhkv->bhrv",
+            effective_right[:, :, chunk].reshape(
+                batch, heads, chunk_size * rank, key_dim
+            ),
+            state,
+        ) + write_reads[:, :, chunk].reshape(
+            batch, heads, chunk_size * rank, value_dim
+        )
+        low_rank_update = torch.einsum(
+            "bhtrk,bhtrv->bhkv",
+            normalized_left[:, :, chunk],
+            reads.reshape(batch, heads, chunk_size, rank, value_dim),
+        )
+        direct_write = torch.einsum(
+            "bhtk,bhtv->bhkv",
+            normalized_write[:, :, chunk],
+            values[:, :, chunk],
+        )
+        state = decay_prefix[:, :, chunk, -1, None, None] * (
+            state + low_rank_update + direct_write
+        )
+    chunk_starts = torch.stack(chunk_starts, dim=2)
+
+    reads = torch.einsum(
+        "bhntrk,bhnkv->bhntrv", effective_right, chunk_starts
+    ) + write_reads
+    low_rank_updates = torch.einsum(
+        "bhntrk,bhntrv->bhntkv", normalized_left, reads
+    )
+    direct_writes = normalized_write[..., None] * values[..., None, :]
+    normalized_states = chunk_starts[..., None, :, :] + (
+        low_rank_updates + direct_writes
+    ).cumsum(dim=3)
+    outputs = output_scale * decay_prefix[..., None] * torch.einsum(
+        "bhntk,bhntkv->bhntv", queries, normalized_states
+    )
+    return outputs, state
+
+
 def qgdn_rank2_parallel_wy_reference(
     q,
     k,
@@ -395,6 +484,7 @@ def qgdn_rank2_parallel_wy_reference(
     chunk_size=16,
     fuse_wy_rhs=False,
     wy_backend="triangular",
+    state_backend="torch",
 ):
     """Prepare every physical-T chunk's exact rank-two WY map in parallel.
 
@@ -424,6 +514,8 @@ def qgdn_rank2_parallel_wy_reference(
         raise ValueError("chunk_size must be positive")
     if wy_backend not in {"triangular", "streaming", "triton"}:
         raise ValueError(f"unsupported WY backend: {wy_backend}")
+    if state_backend not in {"torch", "triton"}:
+        raise ValueError(f"unsupported chunk-state backend: {state_backend}")
     if wy_backend != "triangular" and fuse_wy_rhs:
         raise ValueError("only triangular WY uses solve right-hand sides")
     qn, alpha, left, right, write = qgdn_rank2_factors(
@@ -587,51 +679,40 @@ def qgdn_rank2_parallel_wy_reference(
                 system, write_rhs, upper=False, unitriangular=True
             )
 
-    normalized_left_flat = normalized_left.reshape(
-        batch, heads, chunks, system_size, key_dim
+    effective_right = effective_right.reshape(
+        batch, heads, chunks, chunk_size, rank, key_dim
     )
-    chunk_scale = decay_prefix[..., -1]
-    chunk_left = chunk_scale[..., None, None] * normalized_left_flat
-    write_updates = torch.einsum(
-        "bhntrk,bhntrv->bhntkv",
-        normalized_left,
-        write_reads.reshape(
-            batch, heads, chunks, chunk_size, rank, value_dim
-        ),
-    )
-    direct_writes = normalized_write[..., None] * value_chunks[..., None, :]
-    chunk_bias = chunk_scale[..., None, None] * (
-        write_updates + direct_writes
-    ).sum(dim=3)
-
-    chunk_starts = []
-    for chunk in range(chunks):
-        chunk_starts.append(state)
-        state = _apply_compact_affine(
-            chunk_scale[:, :, chunk],
-            chunk_left[:, :, chunk],
-            effective_right[:, :, chunk],
-            chunk_bias[:, :, chunk],
-            state,
-        )
-    chunk_starts = torch.stack(chunk_starts, dim=2)
-
-    state_reads = torch.einsum(
-        "bhnrk,bhnkv->bhnrv", effective_right, chunk_starts
-    )
-    reads = (state_reads + write_reads).reshape(
+    write_reads = write_reads.reshape(
         batch, heads, chunks, chunk_size, rank, value_dim
     )
-    low_rank_updates = torch.einsum(
-        "bhntrk,bhntrv->bhntkv", normalized_left, reads
-    )
-    normalized_states = chunk_starts[..., None, :, :] + (
-        low_rank_updates + direct_writes
-    ).cumsum(dim=3)
-    states = decay_prefix[..., None, None] * normalized_states
-    outputs = output_scale * torch.einsum(
-        "bhntk,bhntkv->bhntv", q_chunks, states
-    )
+    if state_backend == "triton":
+        from lit_gpt.mixers.qgdn_state_output_kernel import (
+            qgdn_chunk_state_output,
+        )
+
+        outputs, state = qgdn_chunk_state_output(
+            q_chunks,
+            decay_prefix,
+            normalized_left,
+            effective_right,
+            write_reads,
+            normalized_write,
+            value_chunks,
+            state,
+            output_scale,
+        )
+    else:
+        outputs, state = _qgdn_chunk_state_output_torch(
+            q_chunks,
+            decay_prefix,
+            normalized_left,
+            effective_right,
+            write_reads,
+            normalized_write,
+            value_chunks,
+            state,
+            output_scale,
+        )
     outputs = outputs.permute(0, 2, 3, 1, 4).reshape(
         batch, padded_length, heads, value_dim
     )

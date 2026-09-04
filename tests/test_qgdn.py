@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))
 from lit_gpt.config import Config
 from lit_gpt.model import GPT
 from lit_gpt.mixers.qgdn_reference import (
+    _qgdn_chunk_state_output_torch,
     _apply_compact_affine,
     _compose_compact_affine,
     qgdn_rank2_chunk_batched_reference,
@@ -277,6 +278,94 @@ def test_rank2_parallel_wy_matches_outputs_state_and_all_gradients(
         torch.testing.assert_close(value, reference, rtol=1e-10, atol=1e-10)
 
 
+def _dense_prepared_chunk_state_output(
+    queries,
+    decay_prefix,
+    left,
+    effective_right,
+    write_reads,
+    write,
+    values,
+    state,
+    output_scale,
+):
+    outputs = []
+    for chunk in range(queries.shape[2]):
+        reads = torch.einsum(
+            "bhrk,bhkv->bhrv",
+            effective_right[:, :, chunk].flatten(2, 3),
+            state,
+        ).unflatten(2, (queries.shape[3], 2)) + write_reads[:, :, chunk]
+        normalized_state = state
+        chunk_outputs = []
+        for token in range(queries.shape[3]):
+            normalized_state = normalized_state + torch.einsum(
+                "bhrk,bhrv->bhkv",
+                left[:, :, chunk, token],
+                reads[:, :, token],
+            ) + torch.einsum(
+                "bhk,bhv->bhkv",
+                write[:, :, chunk, token],
+                values[:, :, chunk, token],
+            )
+            token_state = (
+                decay_prefix[:, :, chunk, token, None, None]
+                * normalized_state
+            )
+            chunk_outputs.append(
+                output_scale
+                * torch.einsum(
+                    "bhk,bhkv->bhv",
+                    queries[:, :, chunk, token],
+                    token_state,
+                )
+            )
+        state = token_state
+        outputs.append(torch.stack(chunk_outputs, dim=2))
+    return torch.stack(outputs, dim=2), state
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, 8])
+def test_prepared_chunk_state_output_matches_dense_fp64_all_gradients(chunk_size):
+    torch.manual_seed(431)
+    batch, heads, chunks, key_dim, value_dim = 1, 2, 3, 4, 3
+    prefix = (batch, heads, chunks, chunk_size)
+    raw = [
+        torch.randn(*prefix, key_dim, dtype=torch.float64),
+        0.5 + 0.5 * torch.rand(*prefix, dtype=torch.float64),
+        0.1 * torch.randn(*prefix, 2, key_dim, dtype=torch.float64),
+        0.1 * torch.randn(*prefix, 2, key_dim, dtype=torch.float64),
+        0.1 * torch.randn(*prefix, 2, value_dim, dtype=torch.float64),
+        0.1 * torch.randn(*prefix, key_dim, dtype=torch.float64),
+        torch.randn(*prefix, value_dim, dtype=torch.float64),
+        torch.randn(batch, heads, key_dim, value_dim, dtype=torch.float64),
+    ]
+    expected_inputs = [value.requires_grad_() for value in raw]
+    expected = _dense_prepared_chunk_state_output(
+        *expected_inputs, output_scale=0.37
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        expected_inputs,
+    )
+
+    actual_inputs = [
+        value.detach().clone().requires_grad_() for value in expected_inputs
+    ]
+    actual = _qgdn_chunk_state_output_torch(
+        *actual_inputs, output_scale=0.37
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        actual_inputs,
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=3e-12, atol=3e-12)
+    for value, reference in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(value, reference, rtol=8e-11, atol=8e-11)
+
+
 def test_compact_affine_composition_is_associative_and_rank_additive():
     q, k, v, g, beta, gamma, state = inputs(T=3)
     _, alpha, left, right, write = qgdn_rank2_factors(q, k, g, beta, gamma)
@@ -520,6 +609,58 @@ def test_cuda_rank2_triton_wy_output_state_and_backward(
         update_order=update_order,
         chunk_size=chunk_size,
         wy_backend="triton",
+    )
+    actual_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(actual, weights)),
+        cloned,
+    )
+    for value, reference in zip(actual, expected):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 2e-5
+    for value, reference in zip(actual_grads, expected_grads):
+        assert value.isfinite().all()
+        relative_rmse = (
+            (value - reference).square().mean().sqrt()
+            / reference.square().mean().sqrt().clamp_min(1e-7)
+        )
+        assert relative_rmse < 1e-4
+
+
+@pytest.mark.parametrize("chunk_size,length", [(8, 17), (16, 33)])
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="Triton chunk-state/output parity requires a GPU",
+)
+def test_cuda_rank2_triton_state_output_and_backward(
+    update_order, chunk_size, length
+):
+    args = inputs(T=length, K=64, V=64, dtype=torch.float32, device="cuda")
+    expected = qgdn_rank2_parallel_wy_reference(
+        *args[:6],
+        initial_state=args[6],
+        update_order=update_order,
+        chunk_size=chunk_size,
+        wy_backend="triangular",
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_grads = torch.autograd.grad(
+        sum((value * weight).sum() for value, weight in zip(expected, weights)),
+        args,
+    )
+
+    cloned = [value.detach().clone().requires_grad_() for value in args]
+    actual = qgdn_rank2_parallel_wy_reference(
+        *cloned[:6],
+        initial_state=cloned[6],
+        update_order=update_order,
+        chunk_size=chunk_size,
+        wy_backend="triton",
+        state_backend="triton",
     )
     actual_grads = torch.autograd.grad(
         sum((value * weight).sum() for value, weight in zip(actual, weights)),
