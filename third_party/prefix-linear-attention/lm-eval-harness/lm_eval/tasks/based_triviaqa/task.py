@@ -9,7 +9,9 @@ import numpy as np
 
 
 def _squad_metric(predictions, references):
-    squad_metric = datasets.load_metric("squad_v2")
+    # PATCH(rnn工作区): 同 based_squadv2——datasets.load_metric 离线下不可用，改 evaluate.load
+    import evaluate
+    squad_metric = evaluate.load("squad_v2")
     return squad_metric.compute(predictions=predictions, references=references)
 
 

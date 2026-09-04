@@ -43,3 +43,12 @@
   NAME_MAX(255) 时 OSError（冒烟 34235 实测：评估跑完、写文件时崩）。
 - 修复：sanitize 后超 100 字符则截前 80 字符 + 8 位 md5 后缀（保持可区分性）。
   仅影响 `--log_samples` 的样本文件名，不影响结果 json 与指标。
+
+## 5. 修改 based_squadv2/task.py 与 based_triviaqa/task.py（squad_v2 metric 来源）
+
+- 原版 `datasets.load_metric("squad_v2")`：datasets 2.20 在线时撞 hub 同名数据集仓库
+  （要 trust_remote_code），离线时又去拉 GitHub canned metrics → 两条路在服务器都死
+  （QUICK 作业 34250/34253 在 based_squad 聚合阶段失败，此前 ~2h 生成已跑完但未落盘）。
+- 改为 `evaluate.load("squad_v2")`（evaluate 库同源实现，compute 接口一致，任务传入的
+  predictions 含 no_answer_probability，格式兼容）。已在登录节点用同一 HF_HOME 预热缓存，
+  离线 reload + compute 实测通过。

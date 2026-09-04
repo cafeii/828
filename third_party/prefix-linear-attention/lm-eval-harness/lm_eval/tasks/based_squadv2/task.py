@@ -8,7 +8,10 @@ import datasets
 
 def _squad_metric(predictions, references):
     # squad_metric = load("squad_v2")
-    squad_metric = datasets.load_metric("squad_v2")
+    # PATCH(rnn工作区): datasets.load_metric 在 datasets 2.20 + 离线模式下来源解析失败，
+    # 改用 evaluate.load（同一 squad_v2 实现，缓存于 $HF_HOME；见 ../patches/PATCHES.md）
+    import evaluate
+    squad_metric = evaluate.load("squad_v2")
     return squad_metric.compute(predictions=predictions, references=references)
 
 
