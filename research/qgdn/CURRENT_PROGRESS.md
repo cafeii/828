@@ -407,15 +407,39 @@ Delta→Recall 高 `0.000769`；目前不能支持 recall rule 有明确收益�
 `299.5k token/s`；峰值显存分别为 `56.82 / 77.03 / 77.06 / 77.06 GB`。四个作业均在
 持续更新 checkpoint，保留原配置继续运行。
 
+Parallel Slurm 36311 已自然完成：Slurm `COMPLETED / 0:0`、`run.exitcode=0`，summary 为
+`completed`，最终 step `19073`、prediction tokens `9,999,745,024`，preflight JUnit
+`6/6`。训练计算时间 `8.998 h`、完整墙钟 `9.121 h`，对应 `308.69k / 304.53k token/s`；
+峰值显存 `77.0617 GB/GPU`。最终 validation loss/PPL 为 `2.696578 / 14.82890`。末步
+beta mean/std 为 `0.29295 / 0.17039`，gamma mean/std/饱和率为
+`0.38905 / 0.29873 / 4.55%`，loss、grad norm 和全部门控统计有限。日志、JUnit、metrics、
+run/summary 已回收，三项主要产物与远端 SHA-256 一致；约 4.14 GB checkpoint 和 1.38 GB
+final model 按回收规则保留在远端。
+
+Recall→Delta 的 step-4000 validation 进一步给出第二个同方向信号。四路 loss/PPL 为
+Recall→Delta `2.972738 / 19.54537`、GDN `2.974415 / 19.57818`、Parallel
+`2.975204 / 19.59361`、Delta→Recall `2.976156 / 19.61229`。Recall→Delta 相对 GDN
+低 `0.001677` loss、约 `0.168%` PPL；它在 step 2000 与 4000 都暂时领先，但幅度仍小，
+需要后续共同验证点确认。
+
+共同 step 4301 的近 20 点训练 loss 为 Recall→Delta `2.93770`、GDN `2.93884`、
+Parallel `2.93941`、Delta→Recall `2.94062`。该点 Recall→Delta beta 与 gamma
+mean/std/饱和率为 `0.27915 / 0.16282`、`0.42653 / 0.30771 / 6.77%`；Parallel 为
+`0.27715 / 0.16134`、`0.42266 / 0.30638 / 6.50%`；Delta→Recall 为
+`0.26539 / 0.16079`、`0.20436 / 0.20538 / 1.20%`。GDN alpha/beta mean/std 为
+`0.68817 / 0.34125`、`0.27588 / 0.16160`，gamma 不适用。其余三作业继续正常运行：
+Delta→Recall/GDN/Recall→Delta 分别到达约 step `16321/17341/4301`，无异常日志或
+非有限数值。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
    在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
-2. 冻结保留 36311/36312/37118/37183，不修改、取消或重提；继续检查 JUnit、loss、
-   grad norm、门控统计、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
+2. 36311 已成功完成并回收，不得重提；冻结保留仍在运行的 36312/37118/37183，继续检查
+   loss、grad norm、门控统计、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变
    micro batch/科学配置时先保留证据并停止，不盲目重跑。
-4. 四个作业到终态后回收 JUnit、退出码、日志、metrics、summary 与 checkpoint，并记录实际
-   有效吞吐、峰值显存、墙钟、门控轨迹和严格对齐的验证指标。
+4. 其余三个作业到终态后同样回收 JUnit、退出码、日志、metrics 与 summary；四路均完成后
+   汇总有效吞吐、峰值显存、墙钟、门控轨迹和严格对齐的验证指标。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

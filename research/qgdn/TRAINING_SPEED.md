@@ -116,6 +116,25 @@ loss/PPL 分别为 `2.797239 / 16.39930`、`2.796521 / 16.38754`、
 `56.82 / 77.03 / 77.06 / 77.06 GB`。四路数值和 checkpoint 均正常，Recall→Delta 的
 step-4000 validation 完成后再进行第二次四路验证比较。
 
+Parallel Slurm 36311 已成功完成全部 `19073` step 和 `9,999,745,024` prediction tokens：
+Slurm `COMPLETED / 0:0`、`run.exitcode=0`、summary `completed`、preflight JUnit `6/6`。
+训练计算/墙钟为 `8.998/9.121 h`，有效训练/墙钟吞吐为 `308.69k/304.53k token/s`，
+峰值显存 `77.0617 GB/GPU`；最终 validation loss/PPL 为 `2.696578 / 14.82890`。末步
+beta mean/std 为 `0.29295 / 0.17039`，gamma mean/std/饱和率为
+`0.38905 / 0.29873 / 4.55%`。小型日志与指标已完整回收，权重按规则保留在远端。
+
+四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
+`2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
+`2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`
+loss 和约 `0.168%` PPL；信号一致但幅度仍小。
+
+共同 step 4301 的近 20 点 loss 为 Recall→Delta `2.93770`、GDN `2.93884`、Parallel
+`2.93941`、Delta→Recall `2.94062`。Recall→Delta beta 与 gamma mean/std/饱和率为
+`0.27915 / 0.16282`、`0.42653 / 0.30771 / 6.77%`；Parallel 为
+`0.27715 / 0.16134`、`0.42266 / 0.30638 / 6.50%`；Delta→Recall 为
+`0.26539 / 0.16079`、`0.20436 / 0.20538 / 1.20%`。GDN alpha/beta mean/std 为
+`0.68817 / 0.34125`、`0.27588 / 0.16160`，gamma 不适用。其余三路仍正常运行。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |
