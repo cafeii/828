@@ -334,6 +334,14 @@ Delta→Recall 所在 dgx01 曾因同时运行大量 CPU scoring 作业出现不
 Parallel 稳定为 `306.3k token/s`。没有 OOM、Traceback、非有限数值或 checkpoint 损坏，且
 18 小时上限仍充足，因此保留当前作业继续运行，不为瞬态节点争用丢弃训练进度。
 
+第三个共同 validation（step 6000、3,145,728,000 tokens）仍未拉开：Parallel 的
+loss/PPL 为 `2.893768 / 18.06124`，Delta→Recall 为 `2.895291 / 18.08877`，Parallel
+PPL 领先约 `0.152%`。共同 step 6691 的近 20 点训练 loss 为 `2.85331 / 2.85491`。
+此时 Parallel 与 Delta→Recall 的 beta mean/std 分别为
+`0.28484 / 0.16481` 和 `0.27335 / 0.16485`，非常接近；gamma mean/std/饱和率分别为
+`0.40765 / 0.30031 / 5.19%` 和 `0.19141 / 0.19779 / 0.91%`。Delta→Recall 的最近
+40 点吞吐中位已恢复到 `297.6k token/s`，但均值 `270.6k` 仍反映少量节点争用长尾。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
