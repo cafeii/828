@@ -162,7 +162,10 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
         order_offset = warmup_index % len(UPDATE_ORDERS)
         orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
         for position, update_order in enumerate(orders):
-            backend_offset = (warmup_index + position) % len(backends)
+            # The multiplier avoids phase-locking the three update orders to
+            # the three backend orders: for a fixed update order, every
+            # backend must occupy every triplet position across repeats.
+            backend_offset = (2 * warmup_index + position) % len(backends)
             backend_order = backends[backend_offset:] + backends[:backend_offset]
             for backend in backend_order:
                 timed_step(
@@ -187,7 +190,7 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
         order_offset = repeat_index % len(UPDATE_ORDERS)
         orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
         for position, update_order in enumerate(orders):
-            backend_offset = (repeat_index + position) % len(backends)
+            backend_offset = (2 * repeat_index + position) % len(backends)
             backend_order = backends[backend_offset:] + backends[:backend_offset]
             paired_times = {}
             for backend in backend_order:
@@ -207,6 +210,13 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
                 paired_times["triton_wy"] / paired_times["triton_fused"]
             )
             backend_sequences[update_order].append("->".join(backend_order))
+
+    for update_order in UPDATE_ORDERS:
+        if len(set(backend_sequences[update_order])) != len(backends):
+            raise AssertionError(
+                f"backend rotation phase-locked for {update_order}: "
+                f"{set(backend_sequences[update_order])}"
+            )
 
     results = {}
     for update_order in UPDATE_ORDERS:
