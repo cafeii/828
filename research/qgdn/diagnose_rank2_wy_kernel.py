@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--chunk-size", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=6)
     parser.add_argument("--repeats", type=int, default=50)
+    parser.add_argument("--iterations-per-sample", type=int, default=8)
     parser.add_argument("--memory-repeats", type=int, default=3)
     return parser.parse_args()
 
@@ -100,18 +101,21 @@ def timed_step(tensors, update_order, backend, args, output_grads):
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     start.record()
-    outputs, gradients, _ = run_step(
-        tensors,
-        update_order,
-        args.chunk_size,
-        backend,
-        output_grads,
-    )
+    for iteration in range(args.iterations_per_sample):
+        outputs, gradients, _ = run_step(
+            tensors,
+            update_order,
+            args.chunk_size,
+            backend,
+            output_grads,
+        )
+        if iteration + 1 < args.iterations_per_sample:
+            del outputs, gradients
     end.record()
     torch.cuda.synchronize()
     assert all(bool(value.isfinite().all().item()) for value in outputs)
     assert all(bool(value.isfinite().all().item()) for value in gradients)
-    elapsed_ms = start.elapsed_time(end)
+    elapsed_ms = start.elapsed_time(end) / args.iterations_per_sample
     del outputs, gradients
     return elapsed_ms
 
@@ -308,10 +312,12 @@ def main():
         },
         "warmup": args.warmup,
         "repeats": args.repeats,
+        "iterations_per_sample": args.iterations_per_sample,
         "memory_repeats": args.memory_repeats,
         "scope": (
-            "operator forward+backward; order-rotated interleaved A/B timing; "
-            "memory measured separately; not a full-model benchmark"
+            "operator forward+backward; block-amortized, order-rotated, "
+            "interleaved A/B timing; memory measured separately; not a "
+            "full-model benchmark"
         ),
         "results": results,
     }
