@@ -1,4 +1,4 @@
-"""Validate and benchmark fused Triton physical-T WY forward/backward."""
+"""Validate and benchmark fused physical-T WY/state/output forward/backward."""
 from __future__ import annotations
 
 import argparse
@@ -52,12 +52,21 @@ def make_inputs(args):
 
 
 def run_step(tensors, update_order, chunk_size, backend, output_grads=None):
+    if backend == "triangular":
+        wy_backend, state_backend = "triangular", "torch"
+    elif backend == "triton_wy":
+        wy_backend, state_backend = "triton", "torch"
+    elif backend == "triton_fused":
+        wy_backend, state_backend = "triton", "triton"
+    else:
+        raise ValueError(f"unsupported diagnostic backend: {backend}")
     outputs = qgdn_rank2_parallel_wy_reference(
         *tensors[:6],
         initial_state=tensors[6],
         update_order=update_order,
         chunk_size=chunk_size,
-        wy_backend=backend,
+        wy_backend=wy_backend,
+        state_backend=state_backend,
     )
     if output_grads is None:
         output_grads = tuple(torch.randn_like(value) for value in outputs)
@@ -148,14 +157,13 @@ def measure_memory(tensors, update_order, backend, args, output_grads):
 
 
 def benchmark_interleaved(tensors, output_grads_by_order, args):
-    backends = ("triangular", "triton")
+    backends = ("triangular", "triton_wy", "triton_fused")
     for warmup_index in range(args.warmup):
         order_offset = warmup_index % len(UPDATE_ORDERS)
         orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
         for position, update_order in enumerate(orders):
-            backend_order = backends
-            if (warmup_index + position) % 2:
-                backend_order = tuple(reversed(backends))
+            backend_offset = (warmup_index + position) % len(backends)
+            backend_order = backends[backend_offset:] + backends[:backend_offset]
             for backend in backend_order:
                 timed_step(
                     tensors,
@@ -169,15 +177,18 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
         update_order: {backend: [] for backend in backends}
         for update_order in UPDATE_ORDERS
     }
-    paired_speedups = {update_order: [] for update_order in UPDATE_ORDERS}
+    paired_speedups = {
+        update_order: {backend: [] for backend in backends[1:]}
+        for update_order in UPDATE_ORDERS
+    }
+    paired_fused_vs_wy = {update_order: [] for update_order in UPDATE_ORDERS}
     backend_sequences = {update_order: [] for update_order in UPDATE_ORDERS}
     for repeat_index in range(args.repeats):
         order_offset = repeat_index % len(UPDATE_ORDERS)
         orders = UPDATE_ORDERS[order_offset:] + UPDATE_ORDERS[:order_offset]
         for position, update_order in enumerate(orders):
-            backend_order = backends
-            if (repeat_index + position) % 2:
-                backend_order = tuple(reversed(backends))
+            backend_offset = (repeat_index + position) % len(backends)
+            backend_order = backends[backend_offset:] + backends[:backend_offset]
             paired_times = {}
             for backend in backend_order:
                 paired_times[backend] = timed_step(
@@ -188,8 +199,12 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
                     output_grads_by_order[update_order],
                 )
                 times_ms[update_order][backend].append(paired_times[backend])
-            paired_speedups[update_order].append(
-                paired_times["triangular"] / paired_times["triton"]
+            for backend in backends[1:]:
+                paired_speedups[update_order][backend].append(
+                    paired_times["triangular"] / paired_times[backend]
+                )
+            paired_fused_vs_wy[update_order].append(
+                paired_times["triton_wy"] / paired_times["triton_fused"]
             )
             backend_sequences[update_order].append("->".join(backend_order))
 
@@ -218,24 +233,42 @@ def benchmark_interleaved(tensors, output_grads_by_order, args):
                 "all_outputs_states_and_gradients_finite": True,
             }
         baseline = backend_results["triangular"]
-        candidate = backend_results["triton"]
-        candidate["speedup_vs_triangular"] = (
-            baseline["median_forward_backward_ms"]
-            / candidate["median_forward_backward_ms"]
+        for backend in backends[1:]:
+            candidate = backend_results[backend]
+            candidate["speedup_vs_triangular"] = (
+                baseline["median_forward_backward_ms"]
+                / candidate["median_forward_backward_ms"]
+            )
+            candidate["paired_speedup_vs_triangular"] = summarize_samples(
+                paired_speedups[update_order][backend]
+            )
+            candidate["peak_memory_ratio_vs_triangular"] = (
+                candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+            )
+            candidate["incremental_peak_memory_ratio_vs_triangular"] = (
+                candidate["incremental_peak_allocated_gb"]
+                / baseline["incremental_peak_allocated_gb"]
+            )
+        fused = backend_results["triton_fused"]
+        wy_only = backend_results["triton_wy"]
+        fused["speedup_vs_triton_wy"] = (
+            wy_only["median_forward_backward_ms"]
+            / fused["median_forward_backward_ms"]
         )
-        candidate["paired_speedup_vs_triangular"] = summarize_samples(
-            paired_speedups[update_order]
+        fused["paired_speedup_vs_triton_wy"] = summarize_samples(
+            paired_fused_vs_wy[update_order]
         )
-        candidate["peak_memory_ratio_vs_triangular"] = (
-            candidate["peak_allocated_gb"] / baseline["peak_allocated_gb"]
+        fused["peak_memory_ratio_vs_triton_wy"] = (
+            fused["peak_allocated_gb"] / wy_only["peak_allocated_gb"]
         )
-        candidate["incremental_peak_memory_ratio_vs_triangular"] = (
-            candidate["incremental_peak_allocated_gb"]
-            / baseline["incremental_peak_allocated_gb"]
+        fused["incremental_peak_memory_ratio_vs_triton_wy"] = (
+            fused["incremental_peak_allocated_gb"]
+            / wy_only["incremental_peak_allocated_gb"]
         )
         results[update_order] = {
             "triangular": baseline,
-            "triton_fused": candidate,
+            "triton_wy": wy_only,
+            "triton_fused_state_output": fused,
             "backend_sequences": backend_sequences[update_order],
         }
     return results
@@ -262,7 +295,7 @@ def main():
             actual_inputs,
             update_order,
             args.chunk_size,
-            "triton",
+            "triton_fused",
             output_grads,
         )
         errors = {
@@ -275,11 +308,11 @@ def main():
         }
         if max(errors["output"], errors["final_state"]) >= 2e-5:
             raise AssertionError(
-                f"{update_order} Triton WY forward RMSE failed: {errors}"
+                f"{update_order} fused physical-T forward RMSE failed: {errors}"
             )
         if max(errors["input_gradients"]) >= 1e-4:
             raise AssertionError(
-                f"{update_order} Triton WY gradient RMSE failed: {errors}"
+                f"{update_order} fused physical-T gradient RMSE failed: {errors}"
             )
         output_grads_by_order[update_order] = tuple(
             value.detach() for value in output_grads
@@ -315,9 +348,10 @@ def main():
         "iterations_per_sample": args.iterations_per_sample,
         "memory_repeats": args.memory_repeats,
         "scope": (
-            "operator forward+backward; block-amortized, order-rotated, "
-            "interleaved A/B timing; memory measured separately; not a "
-            "full-model benchmark"
+            "physical-T operator forward+backward; triangular, fused-WY-only, "
+            "and fused-WY-plus-chunk-state/output are order-rotated and "
+            "interleaved; timing is block-amortized, memory is measured "
+            "separately; not a full-model benchmark"
         ),
         "results": results,
     }
