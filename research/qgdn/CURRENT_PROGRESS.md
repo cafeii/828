@@ -244,11 +244,52 @@ V=64 的 `BV=64`，消除共享梯度 atomic；state 保持 `BV=16` 维持并行
 `_qgdn_streaming_wy_bwd_kernel` 约 `5.498 ms`、清零 `0.125 ms`，已经是单一主 kernel。
 prepared-input VJP 中位 `4.554 ms`，是通用 autograd 的碎片化点算子链；profiler 每次约含
 `1.222 ms` mul、`1.044 ms` div、`0.594 ms` sum、`0.584 ms` in-place add 和
-`0.278 ms` neg。后续应优先验证 compact state adjoint 的分层 reverse scan；若继续处理
-prepared-input VJP，应一次融合整条闭式链，而不是微调单个点算子。
+`0.278 ms` neg。若继续处理 prepared-input VJP，应一次融合整条闭式链，而不是微调单个
+点算子；state adjoint 是否应直接改为分层 scan，则由下面的完整路径对照重新判断。
 
 hybrid 是有效的算子级改进，但完整物理算子仍未超过虚拟 2T，因此按门禁不启动整模型
 A/B、不提交新 FineWeb 训练，也不讨论打开默认路径。`QGDN_USE_PHYSICAL_T=False` 不变。
+
+### 为什么物理 T 仍比虚拟 2T 慢
+
+Commit `5aaed694f8a3b6c4d71d52d33dfda44740e33edd` 为同一次完整 physical/virtual
+forward+backward 加入 kernel profile。CPU Slurm 36830 为 `COMPLETED / 0:0`、
+`run.exitcode=0`、138 passed / 48 CUDA skipped；H800 Slurm 36862（实验
+`20260904-160304-physical-virtual-kernel-cuda-ec494c`）为 `COMPLETED / 0:0`、
+`run.exitcode=0`、CUDA JUnit 6/6，所有结果有限。相同 B=4/T=4096/H=16/K=V=64 输入上，
+物理与虚拟算子中位为 `38.689/15.773 ms`，即 `2.453x` 时延。
+
+根因不是简单的 kernel launch 数，而是物理表示没有带来预期的工作量下降，同时落入了效率
+更低的实现形态：
+
+1. **T 减半没有减少 block rank 或 scan depth。** 每个物理 token 是 rank-2，每个虚拟
+   row 是 rank-1；所以两条路径都是每条序列 `8192` 个 rank row。物理 chunk 是
+   `16×rank-2=32 rows`，虚拟 chunk 是 `32×rank-1=32 rows`，在 T=4096 上都恰好有
+   `256` 个 chunk。WY 的 32×32 闭包、跨 chunk 状态依赖和主要 K/V 矩阵乘规模都没有减半。
+2. **rank×2 与 FP32×2 抵消了长度收益。** 当前物理路径将 q/k normalization、rank-2
+   factors、value、WY factors 和 chunk states 全部提升为 FP32，并在 Triton dot 中显式使用
+   `input_precision="ieee"`；虚拟 DPLR 的 q/k/v/a/b、w/u/h 主要保持 BF16，并调用 Hopper
+   autotune kernel。实际 prepared/packed 输入静态字节量约为 `471.9/469.8 MB`；物理 FP32
+   chunk starts 为 `268.4 MB`，是虚拟 BF16 chunk states `134.2 MB` 的两倍。
+3. **所谓 compact state backward 仍串行执行了大量局部 VJP。** 物理
+   `_qgdn_chunk_state_bwd_kernel` 在每个 B/H/BV program 的 256-chunk 逆循环内，不仅传播
+   state adjoint，还重建 transition/read，并计算 left/effective/write/value/decay 的梯度，
+   每 chunk 有多组 FP32 IEEE dot 和 atomic。它单独耗时 `9.552 ms`。虚拟
+   `chunk_dplr_bwd_kernel_dhu` 只保留依赖链，把 intra/WY/output 参数梯度放在 chunk-parallel
+   kernel，state adjoint 仅 `0.478 ms`。因此上一版文档把下一步直接定为 hierarchical scan
+   还不够准确；应先把可并行的 transition VJP 从串行循环剥离。
+4. **WY 与输入 VJP 也失去了成熟融合。** 完整物理调用两次 FP32 streaming-WY forward
+   （正常 forward 和 backward 重算），合计 `6.603 ms`，WY backward `5.461 ms`；物理
+   state/WY/output 六个具名 Triton kernel 合计 `27.702 ms`。虚拟 DPLR 的 13 个对应具名
+   kernel 合计 `11.373 ms`，其中 WY forward prepare+`wu` 两次调用总共 `0.548 ms`、WY
+   backward `0.321 ms`。此外物理 prepared-input VJP 仍是 eager autograd 点算子链，而虚拟
+   input builder 的 forward/backward 已由 Inductor 融合。
+
+这意味着只优化一个小 kernel 不足以翻盘。若仅要求物理算子达到虚拟算子的 `1.25x`，目标
+已经是 `<12.619 ms`，当前还需 `3.07x` 整体提速；20 层整模型还受非 mixer 开销的 Amdahl
+约束，实际门槛更严。正确优先级改为：先拆出 dependency-only state adjoint 与 chunk-parallel
+transition VJP；再审计 BF16 storage/Tensor Core accumulation 及复用 FLA block-WY 的 paired-row
+causal mask；随后融合 physical preparation VJP。只有纯依赖 scan 仍占主导时才做分层 scan。
 
 ## 虚拟 2T 正式训练已提交
 
@@ -295,8 +336,8 @@ Parallel 稳定为 `306.3k token/s`。没有 OOM、Traceback、非有限数值�
 
 ## 当前下一步
 
-1. 对 `BV=16/32/64` 做 CPU/FP64 合约回归、实际 B=4/T=4096 全输入梯度门禁和去相位交错 A/B；
-   继续记录 WY backward 和 prepared-input VJP 的 kernel 开销。
+1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
+   在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
 2. 冻结保留 36311/36312，不修改、取消或重提；其原有监控仍先检查内置 JUnit 门禁，再检查
    loss、grad norm、吞吐、峰值显存、日志新鲜度和 checkpoint 完整性。
 3. 对瞬态 Slurm/NCCL/launcher/存储故障可在同一冻结配置上恢复；OOM、非有限数值或需要改变

@@ -199,9 +199,29 @@ prepared-gradient 相对 RMSE `2.06e-7`。48 轮去相位 A/B 中 hybrid 为 `12
 完整物理算子中位 `38.673 ms`，相对 Slurm 36440 的 `44.898 ms` 提速约 `1.161x`，
 但仍是同次虚拟 2T `15.798 ms` 的 `2.448x` 时延。WY backward 的 `5.625 ms` 几乎全部
 落在单一融合 kernel（`5.498 ms`）；prepared-input VJP 的 `4.554 ms` 则主要分散在
-mul/div/sum/add/neg。当前最佳下一方向是 compact state adjoint 的分层 reverse scan，
-其次才是整条 prepared-input VJP 融合。由于算子尚未超过虚拟 2T，本轮不进入整模型
-A/B，生产默认继续关闭物理 T。
+mul/div/sum/add/neg。由于算子尚未超过虚拟 2T，本轮不进入整模型 A/B，生产默认继续关闭
+物理 T。
+
+Commit `5aaed69` 和 Slurm 36830/36862 又完成了完整 physical/virtual kernel 对照。CPU 为
+138 passed / 48 CUDA skipped；CUDA 为 `COMPLETED / 0:0`、`run.exitcode=0`、JUnit 6/6、
+全部有限。物理/虚拟中位 `38.689/15.773 ms = 2.453x`。核心结论是“物理 T”没有减少真正
+支配 chunk 算法的维度：`T×rank2` 与 `2T×rank1` 都有 8192 个 rank row，物理 chunk16 与
+虚拟 chunk32 都是 32 rank rows，并且都要扫描 256 个 chunk。再加上物理全 FP32/IEEE、
+虚拟主要 BF16/Tensor Core，prepared/packed 静态输入量反而几乎相等（`471.9/469.8 MB`），
+物理 FP32 chunk starts 还是虚拟 BF16 chunk states 的两倍。
+
+kernel 证据进一步定位到 backward 架构：物理 state kernel 把 transition/read 重建和多组
+factor/value/decay VJP 留在 256-chunk 串行循环中，耗时 `9.552 ms`；虚拟 DPLR 只在
+`dhu` kernel 中传播依赖，把其余 VJP chunk-parallel 化，state kernel 仅 `0.478 ms`。
+物理两次 WY forward 加 backward 为 `6.603+5.461=12.064 ms`；虚拟 WY 的
+prepare+`wu` 两次和 backward 仅 `0.548+0.321=0.869 ms`，其余 intra algebra 由独立并行
+kernel 承担。物理六个具名 Triton kernel 合计 `27.702 ms`，虚拟 13 个具名 DPLR kernel
+仅 `11.373 ms`。
+
+因此下一方向从“直接做分层 scan”修正为：先把 dependency-only state adjoint 与每 chunk
+transition VJP 分离，复刻虚拟 DPLR 的串行最小化结构；随后才验证 BF16/Tensor Core WY 与
+prepared-input VJP 融合。当前算子若要达到虚拟的 `1.25x`，需从 `38.689 ms` 降到
+`<12.619 ms`，即至少 `3.07x`，单点微优化不构成可行路线。
 
 专用环境内旧 `torchrun` 文件残留了其他环境的 shebang。DDP 基准和后续作业必须使用当前 Python 启动：
 
@@ -241,3 +261,4 @@ python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 - split backward kernel 级拆分：Slurm 36440（state 9.469 ms / output 9.067 ms / fill 0.399 ms；CUDA JUnit 6/6）
 - 联合 BV16/32/64 审计：Slurm 36443/36445（全梯度通过；state/output 同时加宽因 state 逆扫恶化而否决）
 - output BV64 / state BV16 hybrid：Slurm 36448/36451（CPU 138 passed；CUDA 6/6；split backward 1.482x；峰值显存持平）
+- 完整 physical/virtual kernel 根因对照：Slurm 36830/36862（38.689 vs 15.773 ms；确认 rank-row/chunk 数未下降，串行 state VJP 与 FP32 WY 为关键差距）

@@ -118,15 +118,40 @@ BV64。CPU Slurm 36448 再次获得 138 passed / 48 skipped；H800 Slurm 36451
 `5.498 ms`；prepared-input VJP `4.554 ms` 则主要由 mul `1.222 ms`、div
 `1.044 ms`、sum `0.594 ms`、add_ `0.584 ms`、neg `0.278 ms` 组成。
 
+Slurm 36830/36862 在 commit `5aaed694f8a3b6c4d71d52d33dfda44740e33edd` 上补全了
+两条完整路径的 kernel 对照；CPU 为 138 passed / 48 CUDA skipped，H800 为
+`COMPLETED / 0:0`、`run.exitcode=0`、CUDA JUnit 6/6、全部有限。物理/虚拟中位为
+`38.689/15.773 ms = 2.453x`。关键结论如下：
+
+- 物理 `T×rank2` 与虚拟 `2T×rank1` 都是 8192 个 rank row；chunk16×rank2 与
+  chunk32×rank1 都形成 32-row WY block，且都扫描 256 个 chunk。物理 T 没有降低核心
+  block rank 或依赖深度。
+- 物理 prepared 张量全为 FP32，Triton dot 使用 IEEE；虚拟 DPLR 主张量与状态缓存主要为
+  BF16 并使用 Hopper autotune/Tensor Core。两侧 prepared/packed 静态输入约
+  `471.9/469.8 MB`，而物理 FP32 chunk starts `268.4 MB` 是虚拟 BF16 states
+  `134.2 MB` 的两倍。
+- 物理 state backward `9.552 ms` 仍把可独立的 transition/read 重建和
+  left/effective/write/value/decay VJP 放在 256-chunk 串行循环内；虚拟 DPLR 将这些工作拆到
+  chunk-parallel kernel，其 dependency-only `dhu` 只有 `0.478 ms`。
+- 物理两次 WY forward 共 `6.603 ms`、WY backward `5.461 ms`，还另有 eager prepared
+  VJP；虚拟 WY forward/backward 的直接 kernel 总计只有 `0.869 ms`，intra algebra 也由
+  BF16/autotuned 并行 kernel 承担。物理六个具名 Triton kernel 总计 `27.702 ms`，虚拟
+  13 个 DPLR kernel 为 `11.373 ms`。
+
+因此当前差距是表示与 kernel 架构共同造成的，不是再调一个 block size 就能消除。把物理
+算子做到虚拟的 `1.25x` 要求 `<12.619 ms`，相对当前至少还需 `3.07x`；整模型门槛因
+Amdahl 定律会更严格。
+
 接下来的优先顺序应为：
 
-1. 为 compact state-adjoint scan 设计分层 associative reverse scan，同时保留 BV16 作为
-   数值和性能对照。
-2. 若 state scan 不能取得实质收益，再把 prepared-input VJP 的完整闭式链融合为少量 kernel；
-   不对已是单一主 kernel 的 WY backward 做无证据微调。
-3. 每个候选先通过三种顺序的 CPU/FP64 与 H800 全梯度门禁。
-4. 只有实际 T=4096 算子超过虚拟 2T，并且整模型 micro batch 8 不 OOM，才进入完整 A/B。
-5. 只有整模型相对虚拟 2T 稳定快 `>1.25x` 且显存不恶化，才能考虑打开默认开关。
+1. 先将 dependency-only state adjoint 与每 chunk transition VJP 分离；串行 kernel 只保留
+   必须跨 chunk 传播的 K×V adjoint，factor/value/decay 梯度全部 chunk-parallel 化。
+2. 在分离后的并行 VJP 与 WY 中审计 BF16 storage、FP32 accumulation 和 Tensor Core dot，
+   优先复用/改造 FLA block-WY，只改变 paired-row causal mask。
+3. 融合 physical preparation 的 forward/VJP；只有纯 state 依赖仍主导时才尝试分层 scan。
+4. 每个候选先通过三种顺序的 CPU/FP64 与 H800 全梯度门禁。
+5. 只有实际 T=4096 算子超过虚拟 2T，并且整模型 micro batch 8 不 OOM，才进入完整 A/B。
+6. 只有整模型相对虚拟 2T 稳定快 `>1.25x` 且显存不恶化，才能考虑打开默认开关。
 
 ## 当前训练路线
 
