@@ -374,6 +374,15 @@ gamma 初始化。它与 GDN、Parallel、Delta→Recall 的 commit、数据、s
 checkpointing、验证口径和 10BT 终点完全相同；作业已原子查重并记录，当前
 `PENDING (Priority)`。半小时监控现扩展为四路严格对齐。
 
+GDN control 随后在 dgx25 获配并进入训练，preflight JUnit `6/6`，截至 step 1391 的
+loss、grad norm 和门控统计全部有限；最近 40 点吞吐中位为 `866.0k token/s`，峰值显存
+`56.82 GB`。共同 step 1391 的近 20 点训练 loss 为 GDN `3.25359`、Parallel
+`3.25499`、Delta→Recall `3.25668`，这是 GDN 略优的早期训练信号，需等待共同 step 2000
+validation 再判断。该点 GDN alpha/beta mean/std 为 `0.69946 / 0.33857`、
+`0.28540 / 0.16762`（gamma 不适用）；Parallel beta 与 gamma mean/std/饱和率为
+`0.28319 / 0.16566`、`0.46390 / 0.31074 / 8.90%`；Delta→Recall 为
+`0.26978 / 0.16564`、`0.25526 / 0.22255 / 1.48%`。Recall→Delta 仍正常排队。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；

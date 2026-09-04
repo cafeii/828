@@ -86,6 +86,14 @@ Recall→Delta 的严格对齐训练也已提交：实验
 validation、10BT 配方均与另外三路一致，gamma 为当前 beta-style 独立 Xavier 随机初始化。
 当前 `PENDING (Priority)`；后续报告将以 GDN 加三种更新顺序组成四路共同节点比较。
 
+GDN control 已在 dgx25 开始训练，preflight JUnit `6/6`。截至共同 step 1391，近 20 点
+loss 为 GDN `3.25359`、Parallel `3.25499`、Delta→Recall `3.25668`；GDN 最近 40 点
+吞吐中位 `866.0k token/s`、峰值显存 `56.82 GB`，另外两路约 `306.4k/297.8k
+token/s`、`77.06 GB`。GDN alpha/beta mean/std 为 `0.69946 / 0.33857`、
+`0.28540 / 0.16762`（gamma 不适用）；Parallel beta 与 gamma mean/std/饱和率为
+`0.28319 / 0.16566`、`0.46390 / 0.31074 / 8.90%`；Delta→Recall 为
+`0.26978 / 0.16564`、`0.25526 / 0.22255 / 1.48%`。该训练窗口尚不能替代共同 validation。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |
