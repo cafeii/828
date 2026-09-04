@@ -20,6 +20,7 @@ from lit_gpt.mixers.qgdn_reference import (
     qgdn_rank2_reference,
     qgdn_reference,
 )
+from lit_gpt.mixers.qgdn_training_kernel import _prepare_physical_chunks
 from lit_gpt.mixers.qgdn_wy_kernel import (
     _qgdn_streaming_wy_recompute_bwd,
     _qgdn_streaming_wy_torch_fwd,
@@ -40,6 +41,78 @@ def inputs(T=7, K=4, V=3, dtype=torch.float64, device="cpu", gamma_value=None):
 
 
 UPDATE_ORDERS = ("recall_then_delta", "delta_then_recall", "parallel")
+
+
+@pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+def test_physical_training_preparation_matches_dense_fp64_all_gradients(
+    update_order,
+):
+    expected_inputs = inputs(T=5, K=4, V=3)
+    expected = dense(
+        *expected_inputs,
+        recall_mode="query",
+        update_order=update_order,
+    )
+    weights = [torch.randn_like(value) for value in expected]
+    expected_gradients = torch.autograd.grad(
+        sum(
+            (value * weight).sum()
+            for value, weight in zip(expected, weights)
+        ),
+        expected_inputs,
+    )
+
+    actual_inputs = [
+        value.detach().clone().requires_grad_() for value in expected_inputs
+    ]
+    prepared, length, padded_length = _prepare_physical_chunks(
+        *actual_inputs,
+        recall_mode="query",
+        update_order=update_order,
+        chunk_size=3,
+    )
+    (
+        queries,
+        decay_prefix,
+        normalized_left,
+        right,
+        normalized_write,
+        values,
+        initial_state,
+    ) = prepared
+    effective_right, write_reads = _qgdn_streaming_wy_torch_fwd(
+        normalized_left,
+        right,
+        normalized_write,
+        values,
+    )
+    output_chunks, final_state = _qgdn_chunk_state_output_torch(
+        queries,
+        decay_prefix,
+        normalized_left,
+        effective_right,
+        write_reads,
+        normalized_write,
+        values,
+        initial_state,
+        output_scale=queries.shape[-1] ** -0.5,
+    )
+    batch, heads, _, _, value_dim = output_chunks.shape
+    output = output_chunks.permute(0, 2, 3, 1, 4).reshape(
+        batch, padded_length, heads, value_dim
+    )[:, :length]
+    actual = (output, final_state)
+    actual_gradients = torch.autograd.grad(
+        sum(
+            (value * weight).sum()
+            for value, weight in zip(actual, weights)
+        ),
+        actual_inputs,
+    )
+    for value, reference in zip(actual, expected):
+        torch.testing.assert_close(value, reference, rtol=4e-12, atol=4e-12)
+    for value, reference in zip(actual_gradients, expected_gradients):
+        torch.testing.assert_close(value, reference, rtol=1e-10, atol=1e-10)
 
 
 def dense(q, k, v, g, beta, gamma, state, recall_mode="query", update_order="recall_then_delta"):
@@ -849,7 +922,7 @@ def test_physical_t_training_path_remains_disabled_by_default():
     rule_module = importlib.import_module("lit_gpt.mixers.qgdn_rule")
     assert rule_module.QGDN_USE_PHYSICAL_T is False
     assert rule_module.QGDN_PHYSICAL_T_CHUNK_SIZE == 16
-    assert rule_module.QGDN_RECOMPUTE_PHYSICAL_T_CHUNK_STARTS is True
+    assert rule_module.QGDN_RECOMPUTE_PHYSICAL_T_PREPARED_TENSORS is True
 
 
 @pytest.mark.parametrize("mixer", ["gdn", "qgdn"])

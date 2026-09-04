@@ -27,9 +27,11 @@ QGDN_USE_PHYSICAL_T = False
 # map per 16 real tokens.  Keep this independent of the virtual 2T DPLR row
 # count above: changing one backend must not silently retune the other.
 QGDN_PHYSICAL_T_CHUNK_SIZE = 16
-# The state/output custom backward reconstructs chunk-start states with the
-# compact state kernel instead of retaining one [B,H,N,K,V] tape per layer.
-QGDN_RECOMPUTE_PHYSICAL_T_CHUNK_STARTS = True
+# The training autograd boundary retains only the original model inputs.  Its
+# backward rebuilds rank-2/WY factors and chunk starts before invoking the two
+# existing fused Triton adjoints, instead of retaining FP32 prepared tensors
+# in every model layer.
+QGDN_RECOMPUTE_PHYSICAL_T_PREPARED_TENSORS = True
 # Optional audited lower bound for the physical log-decay.  Supplying it lets
 # FLA select its tensor-core DPLR backend.  The production default remains
 # unset until the candidate has passed the numerical and throughput gates.
@@ -166,9 +168,9 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
         # in parallel, then fused Triton kernels scan only the compact chunk
         # states and recover all within-chunk outputs.  This replaces the old
         # token-serial physical kernel; it never constructs virtual 2T rows.
-        from .qgdn_reference import qgdn_rank2_parallel_wy_reference
+        from .qgdn_training_kernel import qgdn_physical_training
 
-        output, state = qgdn_rank2_parallel_wy_reference(
+        output, state = qgdn_physical_training(
             q,
             k,
             v,
@@ -180,8 +182,6 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
             scale=scale,
             initial_state=initial_state,
             chunk_size=QGDN_PHYSICAL_T_CHUNK_SIZE,
-            wy_backend="triton",
-            state_backend="triton",
         )
         return output.to(q.dtype), state if output_final_state else None
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
