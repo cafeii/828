@@ -94,6 +94,28 @@ token/s`、`77.06 GB`。GDN alpha/beta mean/std 为 `0.69946 / 0.33857`、
 `0.28319 / 0.16566`、`0.46390 / 0.31074 / 8.90%`；Delta→Recall 为
 `0.26978 / 0.16564`、`0.25526 / 0.22255 / 1.48%`。该训练窗口尚不能替代共同 validation。
 
+Recall→Delta 也已在 dgx12 启动并通过 6/6 preflight。共同 step 1831 的近 20 点 loss 为
+Recall→Delta `3.15765`、GDN `3.15855`、Parallel `3.16001`、Delta→Recall `3.16071`，
+四路最大差 `0.00305`。此时 Recall→Delta beta mean/std 与 gamma
+mean/std/饱和率为 `0.27871 / 0.16365`、`0.45872 / 0.31359 / 9.27%`；Parallel 为
+`0.27695 / 0.16287`、`0.45344 / 0.31355 / 8.90%`；Delta→Recall 为
+`0.26491 / 0.16301`、`0.23995 / 0.22010 / 1.63%`。GDN alpha/beta mean/std 为
+`0.69561 / 0.34028`、`0.27701 / 0.16435`，gamma 不适用。
+
+首次四路共同 step-2000 validation 已完成：Recall→Delta、GDN、Parallel、
+Delta→Recall 的 loss/PPL 依次为 `3.140643 / 23.11873`、`3.141821 / 23.14598`、
+`3.142662 / 23.16546`、`3.143802 / 23.19188`。Recall→Delta 当前相对 GDN 低
+`0.001178` loss 和约 `0.118%` PPL；幅度很小且只有一个共同验证点，继续等 step 4000
+及以后节点再判断。
+
+在已经覆盖到 step 10000 的三路共同 validation，GDN、Parallel、Delta→Recall 的
+loss/PPL 分别为 `2.797239 / 16.39930`、`2.796521 / 16.38754`、
+`2.798008 / 16.41192`。Parallel 相对 GDN 只低 `0.000718` loss，Delta→Recall 只高
+`0.000769`，当前应视为基本持平。最近 40 点吞吐中位为 GDN `866.8k`、Recall→Delta
+`310.0k`、Parallel `306.5k`、Delta→Recall `299.5k token/s`；峰值显存为
+`56.82 / 77.03 / 77.06 / 77.06 GB`。四路数值和 checkpoint 均正常，Recall→Delta 的
+step-4000 validation 完成后再进行第二次四路验证比较。
+
 ## 8 卡结果
 
 | 配置 | 稳态吞吐 | 预计 10B 时间 | 预计 15B 时间 | 峰值显存 |
