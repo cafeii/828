@@ -457,6 +457,13 @@ Recall→Delta 的 step-8000 validation 继续给出同方向的小幅领先：l
 训练 loss `2.79276`，beta mean/std `0.29113 / 0.16856`，gamma
 mean/std/饱和率 `0.40867 / 0.30169 / 5.03%`，全部有限。
 
+step-10000 validation 的方向仍未改变：Recall→Delta loss/PPL 为
+`2.795812 / 16.37592`，相对 GDN `2.797239 / 16.39930` 低 `0.001427` loss、
+`0.143%` PPL；Parallel 与 Delta→Recall 的 PPL 为 `16.38754 / 16.41192`。
+Recall→Delta 当前通过 step `10041`，近 20 点 loss `2.77754`，beta mean/std
+`0.29425 / 0.16960`，gamma mean/std/饱和率 `0.40715 / 0.30161 / 4.97%`；持续
+有限且 checkpoint 已更新。
+
 ## 固定 gamma=1 消融已启动
 
 为直接检验可学习 gamma 是否将 recall 压弱，commit
@@ -497,6 +504,12 @@ beta 与 gamma 统计全部有限，gamma 在所有已观测 step 上严格为 `
 `0.375%` PPL；Parallel 为 `3.146042 / 23.24387`，比同顺序 beta-style gamma 的
 `3.142662 / 23.16546` 高约 `0.338%` PPL。这是单个早期验证点，只构成固定强 recall
 略差的初步信号，需等后续共同节点确认。
+
+第二个共同 step-4000 validation 加强了该信号。固定 gamma=1 的 Recall→Delta
+loss/PPL 为 `2.977149 / 19.63176`，比同顺序 beta-style 高 `0.442%` PPL；Parallel
+为 `2.977474 / 19.63815`，比同顺序 beta-style 高 `0.227%`。两路也分别比 GDN
+高 `0.274% / 0.306%` PPL。gamma 全部训练记录仍严格为 `1.0 / 0.0 / 100%`，loss、
+梯度和 checkpoint 正常；连续两个验证点都不支持固定强 recall 带来收益。
 
 ## 可训练 gamma∼U(0.85, 0.95) 消融已启动
 
@@ -555,6 +568,14 @@ Recall→Delta/Parallel 依次为 `3.05604 / 3.05721 / 3.05844 / 3.05874 / 3.058
 `0.57741 / 0.31262 / 15.75%` 与 `0.57582 / 0.31047 / 15.26%`。饱和率已从约 19%
 回落到约 15%，说明目前是可逆的 gate 极化而非持续塌缩；loss、梯度、吞吐和 checkpoint
 均正常。
+
+共同 step `3851` 的近 20 点 loss 为 Recall→Delta beta-style `2.96540`、GDN
+`2.96631`、Parallel beta-style `2.96707`、Parallel 高 gamma `2.96738`、
+Recall→Delta 高 gamma `2.96783`、Delta→Recall beta-style `2.96877`、固定 gamma=1
+Recall→Delta/Parallel `2.96963 / 2.97008`。高 gamma 两路的 beta mean/std 为
+`0.27336 / 0.15795` 与 `0.27076 / 0.15722`，gamma mean/std/饱和率为
+`0.55068 / 0.31397 / 13.62%` 与 `0.55053 / 0.31249 / 13.10%`。饱和率继续缓慢
+回落，未见数值异常；需等待即将到达的 step-4000 validation 再做效果判断。
 
 ## 当前下一步
 

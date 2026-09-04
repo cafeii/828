@@ -138,6 +138,10 @@ Recall→Delta 到达 step 8000 后，四路 validation loss/PPL 为 Recall→De
 GDN 的 PPL 低约 `0.112%`；它在四个共同验证节点方向一致地领先，但量级仍只有千分之一，
 继续等待完整训练终点。
 
+step-10000 时 Recall→Delta 的 loss/PPL 为 `2.795812 / 16.37592`，相对 GDN
+`2.797239 / 16.39930` 低 `0.001427` loss、`0.143%` PPL，也小幅优于 Parallel
+`16.38754` 和 Delta→Recall `16.41192`。五个共同验证点方向一致，但收益仍只有约千分之一。
+
 四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
 `2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
 `2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`
@@ -353,6 +357,11 @@ Recall→Delta loss/PPL 为 `3.144389 / 23.20549`，相对同顺序 beta-style g
 同顺序 beta-style gamma 的 `3.142662 / 23.16546` 高 `0.338%` PPL。两路最近 20 点
 吞吐约 `316.02k / 313.21k token/s`，峰值显存不变；单个早期节点尚不足以下最终结论。
 
+step-4000 validation 中，固定 gamma=1 Recall→Delta/Parallel 的 loss/PPL 为
+`2.977149 / 19.63176`、`2.977474 / 19.63815`，比同顺序 beta-style gamma 分别高
+`0.442% / 0.227%` PPL，也都差于 GDN `19.57818`。两路全部训练记录的 gamma 仍严格
+为 `1/0/100%`，数值正常；连续两个共同验证点均显示固定强 recall 略差。
+
 ## 可训练高 gamma 初始化消融
 
 Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
@@ -391,6 +400,12 @@ beta-style gamma 分别高 `0.181% / 0.064%` PPL，但比固定 gamma=1 分别�
 `0.26994 / 0.15825`，gamma mean/std/饱和率为 `0.57741 / 0.31262 / 15.75%` 与
 `0.57582 / 0.31047 / 15.26%`。饱和率从 step 1291 的约 19% 回落，暂未演变为单调塌缩；
 两路所有数值有限，最近 20 点吞吐约 `312.15k / 309.44k token/s`。
+
+共同 step `3851` 时，高 gamma Recall→Delta / Parallel 的近 20 点 loss 为
+`2.96783 / 2.96738`，beta mean/std 为 `0.27336 / 0.15795` 与
+`0.27076 / 0.15722`，gamma mean/std/饱和率为 `0.55068 / 0.31397 / 13.62%` 与
+`0.55053 / 0.31249 / 13.10%`。饱和率延续从 19% 向下回落的趋势，所有指标有限；
+两路距 step-4000 validation 仅约 150 step。
 
 ## 复现实验
 
