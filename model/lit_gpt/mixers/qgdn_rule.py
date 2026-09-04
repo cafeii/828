@@ -27,11 +27,9 @@ QGDN_USE_PHYSICAL_T = False
 # map per 16 real tokens.  Keep this independent of the virtual 2T DPLR row
 # count above: changing one backend must not silently retune the other.
 QGDN_PHYSICAL_T_CHUNK_SIZE = 16
-# Factor preparation and the two custom kernels otherwise leave several FP32
-# chunk tensors live in every model layer until backward.  Selective
-# recomputation keeps only the operator inputs across layers, while the custom
-# Triton backward remains responsible for the actual recurrence gradients.
-QGDN_CHECKPOINT_PHYSICAL_T = True
+# The state/output custom backward reconstructs chunk-start states with the
+# compact state kernel instead of retaining one [B,H,N,K,V] tape per layer.
+QGDN_RECOMPUTE_PHYSICAL_T_CHUNK_STARTS = True
 # Optional audited lower bound for the physical log-decay.  Supplying it lets
 # FLA select its tensor-core DPLR backend.  The production default remains
 # unset until the candidate has passed the numerical and throughput gates.
@@ -170,36 +168,21 @@ def qgdn_rule(q, k, v, g, beta, gamma, *, recall_mode="query",
         # token-serial physical kernel; it never constructs virtual 2T rows.
         from .qgdn_reference import qgdn_rank2_parallel_wy_reference
 
-        physical_inputs = (q, k, v, g, beta, gamma) + (
-            () if initial_state is None else (initial_state,)
+        output, state = qgdn_rank2_parallel_wy_reference(
+            q,
+            k,
+            v,
+            g,
+            beta,
+            gamma,
+            recall_mode=recall_mode,
+            update_order=update_order,
+            scale=scale,
+            initial_state=initial_state,
+            chunk_size=QGDN_PHYSICAL_T_CHUNK_SIZE,
+            wy_backend="triton",
+            state_backend="triton",
         )
-
-        def run_physical(*inputs):
-            return qgdn_rank2_parallel_wy_reference(
-                *inputs[:6],
-                recall_mode=recall_mode,
-                update_order=update_order,
-                scale=scale,
-                initial_state=None if len(inputs) == 6 else inputs[6],
-                chunk_size=QGDN_PHYSICAL_T_CHUNK_SIZE,
-                wy_backend="triton",
-                state_backend="triton",
-            )
-
-        requires_backward = torch.is_grad_enabled() and any(
-            value.requires_grad for value in physical_inputs
-        )
-        if QGDN_CHECKPOINT_PHYSICAL_T and requires_backward:
-            from torch.utils.checkpoint import checkpoint
-
-            output, state = checkpoint(
-                run_physical,
-                *physical_inputs,
-                use_reentrant=False,
-                preserve_rng_state=False,
-            )
-        else:
-            output, state = run_physical(*physical_inputs)
         return output.to(q.dtype), state if output_final_state else None
     from fla.ops.generalized_delta_rule.dplr import chunk_dplr_delta_rule, fused_recurrent_dplr_delta_rule
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule

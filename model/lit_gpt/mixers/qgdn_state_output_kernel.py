@@ -569,6 +569,49 @@ def _launch_config(chunk_size: int, key_dim: int):
     )
 
 
+def _qgdn_chunk_state_cuda_fwd(
+    normalized_left,
+    effective_right,
+    write_reads,
+    normalized_write,
+    values,
+    decay_prefix,
+    initial_state,
+):
+    batch, heads, chunks, chunk_size, _, key_dim = normalized_left.shape
+    value_dim = values.shape[-1]
+    chunk_starts = initial_state.new_empty(
+        batch, heads, chunks, key_dim, value_dim
+    )
+    final_state = torch.empty_like(initial_state)
+    block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
+    state_value_block = 32
+    _qgdn_chunk_state_fwd_kernel[
+        (batch * heads, triton.cdiv(value_dim, state_value_block))
+    ](
+        normalized_left,
+        effective_right,
+        write_reads,
+        normalized_write,
+        values,
+        decay_prefix,
+        initial_state,
+        chunk_starts,
+        final_state,
+        N=chunks,
+        K=key_dim,
+        V=value_dim,
+        BT=chunk_size,
+        BM=block_rows,
+        BK=block_key,
+        BV=state_value_block,
+        BWT=block_time,
+        num_warps=8,
+        num_stages=2,
+    )
+    return chunk_starts, final_state
+
+
 def _qgdn_chunk_state_output_cuda_fwd(
     queries,
     decay_prefix,
@@ -613,14 +656,7 @@ def _qgdn_chunk_state_output_cuda_fwd(
         values,
         initial_state,
     ) = inputs
-    chunk_starts = initial_state.new_empty(
-        batch, heads, chunks, key_dim, value_dim
-    )
-    final_state = torch.empty_like(initial_state)
-    outputs = values.new_empty(batch, heads, chunks, chunk_size, value_dim)
-    block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
-    state_value_block = 32
-    _qgdn_chunk_state_fwd_kernel[(batch * heads, triton.cdiv(value_dim, state_value_block))](
+    chunk_starts, final_state = _qgdn_chunk_state_cuda_fwd(
         normalized_left,
         effective_right,
         write_reads,
@@ -628,19 +664,10 @@ def _qgdn_chunk_state_output_cuda_fwd(
         values,
         decay_prefix,
         initial_state,
-        chunk_starts,
-        final_state,
-        N=chunks,
-        K=key_dim,
-        V=value_dim,
-        BT=chunk_size,
-        BM=block_rows,
-        BK=block_key,
-        BV=state_value_block,
-        BWT=block_time,
-        num_warps=8,
-        num_stages=2,
     )
+    outputs = values.new_empty(batch, heads, chunks, chunk_size, value_dim)
+    block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
+    state_value_block = 32
     _qgdn_chunk_output_fwd_kernel[(batch * heads * chunks, triton.cdiv(value_dim, state_value_block))](
         queries,
         normalized_left,
@@ -754,7 +781,7 @@ class _QGDNChunkStateOutput(torch.autograd.Function):
         initial_state,
         output_scale,
     ):
-        outputs, final_state, chunk_starts, saved_inputs = (
+        outputs, final_state, _chunk_starts, saved_inputs = (
             _qgdn_chunk_state_output_cuda_fwd(
                 queries,
                 decay_prefix,
@@ -767,19 +794,30 @@ class _QGDNChunkStateOutput(torch.autograd.Function):
                 output_scale,
             )
         )
-        ctx.save_for_backward(*saved_inputs, chunk_starts)
+        # Chunk starts dominate the tensors retained across model layers.
+        # Recreate them once with the compact state kernel during backward.
+        ctx.save_for_backward(*saved_inputs)
         ctx.output_scale = output_scale
         return outputs, final_state
 
     @staticmethod
     def backward(ctx, grad_outputs, grad_final_state):
-        *saved_inputs, chunk_starts = ctx.saved_tensors
+        saved_inputs = ctx.saved_tensors
         values = saved_inputs[6]
         initial_state = saved_inputs[7]
         if grad_outputs is None:
             grad_outputs = torch.zeros_like(values)
         if grad_final_state is None:
             grad_final_state = torch.zeros_like(initial_state)
+        chunk_starts, _ = _qgdn_chunk_state_cuda_fwd(
+            saved_inputs[2],
+            saved_inputs[3],
+            saved_inputs[4],
+            saved_inputs[5],
+            values,
+            saved_inputs[1],
+            initial_state,
+        )
         gradients = _qgdn_chunk_state_output_cuda_bwd(
             saved_inputs,
             chunk_starts,

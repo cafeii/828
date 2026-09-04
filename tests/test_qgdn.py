@@ -849,7 +849,7 @@ def test_physical_t_training_path_remains_disabled_by_default():
     rule_module = importlib.import_module("lit_gpt.mixers.qgdn_rule")
     assert rule_module.QGDN_USE_PHYSICAL_T is False
     assert rule_module.QGDN_PHYSICAL_T_CHUNK_SIZE == 16
-    assert rule_module.QGDN_CHECKPOINT_PHYSICAL_T is True
+    assert rule_module.QGDN_RECOMPUTE_PHYSICAL_T_CHUNK_STARTS is True
 
 
 @pytest.mark.parametrize("mixer", ["gdn", "qgdn"])

@@ -234,7 +234,9 @@ def main() -> None:
         "candidate": args.only,
         "physical_t": physical,
         "physical_t_chunk_size": qgdn_rule.QGDN_PHYSICAL_T_CHUNK_SIZE,
-        "physical_t_checkpoint": qgdn_rule.QGDN_CHECKPOINT_PHYSICAL_T,
+        "physical_t_recompute_chunk_starts": (
+            qgdn_rule.QGDN_RECOMPUTE_PHYSICAL_T_CHUNK_STARTS
+        ),
         "result": result,
     }
     write_json(args.output, report)
