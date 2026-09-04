@@ -94,13 +94,13 @@ class BasedSQUADCompletion(ConfigurableTask):
         from math import exp
         no_answer_probability = exp(logprob_unanswerable)
         predictions = {
-            "id": doc["new_id"],
+            "id": str(doc["new_id"]),  # PATCH(rnn工作区): evaluate 版 squad_v2 要求 string id
             "prediction_text": continuation,
             "no_answer_probability": no_answer_probability,
         }
 
         references = {
-            "id": doc["new_id"],
+            "id": str(doc["new_id"]),  # PATCH(rnn工作区): evaluate 版 squad_v2 要求 string id
             "answers": {'text':[doc["value"]], 'answer_start':[]}
         }
 

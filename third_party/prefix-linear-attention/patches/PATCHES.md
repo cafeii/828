@@ -52,3 +52,9 @@
 - 改为 `evaluate.load("squad_v2")`（evaluate 库同源实现，compute 接口一致，任务传入的
   predictions 含 no_answer_probability，格式兼容）。已在登录节点用同一 HF_HOME 预热缓存，
   离线 reload + compute 实测通过。
+
+## 6. based_squadv2/based_triviaqa：squad_v2 的 id 字段转 str（36949 实测）
+
+- evaluate 版 squad_v2 严格校验 schema（id 须 string），原版传 int（doc["new_id"]）→
+  聚合阶段 ValueError。两文件的 predictions/references 的 id 均包 str()。
+- 仅类型转换，不改变任何评分语义。

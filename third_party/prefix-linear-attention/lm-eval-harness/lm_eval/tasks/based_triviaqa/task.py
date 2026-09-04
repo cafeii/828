@@ -114,12 +114,12 @@ class BasedTriviaQA(ConfigurableTask):
         no_answer_probability = exp(logprob_unanswerable)
 
         predictions = {
-            "id": doc["doc_id"],
+            "id": str(doc["doc_id"]),  # PATCH(rnn工作区): 同 squad_v2 string id 要求（原多为 str，防御）
             "prediction_text": continuation,
             "no_answer_probability": no_answer_probability,
         }
         references = {
-            "id": doc["doc_id"],
+            "id": str(doc["doc_id"]),  # PATCH(rnn工作区): 同 squad_v2 string id 要求（原多为 str，防御）
             "answers": {'text':doc["answers"], 'answer_start':[]}
         }
 
