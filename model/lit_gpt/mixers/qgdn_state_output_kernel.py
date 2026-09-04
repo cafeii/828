@@ -1292,7 +1292,8 @@ def _qgdn_chunk_state_output_cuda_bwd(
     grad_final_state,
     output_scale,
     *,
-    value_block=32,
+    output_value_block=64,
+    state_value_block=16,
 ):
     """Parallelize output adjoints, then scan only compact state adjoints."""
     (
@@ -1307,8 +1308,10 @@ def _qgdn_chunk_state_output_cuda_bwd(
     ) = saved_inputs
     batch, heads, chunks, chunk_size, _, key_dim = normalized_left.shape
     value_dim = values.shape[-1]
-    if value_block not in {16, 32, 64}:
-        raise ValueError("value_block must be one of 16, 32, or 64")
+    if output_value_block not in {16, 32, 64}:
+        raise ValueError("output_value_block must be one of 16, 32, or 64")
+    if state_value_block not in {16, 32, 64}:
+        raise ValueError("state_value_block must be one of 16, 32, or 64")
     grad_outputs = grad_outputs.contiguous()
     grad_final_state = grad_final_state.contiguous()
     grad_queries = torch.zeros_like(queries)
@@ -1322,7 +1325,7 @@ def _qgdn_chunk_state_output_cuda_bwd(
     grad_initial_state = torch.empty_like(initial_state)
     block_rows, block_key, block_time = _launch_config(chunk_size, key_dim)
     _qgdn_chunk_output_bwd_kernel[
-        (batch * heads * chunks, triton.cdiv(value_dim, value_block))
+        (batch * heads * chunks, triton.cdiv(value_dim, output_value_block))
     ](
         queries,
         normalized_left,
@@ -1348,13 +1351,13 @@ def _qgdn_chunk_state_output_cuda_bwd(
         BT=chunk_size,
         BM=block_rows,
         BK=block_key,
-        BV=value_block,
+        BV=output_value_block,
         BWT=block_time,
         num_warps=8,
         num_stages=2,
     )
     _qgdn_chunk_state_bwd_kernel[
-        (batch * heads, triton.cdiv(value_dim, value_block))
+        (batch * heads, triton.cdiv(value_dim, state_value_block))
     ](
         normalized_left,
         effective_right,
@@ -1378,7 +1381,7 @@ def _qgdn_chunk_state_output_cuda_bwd(
         BT=chunk_size,
         BM=block_rows,
         BK=block_key,
-        BV=value_block,
+        BV=state_value_block,
         BWT=block_time,
         num_warps=8,
         num_stages=2,

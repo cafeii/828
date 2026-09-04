@@ -184,8 +184,8 @@ def main() -> None:
         raise ValueError("at least three measured samples are required")
     if args.kernel_profile_iterations < 1:
         raise ValueError("kernel profile iterations must be positive")
-    if args.candidate_measured < 6:
-        raise ValueError("candidate measurements must cover all six backend orders")
+    if args.candidate_measured < 24:
+        raise ValueError("candidate measurements must cover all 24 backend orders")
 
     numerics = configure_numerics()
     from lit_gpt.mixers.qgdn_rule import qgdn_rule
@@ -310,14 +310,15 @@ def main() -> None:
             args.width**-0.5,
         )
 
-    def state_output_backward_with_block(value_block):
+    def state_output_backward_with_blocks(output_value_block, state_value_block):
         return _qgdn_chunk_state_output_cuda_bwd(
             state_inputs,
             chunk_starts,
             grad_outputs,
             grad_final_state,
             args.width**-0.5,
-            value_block=value_block,
+            output_value_block=output_value_block,
+            state_value_block=state_value_block,
         )
 
     def state_output_backward_serial():
@@ -394,15 +395,19 @@ def main() -> None:
         name: measure(function, warmup=args.warmup, measured=args.measured)
         for name, function in functions.items()
     }
+    value_block_configs = {
+        "out16_state16": (16, 16),
+        "out32_state32": (32, 32),
+        "out64_state64": (64, 64),
+        "out64_state16": (64, 16),
+    }
     value_block_functions = {
-        f"bv{value_block}": (
-            lambda value_block=value_block: state_output_backward_with_block(value_block)
-        )
-        for value_block in (16, 32, 64)
+        name: (lambda blocks=blocks: state_output_backward_with_blocks(*blocks))
+        for name, blocks in value_block_configs.items()
     }
     value_block_numerics = {}
     with torch.no_grad():
-        control_gradients = state_output_backward_with_block(16)
+        control_gradients = state_output_backward_with_blocks(16, 16)
         for name, function in value_block_functions.items():
             candidate_gradients = function()
             relative_rmse = []
@@ -471,29 +476,31 @@ def main() -> None:
             "wy_programs": args.batch_size * args.heads * chunks,
             "state_scan_programs": args.batch_size * args.heads * 2,
             "parallel_output_backward_programs": {
-                str(value_block): (
+                name: (
                     args.batch_size
                     * args.heads
                     * chunks
-                    * math.ceil(args.width / value_block)
+                    * math.ceil(args.width / blocks[0])
                 )
-                for value_block in (16, 32, 64)
+                for name, blocks in value_block_configs.items()
             },
             "compact_state_backward_programs": {
-                str(value_block): (
+                name: (
                     args.batch_size
                     * args.heads
-                    * math.ceil(args.width / value_block)
+                    * math.ceil(args.width / blocks[1])
                 )
-                for value_block in (16, 32, 64)
+                for name, blocks in value_block_configs.items()
             },
             "serial_chunks_per_state_program": chunks,
             "note": "the split backward makes output adjoints chunk-parallel; only the compact state adjoint loops over chunks",
         },
         "timings": timings,
         "value_block_audit": {
-            "default_value_block": 32,
-            "numerics_vs_bv16": value_block_numerics,
+            "default_output_value_block": 64,
+            "default_state_value_block": 16,
+            "configs": value_block_configs,
+            "numerics_vs_out16_state16": value_block_numerics,
             "interleaved_timings": value_block_timings,
             "peak_allocated_bytes": value_block_peaks,
             "tokens_per_second": {
