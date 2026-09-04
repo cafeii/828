@@ -149,6 +149,13 @@ step-12000 时 Recall→Delta 的 loss/PPL 为 `2.761304 / 15.82045`，相对 GD
 `0.29498 / 0.17073`，gamma mean/std/饱和率 `0.40377 / 0.30137 / 4.79%`，稳态吞吐
 约 `310.1k token/s`。
 
+step-14000 的 Recall→Delta loss/PPL 为 `2.733998 / 15.39431`，相对 GDN
+`2.735018 / 15.41002` 低 `0.001020` loss、`0.102%` PPL；Parallel 与 Delta→Recall
+的 PPL 为 `15.40296 / 15.43278`。作业现至 step `14111`，近 20 点 loss
+`2.70426`，beta mean/std `0.29606 / 0.17186`，gamma mean/std/饱和率
+`0.40063 / 0.30156 / 4.76%`，稳态吞吐约 `310.2k token/s`。七个共同节点方向一致，
+但收益仍是约千分之一的小信号。
+
 四路 step-4000 validation 的 loss/PPL 为 Recall→Delta `2.972738 / 19.54537`、GDN
 `2.974415 / 19.57818`、Parallel `2.975204 / 19.59361`、Delta→Recall
 `2.976156 / 19.61229`。Recall→Delta 连续第二个共同节点领先 GDN，本次低 `0.001677`

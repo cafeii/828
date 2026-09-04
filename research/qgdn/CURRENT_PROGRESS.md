@@ -471,6 +471,13 @@ Recall→Delta 现已通过 step `12661`，最新 beta mean/std 为
 `0.29498 / 0.17073`，gamma mean/std/饱和率为 `0.40377 / 0.30137 / 4.79%`；
 近 20 点 loss `2.72435`、稳态吞吐约 `310.1k token/s`，数值和 checkpoint 均正常。
 
+step-14000 validation 的小幅领先保持稳定：Recall→Delta loss/PPL 为
+`2.733998 / 15.39431`，相对 GDN `2.735018 / 15.41002` 低 `0.001020` loss、
+`0.102%` PPL；Parallel 与 Delta→Recall 的 PPL 为 `15.40296 / 15.43278`。
+作业现至 step `14111`，近 20 点 loss `2.70426`，beta mean/std
+`0.29606 / 0.17186`，gamma mean/std/饱和率 `0.40063 / 0.30156 / 4.76%`，
+稳态吞吐约 `310.2k token/s`。七个共同验证点都保持相同方向，但仍只有约千分之一收益。
+
 ## 固定 gamma=1 消融已启动
 
 为直接检验可学习 gamma 是否将 recall 压弱，commit
