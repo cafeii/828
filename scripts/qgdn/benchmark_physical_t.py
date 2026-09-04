@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -13,18 +14,26 @@ sys.path.insert(0, str(ROOT / "model"))
 sys.path.insert(0, str(ROOT / "scripts" / "qgdn"))
 
 import torch
-
 from benchmark_training_speed import benchmark_model, write_json
 from lit_gpt.config import Config
 from runtime import configure_numerics
 
 
-MODELS = {
-    "virtual_recall_then_delta": ("qgdn_340M", False),
-    "physical_recall_then_delta": ("qgdn_340M", True),
-    "physical_delta_then_recall": ("qgdn_delta_then_recall_340M", True),
-    "physical_parallel": ("qgdn_parallel_340M", True),
+ORDER_CONFIGS = {
+    "recall_then_delta": "qgdn_340M",
+    "delta_then_recall": "qgdn_delta_then_recall_340M",
+    "parallel": "qgdn_parallel_340M",
 }
+MODELS = {
+    f"{backend}_{order}": (config, backend == "physical")
+    for order, config in ORDER_CONFIGS.items()
+    for backend in ("virtual", "physical")
+}
+
+
+def rotate(values: list[str], offset: int) -> list[str]:
+    offset %= len(values)
+    return values[offset:] + values[:offset]
 
 
 def main() -> None:
@@ -34,54 +43,149 @@ def main() -> None:
     parser.add_argument("--micro-batch-size", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--measured", type=int, default=5)
+    parser.add_argument("--repeats", type=int, default=4)
     parser.add_argument("--only", choices=tuple(MODELS), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
 
     if args.only is None:
-        children = {}
-        for name in MODELS:
-            child = args.output.with_name(f".{args.output.stem}-{name}.json")
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).resolve()),
-                    "--output", str(child),
-                    "--sequence-length", str(args.sequence_length),
-                    "--micro-batch-size", str(args.micro_batch_size),
-                    "--warmup", str(args.warmup),
-                    "--measured", str(args.measured),
-                    "--only", name,
-                ],
-                check=True,
+        if args.repeats < 2:
+            raise ValueError("stable A/B requires at least two repeats")
+        order_names = list(ORDER_CONFIGS)
+        schedule = []
+        runs = {
+            order: {backend: [] for backend in ("virtual", "physical")}
+            for order in order_names
+        }
+        failures = []
+        reference_child = None
+        for repeat in range(args.repeats):
+            for order in rotate(order_names, repeat):
+                backends = (
+                    ("virtual", "physical")
+                    if repeat % 2 == 0
+                    else ("physical", "virtual")
+                )
+                for backend in backends:
+                    name = f"{backend}_{order}"
+                    child = args.output.with_name(
+                        f".{args.output.stem}-r{repeat}-{name}.json"
+                    )
+                    command = [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        "--output", str(child),
+                        "--sequence-length", str(args.sequence_length),
+                        "--micro-batch-size", str(args.micro_batch_size),
+                        "--warmup", str(args.warmup),
+                        "--measured", str(args.measured),
+                        "--only", name,
+                    ]
+                    completed = subprocess.run(command, check=False)
+                    schedule.append(
+                        {
+                            "repeat": repeat,
+                            "order": order,
+                            "backend": backend,
+                            "returncode": completed.returncode,
+                        }
+                    )
+                    if completed.returncode or not child.is_file():
+                        failures.append(schedule[-1])
+                        break
+                    child_report = json.loads(child.read_text())
+                    reference_child = reference_child or child_report
+                    child_result = child_report["result"]
+                    child_result["repeat"] = repeat
+                    runs[order][backend].append(child_result)
+                    child.unlink()
+                if failures:
+                    break
+            if failures:
+                break
+        if reference_child is None:
+            report = {
+                "status": "failed",
+                "sequence_length": args.sequence_length,
+                "micro_batch_size": args.micro_batch_size,
+                "warmup_steps": args.warmup,
+                "measured_steps": args.measured,
+                "repeats": args.repeats,
+                "schedule": schedule,
+                "failures": failures,
+            }
+            write_json(args.output, report)
+            raise SystemExit(1)
+
+        comparisons = {}
+        for order in order_names:
+            virtual = runs[order]["virtual"]
+            physical = runs[order]["physical"]
+            virtual_by_repeat = {result["repeat"]: result for result in virtual}
+            physical_by_repeat = {result["repeat"]: result for result in physical}
+            paired_repeats = sorted(virtual_by_repeat.keys() & physical_by_repeat.keys())
+            speedups = [
+                physical_by_repeat[repeat]["tokens_per_second"]
+                / virtual_by_repeat[repeat]["tokens_per_second"]
+                for repeat in paired_repeats
+            ]
+            memory_ratios = [
+                physical_by_repeat[repeat]["peak_memory_gb"]
+                / virtual_by_repeat[repeat]["peak_memory_gb"]
+                for repeat in paired_repeats
+            ]
+            finite = all(
+                result["finite"]
+                for backend in ("virtual", "physical")
+                for result in runs[order][backend]
             )
-            children[name] = json.loads(child.read_text())
-            child.unlink()
-        results = {name: value["result"] for name, value in children.items()}
-        baseline = results["virtual_recall_then_delta"]["tokens_per_second"]
+            comparisons[order] = {
+                "paired_speedups": speedups,
+                "median_speedup": statistics.median(speedups) if speedups else None,
+                "minimum_speedup": min(speedups) if speedups else None,
+                "paired_peak_memory_ratios": memory_ratios,
+                "maximum_peak_memory_ratio": max(memory_ratios) if memory_ratios else None,
+                "finite": finite,
+                "paired_repeats": paired_repeats,
+                "complete_pairs": len(paired_repeats),
+                "passed": bool(
+                    len(paired_repeats) == args.repeats
+                    and finite
+                    and min(speedups) > 1.25
+                    and max(memory_ratios) <= 1.0
+                ),
+            }
+        passed = not failures and all(value["passed"] for value in comparisons.values())
         report = {
-            "status": "measured",
-            "commit": children["virtual_recall_then_delta"]["commit"],
-            "device": children["virtual_recall_then_delta"]["device"],
-            "torch": children["virtual_recall_then_delta"]["torch"],
-            "cuda": children["virtual_recall_then_delta"]["cuda"],
+            "status": "passed" if passed else "measured_below_gate",
+            "commit": reference_child["commit"],
+            "device": reference_child["device"],
+            "torch": reference_child["torch"],
+            "cuda": reference_child["cuda"],
             "sequence_length": args.sequence_length,
             "micro_batch_size": args.micro_batch_size,
             "warmup_steps": args.warmup,
             "measured_steps": args.measured,
+            "repeats": args.repeats,
             "activation_checkpointing": False,
             "loss_implementation": "fused",
             "process_isolation": True,
-            "models": results,
-            "ratios_to_virtual": {
-                name: value["tokens_per_second"] / baseline
-                for name, value in results.items()
-                if name != "virtual_recall_then_delta"
+            "pairing": "same update-order and repeat; order rotates, backend order alternates by repeat",
+            "gate": {
+                "minimum_speedup_strictly_above": 1.25,
+                "maximum_peak_memory_ratio": 1.0,
+                "all_training_values_finite": True,
             },
+            "schedule": schedule,
+            "failures": failures,
+            "runs": runs,
+            "comparisons": comparisons,
         }
         write_json(args.output, report)
         print(json.dumps(report, ensure_ascii=False), flush=True)
+        if failures:
+            raise SystemExit(1)
         return
 
     configure_numerics(cpu=False)
@@ -118,6 +222,7 @@ def main() -> None:
         "cuda": torch.version.cuda,
         "candidate": args.only,
         "physical_t": physical,
+        "physical_t_chunk_size": qgdn_rule.QGDN_PHYSICAL_T_CHUNK_SIZE,
         "result": result,
     }
     write_json(args.output, report)
