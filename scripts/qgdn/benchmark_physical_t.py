@@ -13,11 +13,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "model"))
 sys.path.insert(0, str(ROOT / "scripts" / "qgdn"))
 
-import torch
-from benchmark_training_speed import benchmark_model, write_json
-from lit_gpt.config import Config
-from runtime import configure_numerics
-
 
 ORDER_CONFIGS = {
     "recall_then_delta": "qgdn_340M",
@@ -36,6 +31,13 @@ def rotate(values: list[str], offset: int) -> list[str]:
     return values[offset:] + values[:offset]
 
 
+def write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    temporary.replace(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -46,9 +48,6 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=4)
     parser.add_argument("--only", choices=tuple(MODELS), help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
-        raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
-
     if args.only is None:
         if args.repeats < 2:
             raise ValueError("stable A/B requires at least two repeats")
@@ -188,6 +187,18 @@ def main() -> None:
             raise SystemExit(1)
         return
 
+    # Keep the orchestration parent completely CUDA-free.  The micro-batch-8
+    # virtual baseline sits close to the 80-GB limit, so even a parent's idle
+    # CUDA context can invalidate the same-card comparison.
+    from runtime import configure_device_from_cli, configure_numerics
+
+    configure_device_from_cli()
+    import torch
+    from benchmark_training_speed import benchmark_model
+    from lit_gpt.config import Config
+
+    if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
+        raise RuntimeError("This benchmark requires exactly one allocated CUDA GPU")
     configure_numerics(cpu=False)
     torch.manual_seed(117)
     model_name, physical = MODELS[args.only]
