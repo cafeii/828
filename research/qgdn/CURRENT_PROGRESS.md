@@ -351,6 +351,14 @@ blocked process 和约 14% I/O wait，与训练数值无关。共同 step 7501 �
 持续写入；按当前受扰吞吐 Delta→Recall 纯训练尚需约 9 小时，仍在 18 小时 Slurm 上限内，
 因此不丢弃已完成的 39.3% 进度、不重提，仅继续监控节点争用是否解除。
 
+第四个共同 validation（step 8000）仍然等价：Parallel 的 loss/PPL 为
+`2.839141 / 17.10108`，Delta→Recall 为 `2.839986 / 17.11553`，Parallel PPL 仅低约
+`0.085%`。共同 step 8411 的近 20 点 loss 为 `2.79759 / 2.79914`；beta mean/std 为
+`0.28944 / 0.16635` 与 `0.27827 / 0.16689`，gamma mean/std/饱和率为
+`0.40398 / 0.29998 / 5.04%` 与 `0.18398 / 0.19339 / 0.78%`。dgx01 的最近 40 点
+吞吐中位恢复至 `297.1k token/s`（均值 `271.5k`），节点 I/O wait 降到 6%--8%；
+此前的吞吐下降确认是可逆的共址争用，不改训练配置。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
