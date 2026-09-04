@@ -1062,9 +1062,10 @@ def test_cuda_output_state_and_backward(T, recall_mode):
 
 
 @pytest.mark.parametrize("update_order", UPDATE_ORDERS)
+@pytest.mark.parametrize("gamma_value", [0.1, 1.0])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity requires an allocated GPU")
-def test_cuda_update_order_output_state_and_backward(update_order):
-    xs = inputs(T=257, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=0.1)
+def test_cuda_update_order_output_state_and_backward(update_order, gamma_value):
+    xs = inputs(T=257, K=64, V=64, dtype=torch.float32, device="cuda", gamma_value=gamma_value)
     gpu = [
         x.detach().to(torch.bfloat16 if i < 3 else torch.float32).requires_grad_()
         for i, x in enumerate(xs)
