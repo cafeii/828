@@ -75,6 +75,8 @@ def parse_args(argv=None):
     p.add_argument("--num_workers", type=int, default=d("num_workers", 4))
     p.add_argument("--strategy", choices=["ddp", "zero1", "fsdp_zero2", "fsdp"], default=d("strategy", "ddp"),
                    help="多卡策略：显存够用ddp最快；zero1（优化器状态分片）省优化器显存；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
+    p.add_argument("--recompute_n", type=int, default=d("recompute_n", 0),
+                   help="激活重算粒度：每 n 层一段 checkpoint（0=关闭）。仅训练生效，显存换 ~1/3 额外算力")
     args = p.parse_args(argv)
     for key in ("model_name", "exp_name", "train_data_dir"):
         if getattr(args, key) is None:
@@ -173,10 +175,13 @@ def main():
     with fabric.init_module(empty_init=False):
         model = GPT(config)
         model.apply(lambda m: model._init_weights(m, n_layer=config.n_layer))
+    model.recompute_n = args.recompute_n
     if fabric.global_rank == 0:
         fabric.print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
         fabric.print(f"Non-embedding parameters: {num_parameters(model.transformer.h):,}")
         fabric.print(f"Total parameters: {num_parameters(model):,}")
+        if args.recompute_n > 0:
+            fabric.print(f"Activation checkpointing: every {args.recompute_n} layers")
 
     model = fabric.setup(model)
     if args.strategy == "zero1":

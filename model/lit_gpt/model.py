@@ -48,6 +48,9 @@ class GPT(nn.Module):
         self.kv_caches: List[Optional[KVCache]] = []
         self.max_len = self.config.block_size
         self.mamba_init = config.mamba_init
+        # 训练期激活重算粒度（段式 checkpoint，0=关闭）：每 n 层一段，backward 逐段重算。
+        # 训练运行时开关（非架构属性），由 pretrain.py 按 --recompute_n 设置；eval/推理不受影响。
+        self.recompute_n: int = 0
 
     def _init_weights(self, module: nn.Module, n_layer) -> None:
         """Meant to be used with `gpt.apply(gpt._init_weights)`."""
@@ -144,8 +147,22 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
 
         if not use_kv_cache:
-            for block in self.transformer.h:
-                x, *_ = block(x, rope, max_seq_length, past_key_values=past_key_values)
+            if self.training and self.recompute_n > 0:
+                from torch.utils.checkpoint import checkpoint
+
+                blocks = list(self.transformer.h)
+                for seg_start in range(0, len(blocks), self.recompute_n):
+                    seg = tuple(blocks[seg_start : seg_start + self.recompute_n])
+
+                    def seg_fn(x, seg=seg):
+                        for blk in seg:
+                            x, *_ = blk(x, rope, max_seq_length)
+                        return x
+
+                    x = checkpoint(seg_fn, x, use_reentrant=False)
+            else:
+                for block in self.transformer.h:
+                    x, *_ = block(x, rope, max_seq_length, past_key_values=past_key_values)
         else:
             start_pos = int(input_pos[0].item())
             if start_pos == 0:
