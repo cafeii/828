@@ -839,6 +839,26 @@ loss、梯度、alpha/beta/lambda/alignment 全部有限，收缩区间违规率
 七个共同验证点方向完全一致，且最近两点正号相对负号的差距重新扩大，但仍属于约千分之一
 量级，继续跑满 10BT 后作最终结论。
 
+两条 Q-Delta 现已全部跑满 `19073` step / `9,999,745,024` prediction tokens 并成功
+回收。正号 Slurm `38035` 与负号 Slurm `38065` 均为 `COMPLETED/0:0`，对应
+`run.exitcode=0`，入口 JUnit 分别为 `3/3` 与 `5/5`；完整 checkpoint 和 final model
+均存在。step-16000/18000 的正号/负号 PPL 为 `15.06649/15.08969` 与
+`14.86807/14.89398`，正号领先 `0.1540%/0.1743%`。最终 validation loss/PPL 为
+`2.695108/14.80711` 与 `2.696814/14.83240`：正号领先负号 `0.1708%`，相对 GDN、
+beta-style Recall→Delta、beta-style Parallel 分别低 `0.2243%/0.1266%/0.1470%`
+PPL；负号虽然比 GDN 低 `0.0539%`，但比 Recall→Delta 和 Parallel 高
+`0.0440%/0.0236%`。因此九个周期验证点和终点都支持论文正号，且正号取得了当前严格
+对齐实验中的最佳 PPL，但收益仍小于四分之一个百分点。
+
+正号/负号末步 alpha mean/std 为 `0.68404/0.34831` 与 `0.68587/0.34672`，beta
+mean/std 为 `0.28960/0.16919` 与 `0.29348/0.17255`，lambda mean/std 为
+`0.37806/0.26132` 与 `0.39943/0.26680`，alignment mean/std 为
+`0.28977/0.17193` 与 `0.29111/0.17236`。两条全程无非有限训练值，收缩区间违规率
+始终为 `0`；末 20 点 loss 为 `2.674814/2.674842`。训练/墙钟耗时为
+`5.582/5.684 h` 与 `5.585/5.705 h`，有效训练/墙钟吞吐为
+`497.6k/488.7k` 与 `497.4k/486.9k token/s`，峰值显存为
+`66.2665/66.2684 GB/GPU`。科学差异不影响训练成本，符号收益来自验证质量而非速度。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
@@ -846,9 +866,7 @@ loss、梯度、alpha/beta/lambda/alignment 全部有限，收缩区间违规率
 2. 八个严格对齐作业现已全部成功完成并回收，不得重提。固定 gamma=1 和
    `U(0.85,0.95)` 高 gamma 初始化都不如 beta-style 初始化；Recall→Delta 虽是最优路径，
    但相对 GDN 的终点收益只有 `0.098%` PPL，按小信号处理。
-3. 监控 Q-Delta 正号 Slurm `38035` 与负号 Slurm `38065` 到各自 19073 step 终态；
-   在共同 2000-step validation 节点先严格配对比较正负号，再与 GDN、beta-style
-   Recall→Delta、beta-style Parallel 对齐比较 loss/PPL，同时跟踪 alpha/beta/lambda、
-   收缩区间违规率、吞吐和显存，终态后完整回收结果。
+3. Q-Delta 正负号 10BT 配对已完成并回收；保留论文正号作为候选，后续若继续验证，优先用
+   多 seed 或更大模型确认 `0.224%` 相对 GDN 的小幅收益是否稳健，不再重提本轮作业。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
