@@ -217,12 +217,15 @@ class GatedDeltaNet(nn.Module):
         if query_feedback is not None:
             gates["lambda"] = query_feedback
             if self.collect_gate_stats:
-                qn, kn = (F.normalize(x.float(), dim=-1) for x in (q, k))
-                alignment = b.float() * (1 + query_feedback.float() * (qn * kn).sum(-1))
-                gates["qdelta_alignment"] = alignment
-                gates["qdelta_outside_contraction"] = (
-                    (alignment <= 0) | (alignment >= 2)
-                ).to(alignment.dtype)
+                # Observation must not add autograd saves: non-reentrant
+                # activation checkpointing disables stats during recompute.
+                with torch.no_grad():
+                    qn, kn = (F.normalize(x.float(), dim=-1) for x in (q, k))
+                    alignment = b.float() * (1 + query_feedback.float() * (qn * kn).sum(-1))
+                    gates["qdelta_alignment"] = alignment
+                    gates["qdelta_outside_contraction"] = (
+                        (alignment <= 0) | (alignment >= 2)
+                    ).to(alignment.dtype)
         self._accumulate_gate_stats(**gates)
         if self.update_rule == "qdelta":
             from .qdelta_rule import qdelta_rule
