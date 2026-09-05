@@ -5,7 +5,7 @@
 
 # ---- 模型与实验 ----
 model_name: gdn2_lsr_340M          # Config.from_name（model/lit_gpt/config.py）
-exp_name: 20260905-1148-lsr300m-16B/gdn2_lsr_340M
+exp_name: 20260905-1508-lsr300m-lr6e4/gdn2_lsr_340M
 
 # ---- 数据 ----
 train_data_dir: /work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT/train
@@ -22,8 +22,8 @@ max_tokens: 15,728,640,000         # 30000 steps（逗号分隔数字可正确�
 global_batch_size: 128             # 128×4096 = 0.5M tok/step
 micro_batch_size: 4                # grad_accum = 128/(4×8卡) = 4
 
-# ---- 优化器（对齐 GDN/GDN2 原版）----
-learning_rate: 4.0e-4
+# ---- 优化器 ----
+learning_rate: 6.0e-4              # LSR 参数更多、拟合更慢 → LR 4e-4→6e-4（2026-09-05 用户裁定）
 min_lr_ratio: 0.1                  # cosine 退火到 LR/10
 weight_decay: 0.1
 beta1: 0.9
@@ -38,6 +38,6 @@ save_total_limit: 3                # 周期 ckpt 只留最新 3 个（final 不�
 wandb: false
 swanlab: true                      # SwanLab 监控（offline 落盘，事后登录节点 sync）
 swanlab_project: rnn-lsr
-swanlab_mode: offline
+swanlab_mode: online
 seed: 3407
 num_workers: 4

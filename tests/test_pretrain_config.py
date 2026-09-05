@@ -16,7 +16,7 @@ def test_config_file_values():
     assert args.model_name == "gdn2_lsr_340M"
     assert args.max_tokens == 15728640000 and isinstance(args.max_tokens, int)
     assert args.global_batch_size == 128 and args.micro_batch_size == 4
-    assert args.learning_rate == 4e-4 and args.min_lr_ratio == 0.1
+    assert args.learning_rate == 6e-4 and args.min_lr_ratio == 0.1
     assert args.weight_decay == 0.1 and args.beta1 == 0.9 and args.beta2 == 0.95
     assert args.grad_clip == 1.0 and args.warmup_tokens is None
     assert args.val_data_dir is None  # eval 项已从 config 删除
