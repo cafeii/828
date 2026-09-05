@@ -740,6 +740,29 @@ mean/std 为 `0.28953 / 0.16810` 与 `0.28842 / 0.16793`，gamma mean/std/饱和
 `77.0250 / 77.0617 GB/GPU`。因此可训练确实缓解固定 1 的退化，但
 `U(0.85,0.95)` 高初值不如 beta-style 随机初始化。
 
+## Q-Delta 严格对齐实验（2026-09-05）
+
+已按 ICML 2026 Q-Delta 论文和官方实现加入独立的 `qdelta_340M` 对照。令
+`x_t = k_hat_t + lambda_t q_hat_t`，其 key-first 状态递推为
+`S_t = alpha_t S_{t-1} + beta_t k_hat_t (v_t - alpha_t x_t^T S_{t-1})^T`；
+`lambda_t = sigmoid(W_lambda h_t - 0.9)` 为逐 token、逐 head 可学习门。该转移每个
+真实 token 只有一个 rank-1 DPLR row，不使用 QGDN 的虚拟 2T 路径，也不改动现有
+`QGDN_USE_PHYSICAL_T=False` 默认值。
+
+实现冻结在 commit `18dc085bb42d83f760ac7d5136f14b7ae75fcb15` 并已推送
+`cafeii/828:QGDN`。CPU/FP64 门禁验证了公式的两种独立展开、输出、末状态和全部七类
+输入梯度；Q-Delta 与 GDN 的共享 backbone 在 seed 3407 下逐参数 bit-identical，新增参数
+仅为每层 `W_lambda`。带 activation checkpointing 的一阶 CPU 训练也成功完成，loss/
+grad norm 有限，初始 lambda mean/std 为 `0.28616 / 0.05033`，稳定性量
+`beta * k_hat^T(k_hat + lambda q_hat)` 均位于 `(0,2)`。
+
+完整 10BT 作业已提交：实验
+`20260905-105931-qdelta-340m-10bt-s3407-95125c`，Slurm `38035`。配置与已完成的
+GDN/QGDN 严格对齐：8×H800、T=4096、micro batch 8、global batch 128、grad accumulation
+2、seed 3407、19073 step、每 2000 step 验证 1600 条序列、fused loss、关闭 activation
+checkpointing。入口先运行 Q-Delta CUDA 输出/末状态/全部输入梯度 JUnit 门禁，成功后才训练；
+当前为 `PENDING`，不会在 step 2000 提前停止。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
@@ -747,7 +770,8 @@ mean/std 为 `0.28953 / 0.16810` 与 `0.28842 / 0.16793`，gamma mean/std/饱和
 2. 八个严格对齐作业现已全部成功完成并回收，不得重提。固定 gamma=1 和
    `U(0.85,0.95)` 高 gamma 初始化都不如 beta-style 初始化；Recall→Delta 虽是最优路径，
    但相对 GDN 的终点收益只有 `0.098%` PPL，按小信号处理。
-3. 本组 10BT 监控已达终止条件，暂停定时监控。如要确认这个千分之一信号，下一步应该
-   用新 seed 做 Recall→Delta 与 GDN 的成对复现，而不是继续扫 gamma 强初值。
+3. 监控 Q-Delta Slurm `38035` 到 19073 step 终态；每个共同 2000-step validation 节点
+   与 GDN、beta-style Recall→Delta、beta-style Parallel 对齐比较 loss/PPL，同时跟踪
+   alpha/beta/lambda、收缩区间违规率、吞吐和显存，终态后完整回收结果。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

@@ -540,6 +540,15 @@ step-12000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
 `311.40k/307.11k token/s`，峰值显存 `77.0250 / 77.0617 GB/GPU`。最终结论是
 可训练优于固定 1，但高初值不如 beta-style。
 
+Q-Delta 现已按论文精确递推实现为每个真实 token 一个 rank-1 DPLR row：
+`x=k_hat+lambda*q_hat`，`S'=alpha*S+beta*k_hat*(v-alpha*x^T*S)^T`。因此它既不走
+QGDN 虚拟 2T，也不依赖已否决的物理 T rank-2 kernel。CPU/FP64 的输出、末状态和全部
+输入梯度门禁已通过；完整 10BT 严格对齐实验
+`20260905-105931-qdelta-340m-10bt-s3407-95125c` / Slurm `38035` 已提交，入口 CUDA
+门禁通过后使用 8×H800、T4096、mb8、GB128、GA2 跑满 19073 step。后续用其真实训练
+吞吐和峰值显存分别对比 GDN 与虚拟 2T QGDN，不把通用 DPLR 的理论 rank-1 优势直接当作
+整模型速度结论。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -575,3 +584,4 @@ step-12000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
 - 完整 physical/virtual kernel 根因对照：Slurm 36830/36862（38.689 vs 15.773 ms；确认 rank-row/chunk 数未下降，串行 state VJP 与 FP32 WY 为关键差距）
 - 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练成功完成并回收）
 - 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，训练成功完成并回收）
+- 论文 Q-Delta 严格对齐 10BT：Slurm 38035（实验 `20260905-105931-qdelta-340m-10bt-s3407-95125c`；commit `18dc085b`；入口 CUDA 门禁后跑满 19073 step）
