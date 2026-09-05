@@ -21,7 +21,7 @@ def test_config_file_values():
     assert args.grad_clip == 1.0 and args.warmup_tokens is None
     assert args.val_data_dir is None  # eval 项已从 config 删除
     assert args.strategy == "ddp" and args.devices == 8
-    assert args.swanlab is True and args.swanlab_mode == "offline"
+    assert args.swanlab is True and args.swanlab_mode == "online"  # 用户已改 online（计算节点实测可直连 swanlab.cn）
     assert args.save_total_limit == 3 and args.save_step_interval == 1000
     assert args.wandb is False
 
