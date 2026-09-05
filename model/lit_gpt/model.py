@@ -258,6 +258,7 @@ class Block(nn.Module):
                 recall_uniform_min=config.recall_uniform_min,
                 recall_uniform_max=config.recall_uniform_max,
                 qdelta_lambda_bias=config.qdelta_lambda_bias,
+                qdelta_query_sign=config.qdelta_query_sign,
             )
         else:
             self.attn = CausalSelfAttention(config, n_embd=config.n_embd, layer_idx=layer_idx)

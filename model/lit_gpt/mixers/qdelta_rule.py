@@ -1,4 +1,4 @@
-"""Exact paper Q-Delta recurrence on the generalized DPLR kernel.
+"""Paper Q-Delta and its sign ablation on the generalized DPLR kernel.
 
 The paper uses a value-first state and
 
@@ -10,7 +10,8 @@ exactly one DPLR row:
     S_t = alpha S_{t-1} - alpha beta k ((k + lambda q)^T S_{t-1})
           + beta k v^T.
 
-This is rank one and does not use QGDN's virtual-2T construction.
+The paired sign ablation replaces ``k + lambda q`` with ``k - lambda q``.
+Both are rank one and do not use QGDN's virtual-2T construction.
 """
 from __future__ import annotations
 
@@ -27,13 +28,13 @@ def _normalized(x: torch.Tensor) -> torch.Tensor:
     return F.normalize(x.to(dtype), dim=-1)
 
 
-def _dplr_input_values(q, k, v, g, beta, query_feedback):
+def _dplr_input_values(q, k, v, g, beta, query_feedback, query_sign):
     qn, kn = _normalized(q), _normalized(k)
     work = qn.dtype
     alpha = g.to(work).exp()
     beta = beta.to(work)
     query_feedback = query_feedback.to(work)
-    mixed = kn + query_feedback[..., None] * qn
+    mixed = kn + query_sign * query_feedback[..., None] * qn
     return (
         qn.to(q.dtype),
         kn.to(q.dtype),
@@ -47,14 +48,14 @@ def _dplr_input_values(q, k, v, g, beta, query_feedback):
 _compiled_dplr_input_values = torch.compile(_dplr_input_values, fullgraph=True, dynamic=True)
 
 
-def dplr_inputs(q, k, v, g, beta, query_feedback, *, compiled=False):
+def dplr_inputs(q, k, v, g, beta, query_feedback, *, query_sign=1.0, compiled=False):
     builder = _compiled_dplr_input_values if compiled else _dplr_input_values
-    values = builder(q, k, v, g, beta, query_feedback)
+    values = builder(q, k, v, g, beta, query_feedback, query_sign)
     return dict(zip(("q", "k", "v", "a", "b", "gk"), values))
 
 
 def qdelta_reference(
-    q, k, v, g, beta, query_feedback, *, scale=None, initial_state=None
+    q, k, v, g, beta, query_feedback, *, query_sign=1.0, scale=None, initial_state=None
 ):
     """Dense FP64/FP32 reference with state layout ``[B,H,K,V]``."""
     original_dtype = q.dtype
@@ -72,7 +73,7 @@ def qdelta_reference(
     for index in range(T):
         qt, kt, vt = qn[:, index], kn[:, index], v[:, index]
         alpha, strength = g[:, index].exp(), beta[:, index]
-        mixed = kt + query_feedback[:, index, :, None] * qt
+        mixed = kt + query_sign * query_feedback[:, index, :, None] * qt
         prediction = torch.einsum("bhk,bhkv->bhv", mixed, state)
         error = vt - alpha[..., None] * prediction
         state = alpha[..., None, None] * state + strength[..., None, None] * torch.einsum(
@@ -84,16 +85,19 @@ def qdelta_reference(
 
 
 def qdelta_rule(
-    q, k, v, g, beta, query_feedback, *, mode="chunk", scale=None,
+    q, k, v, g, beta, query_feedback, *, query_sign=1.0, mode="chunk", scale=None,
     initial_state=None, output_final_state=False, cu_seqlens=None,
 ):
+    if query_sign not in {-1.0, 1.0}:
+        raise ValueError("query_sign must be +1 or -1")
     if mode not in {"naive", "chunk", "fused_recurrent"}:
         raise ValueError(mode)
     if mode == "naive":
         if cu_seqlens is not None:
             raise NotImplementedError("Reference mode takes equal-length batches")
         output, state = qdelta_reference(
-            q, k, v, g, beta, query_feedback, scale=scale, initial_state=initial_state
+            q, k, v, g, beta, query_feedback, query_sign=query_sign,
+            scale=scale, initial_state=initial_state
         )
         return output, state if output_final_state else None
     if not q.is_cuda:
@@ -110,6 +114,7 @@ def qdelta_rule(
     op = chunk_dplr_delta_rule if mode == "chunk" else fused_recurrent_dplr_delta_rule
     inputs = dplr_inputs(
         q, k, v, g, beta, query_feedback,
+        query_sign=query_sign,
         compiled=mode == "chunk" and QDELTA_COMPILE_INPUTS,
     )
     kwargs = {"chunk_size": QDELTA_CHUNK_SIZE} if mode == "chunk" else {}

@@ -221,7 +221,9 @@ class GatedDeltaNet(nn.Module):
                 # activation checkpointing disables stats during recompute.
                 with torch.no_grad():
                     qn, kn = (F.normalize(x.float(), dim=-1) for x in (q, k))
-                    alignment = b.float() * (1 + query_feedback.float() * (qn * kn).sum(-1))
+                    alignment = b.float() * (
+                        1 + self.qdelta_query_sign * query_feedback.float() * (qn * kn).sum(-1)
+                    )
                     gates["qdelta_alignment"] = alignment
                     gates["qdelta_outside_contraction"] = (
                         (alignment <= 0) | (alignment >= 2)
@@ -232,6 +234,7 @@ class GatedDeltaNet(nn.Module):
 
             o, recurrent_state = qdelta_rule(
                 q, k, v, g, b, query_feedback,
+                query_sign=self.qdelta_query_sign,
                 mode=mode, initial_state=recurrent_state, output_final_state=use_cache,
                 cu_seqlens=kwargs.get("cu_seqlens"),
             )

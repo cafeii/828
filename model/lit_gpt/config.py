@@ -66,6 +66,8 @@ class Config:
     # Q-Delta uses lambda_t = sigmoid(W_lambda h_t - bias).  The official
     # released implementation defaults to 0.9 (the paper appendix says 0.8).
     qdelta_lambda_bias: float = 0.9
+    # +1 is paper Q-Delta; -1 is the strictly paired k-lambda*q ablation.
+    qdelta_query_sign: float = 1.0
 
     def __post_init__(self):
         # error checking
@@ -188,6 +190,7 @@ _recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
 configs += [
     dict(_recall_base, name="gdn_control_340M"),
     dict(_recall_base, name="qdelta_340M", mixer="qdelta"),
+    dict(_recall_base, name="qdelta_minus_340M", mixer="qdelta", qdelta_query_sign=-1.0),
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
     dict(
         _recall_base,
@@ -247,6 +250,11 @@ for _mixer in ("gdn", "qgdn", "qdelta"):
         n_layer=2, n_embd=128, n_head=2, head_dim=64,
         intermediate_size=352, vocab_size=256, block_size=128,
     ))
+configs.append(dict(
+    _recall_base, name="qdelta_minus_recall_tiny", mixer="qdelta", qdelta_query_sign=-1.0,
+    n_layer=2, n_embd=128, n_head=2, head_dim=64,
+    intermediate_size=352, vocab_size=256, block_size=128,
+))
 for _order in ("delta_then_recall", "parallel"):
     configs.append(dict(
         _recall_base, name=f"qgdn_{_order}_tiny", mixer="qgdn",
