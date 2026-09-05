@@ -815,6 +815,17 @@ Recall→Delta 低 `0.0632% / 0.0962%`；负号相对 GDN 低 `0.1796% / 0.1066%
 两条作业的 loss/梯度仍全部有限，收缩区间违规率为 `0`，checkpoint 持续更新，
 无 CUDA/NCCL/OOM 错误。四个共同验证点全部支持论文正号，但优势仍只有约千分之一。
 
+step-10000 的第五个共同 validation 仍支持正号。正号/负号 loss/PPL 为
+`2.794948 / 16.36178` 与 `2.795717 / 16.37437`，负号高 `0.0770%` PPL。正号
+相对 GDN、beta-style Recall→Delta 和 beta-style Parallel 分别低
+`0.2288% / 0.0863% / 0.1572%` PPL；负号相对 GDN 低 `0.1520%`，与
+Recall→Delta 持平（低 `0.0094%`）。对齐 step 11681 的近 20 点训练 loss 为
+`2.74715 / 2.74749`；正号/负号 alpha mean/std 为 `0.68552/0.34531` 与
+`0.68700/0.34394`，beta mean/std 为 `0.29143/0.16730` 与 `0.29643/0.17087`，
+lambda mean/std 为 `0.37531/0.25819` 与 `0.39753/0.26409`。当前正号/负号分别到达
+step `13701 / 11681`，正号已完成 step-12000 validation（PPL `15.80459`），等待负号到达
+同一节点。两条作业数值、收缩约束、checkpoint 和日志持续健康。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
