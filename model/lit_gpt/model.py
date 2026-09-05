@@ -230,6 +230,8 @@ class Block(nn.Module):
                 from .mixers.gdn import GatedDeltaNet as rnn_cls
             elif config.mixer == "qgdn":
                 from .mixers.qgdn import QueryGuidedDeltaNet as rnn_cls
+            elif config.mixer == "qdelta":
+                from .mixers.qdelta import QueryDeltaNet as rnn_cls
             elif config.mixer == "kda":
                 from .mixers.kda import KimiDeltaAttention as rnn_cls
             else:
@@ -255,6 +257,7 @@ class Block(nn.Module):
                 recall_weight_init=config.recall_weight_init,
                 recall_uniform_min=config.recall_uniform_min,
                 recall_uniform_max=config.recall_uniform_max,
+                qdelta_lambda_bias=config.qdelta_lambda_bias,
             )
         else:
             self.attn = CausalSelfAttention(config, n_embd=config.n_embd, layer_idx=layer_idx)

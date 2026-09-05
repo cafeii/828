@@ -43,7 +43,7 @@ class Config:
     condense_ratio: int = 1
 
     # ---- RNN mixer（GDN2/LSA）相关 ----
-    mixer: str = "attn"  # attn | gdn2 | gdn | qgdn | kda
+    mixer: str = "attn"  # attn | gdn2 | gdn | qgdn | qdelta | kda
     mixer_per_layer: int = 1  # 1=全RNN层；N>1=每N层1个RNN其余attn；<=0=纯attn
     num_groups: Optional[int] = None  # RNN组数G；None→n_head（MHA形态）
     head_dim: Optional[int] = None  # RNN头维d_k；None→n_embd//n_head
@@ -63,6 +63,9 @@ class Config:
     recall_weight_init: str = "beta"  # beta | zero | uniform_gate
     recall_uniform_min: float = 0.85
     recall_uniform_max: float = 0.95
+    # Q-Delta uses lambda_t = sigmoid(W_lambda h_t - bias).  The official
+    # released implementation defaults to 0.9 (the paper appendix says 0.8).
+    qdelta_lambda_bias: float = 0.9
 
     def __post_init__(self):
         # error checking
@@ -184,6 +187,7 @@ configs = [
 _recall_base = dict(_gdn2_340M_base, mixer="gdn", n_layer=20, head_dim=64)
 configs += [
     dict(_recall_base, name="gdn_control_340M"),
+    dict(_recall_base, name="qdelta_340M", mixer="qdelta"),
     dict(_recall_base, name="qgdn_340M", mixer="qgdn"),
     dict(
         _recall_base,
@@ -237,7 +241,7 @@ configs += [
     dict(_recall_base, name="qgdn_head_340M", mixer="qgdn", recall_gate="head"),
     dict(_recall_base, name="qgdn_zero_340M", mixer="qgdn", recall_gate="fixed", recall_init=0.0),
 ]
-for _mixer in ("gdn", "qgdn"):
+for _mixer in ("gdn", "qgdn", "qdelta"):
     configs.append(dict(
         _recall_base, name=f"{_mixer}_recall_tiny", mixer=_mixer,
         n_layer=2, n_embd=128, n_head=2, head_dim=64,

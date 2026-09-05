@@ -115,7 +115,7 @@ def optimizer_groups(model, decay):
 def shared_parameter_hash(model):
     h = hashlib.sha256()
     for name, parameter in model.named_parameters():
-        if ".recall_" not in name:
+        if ".recall_" not in name and ".lambda_proj." not in name:
             h.update(name.encode())
             h.update(parameter.detach().cpu().float().numpy().tobytes())
     return h.hexdigest()
@@ -181,7 +181,7 @@ def main():
     config = Config.from_name(args.model, block_size=args.sequence_length)
     if args.cpu:
         config.use_short_conv, config._norm_class = False, "RMSNorm"
-    if config.mixer not in {"gdn", "qgdn", "dt_gdn", "jqc_gdn"} or (config.num_groups or config.n_head) != config.n_head or config.use_lsa:
+    if config.mixer not in {"gdn", "qgdn", "qdelta", "dt_gdn", "jqc_gdn"} or (config.num_groups or config.n_head) != config.n_head or config.use_lsa:
         raise ValueError("The paired trainer requires a supported standard-MHA GDN-family model")
 
     manifest, corpus = None, {}
@@ -203,7 +203,9 @@ def main():
     model.gradient_checkpointing = not args.no_activation_checkpointing
     initial_shared_hash = shared_parameter_hash(model) if rank == 0 else None
     parameters = sum(p.numel() for p in model.parameters())
-    extra_parameters = sum(p.numel() for n, p in model.named_parameters() if ".recall_" in n)
+    recall_parameters = sum(p.numel() for n, p in model.named_parameters() if ".recall_" in n)
+    query_feedback_parameters = sum(p.numel() for n, p in model.named_parameters() if ".lambda_proj." in n)
+    extra_parameters = recall_parameters + query_feedback_parameters
     model.to(device)
     optimizer = torch.optim.AdamW(optimizer_groups(model, args.weight_decay), lr=args.learning_rate,
                                  betas=(args.beta1, args.beta2), fused=device.type == "cuda")
@@ -223,7 +225,8 @@ def main():
     code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     run = dict(args=immutable_args, config=asdict(config), world_size=world, code_revision=code_revision,
                data_sha256=json_hash(manifest) if manifest else "mqar-v1", parameters=parameters,
-               recall_parameters=extra_parameters, shared_initialization_sha256=initial_shared_hash,
+               recall_parameters=recall_parameters, query_feedback_parameters=query_feedback_parameters,
+               auxiliary_rule_parameters=extra_parameters, shared_initialization_sha256=initial_shared_hash,
                planned_tokens=args.max_steps * args.global_batch_size * args.sequence_length,
                validation_seed=172903, precision="fp32" if args.cpu else "bf16-mixed",
                checkpointing=model.gradient_checkpointing, numerics=numerics)
@@ -405,7 +408,9 @@ def main():
         result = dict(status="completed" if step == args.max_steps else "paused", step=step,
                       trained_tokens=step * args.global_batch_size * args.sequence_length,
                       initial_validation=initial_validation, final_validation=last_validation,
-                      parameters=parameters, recall_parameters=extra_parameters,
+                      parameters=parameters, recall_parameters=recall_parameters,
+                      query_feedback_parameters=query_feedback_parameters,
+                      auxiliary_rule_parameters=extra_parameters,
                       train_seconds=train_seconds, wall_seconds=wall_seconds,
                       gpu_hours=0 if args.cpu else wall_seconds * world / 3600,
                       peak_memory_gb=0 if args.cpu else torch.cuda.max_memory_allocated() / 1e9,

@@ -67,6 +67,7 @@ class GatedDeltaNet(nn.Module):
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
         self.recall_mode = "none"  # QGDN subclass opts into the Recall rule.
+        self.update_rule = "gdn"  # Q-Delta subclass opts into its mixed-error rule.
         self.collect_gate_stats = False
         self._gate_moments = {}
 
@@ -205,6 +206,7 @@ class GatedDeltaNet(nn.Module):
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
         gamma = self.recall_gamma(hidden_states) if self.recall_mode != "none" else None
+        query_feedback = self.query_feedback_lambda(hidden_states) if self.update_rule == "qdelta" else None
         gates = {"alpha": g.exp(), "beta": b}
         if gamma is not None:
             gates.update(
@@ -212,8 +214,25 @@ class GatedDeltaNet(nn.Module):
                 gamma_saturated=(gamma > 0.95).to(gamma.dtype),
                 forgetting_margin=(-g.expm1()) * (1 - gamma),
             )
+        if query_feedback is not None:
+            gates["lambda"] = query_feedback
+            if self.collect_gate_stats:
+                qn, kn = (F.normalize(x.float(), dim=-1) for x in (q, k))
+                alignment = b.float() * (1 + query_feedback.float() * (qn * kn).sum(-1))
+                gates["qdelta_alignment"] = alignment
+                gates["qdelta_outside_contraction"] = (
+                    (alignment <= 0) | (alignment >= 2)
+                ).to(alignment.dtype)
         self._accumulate_gate_stats(**gates)
-        if self.recall_mode != "none":
+        if self.update_rule == "qdelta":
+            from .qdelta_rule import qdelta_rule
+
+            o, recurrent_state = qdelta_rule(
+                q, k, v, g, b, query_feedback,
+                mode=mode, initial_state=recurrent_state, output_final_state=use_cache,
+                cu_seqlens=kwargs.get("cu_seqlens"),
+            )
+        elif self.recall_mode != "none":
             from .qgdn_rule import qgdn_rule
 
             o, recurrent_state = qgdn_rule(
