@@ -552,6 +552,15 @@ mean/std `0.28854/0.05214`、收缩区间违规率 `0`、峰值显存 `66.27 GB/
 吞吐和峰值显存分别对比 GDN 与虚拟 2T QGDN，不把通用 DPLR 的理论 rank-1 优势直接当作
 整模型速度结论。
 
+负号消融保持同一个 rank-1 DPLR 实现，仅令 `x=k_hat-lambda*q_hat`。commit
+`790d93dba29ac1814d4e6647b630a067f8173d45` 的 CPU/FP64 与 QGDN 相关回归为
+`145 passed`，正负号参数在相同 seed 下逐位一致。完整 10BT 实验
+`20260905-113033-qdelta-minus-340m-10bt-s3407-2ab048` / Slurm `38065` 已在 dgx17 通过
+联合 CUDA `5/5` 门禁并开始训练；step 21 的 loss/grad norm 为
+`8.23535/1.50980`，lambda mean/std `0.28866/0.05035`，收缩违规率 `0`，热身吞吐
+约 `475.8k token/s`，峰值显存 `66.27 GB/GPU`。其余配方与正号任务完全一致，目标同为
+19073 step / 9,999,745,024 prediction tokens。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -588,3 +597,4 @@ mean/std `0.28854/0.05214`、收缩区间违规率 `0`、峰值显存 `66.27 GB/
 - 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练成功完成并回收）
 - 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，训练成功完成并回收）
 - 论文 Q-Delta 严格对齐 10BT：Slurm 38035（实验 `20260905-105931-qdelta-340m-10bt-s3407-95125c`；commit `18dc085b`；入口 CUDA 门禁后跑满 19073 step）
+- Q-Delta 负号严格配对 10BT：Slurm 38065（实验 `20260905-113033-qdelta-minus-340m-10bt-s3407-2ab048`；commit `790d93d`；入口正负号联合 CUDA 门禁 `5/5`）

@@ -765,6 +765,21 @@ checkpointing。入口 Q-Delta CUDA 输出/末状态/全部输入梯度 JUnit �
 grad norm 为 `7.53594 / 1.11967`，lambda mean/std 为 `0.28854 / 0.05214`，收缩区间
 违规率为 `0`，峰值显存 `66.27 GB/GPU`；热身后的首个有效吞吐样本约 `472.8k token/s`。
 
+用户指定的负号消融也已作为独立配置接入，仅将误差查询
+`x_t = k_hat_t + lambda_t q_hat_t` 改为
+`x_t = k_hat_t - lambda_t q_hat_t`；其余状态递推、逐 token/head 可学习 lambda、初始化、
+backbone、数据和训练超参数全部不变。实现冻结在 commit
+`790d93dba29ac1814d4e6647b630a067f8173d45`，正负号模型在 seed 3407 下全部对应参数
+逐位一致。正负号 CPU/FP64 与 QGDN 相关回归为 `145 passed`，额外的负号 tiny 一阶训练
+loss/grad norm 为 `5.59689 / 34.30126`，指标有限且收缩区间违规率为 `0`。
+
+负号完整 10BT 实验 `20260905-113033-qdelta-minus-340m-10bt-s3407-2ab048` / Slurm
+`38065` 已在 dgx17 进入 `RUNNING`。入口正负号联合 CUDA 输出、末状态和全部输入梯度门禁
+为 `5/5`（0 failure/error）。step 21 的 loss/grad norm 为 `8.23535 / 1.50980`，lambda
+mean/std 为 `0.28866 / 0.05035`，收缩区间违规率 `0`，热身吞吐约
+`475.8k token/s`，峰值显存 `66.27 GB/GPU`。该任务与正号一样跑满 19073 step，
+不在中间验证点提前停止。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
@@ -772,8 +787,9 @@ grad norm 为 `7.53594 / 1.11967`，lambda mean/std 为 `0.28854 / 0.05214`，�
 2. 八个严格对齐作业现已全部成功完成并回收，不得重提。固定 gamma=1 和
    `U(0.85,0.95)` 高 gamma 初始化都不如 beta-style 初始化；Recall→Delta 虽是最优路径，
    但相对 GDN 的终点收益只有 `0.098%` PPL，按小信号处理。
-3. 监控 Q-Delta Slurm `38035` 到 19073 step 终态；每个共同 2000-step validation 节点
-   与 GDN、beta-style Recall→Delta、beta-style Parallel 对齐比较 loss/PPL，同时跟踪
-   alpha/beta/lambda、收缩区间违规率、吞吐和显存，终态后完整回收结果。
+3. 监控 Q-Delta 正号 Slurm `38035` 与负号 Slurm `38065` 到各自 19073 step 终态；
+   在共同 2000-step validation 节点先严格配对比较正负号，再与 GDN、beta-style
+   Recall→Delta、beta-style Parallel 对齐比较 loss/PPL，同时跟踪 alpha/beta/lambda、
+   收缩区间违规率、吞吐和显存，终态后完整回收结果。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
