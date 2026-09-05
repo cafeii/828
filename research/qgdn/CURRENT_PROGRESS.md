@@ -6,7 +6,7 @@
 
 当前只推进 seed 42/1234 的六条 GDN、beta-style gamma QGDN Recall→Delta 和论文正号
 Q-Delta 340M/10BT 复现实验，随后与已完成 seed 3407 汇总。已有 Slurm 38983–38988
-继续运行或排队，禁止重复提交；冻结代码、数据与训练科学配置保持不变。
+中的两条 GDN 已完成并回收，其余四条继续训练，禁止重复提交；冻结代码、数据与训练科学配置保持不变。
 
 QGDN 继续使用已验证的虚拟 2T，`QGDN_USE_PHYSICAL_T=False`；Q-Delta 使用每个真实
 token 一个 rank-1 DPLR row。物理 T 优化按用户要求暂存，未收到新指示不得恢复。
@@ -14,7 +14,7 @@ token 一个 rank-1 DPLR row。物理 T 优化按用户要求暂存，未收到�
 
 seed 3407 的正号 Q-Delta 终点 PPL 为 14.807112，相对 GDN 低 0.2243%，相对
 beta-style Recall→Delta 低 0.1266%。该优势仍需多 seed 确认；不重跑已完成的历史消融。
-当前最新状态见文末“seed 42 共同 step 6000 与 launcher 异常复核”；两个 seed 的三路初始化均已核验，
+当前最新状态见文末“两条 GDN 完成与 seed 1234 共同 step 4000”；两个 seed 的三路初始化均已核验，
 后续仅在同 seed、共同 validation 节点判断效果。
 
 ## 已完成
@@ -1094,9 +1094,69 @@ Q-Delta 相对 GDN 的 PPL 低 0.06035%，相对 QGDN 低 0.04051%。相对 GDN 
 远端。原有各 16 条 IB/RoCE 初始化 warning 未增长。本地只读审计工具已补入全部 srun error
 提取和显式复核记录，防止旧错误匹配规则漏报；未改实验代码。已有半小时监控继续 ACTIVE。
 
+## 两条 GDN 完成与 seed 1234 共同 step 4000（2026-09-06 01:55 CST）
+
+GDN Slurm 38983/38986 均已跑满 19073 step / 9,999,745,024 prediction tokens，
+`sacct` 的主作业、batch 与训练 step 均 COMPLETED/0:0，队列已无这两条作业，
+`run.exitcode=0`。最终 summary、metrics 与 stdout 的终点 validation 一致；两路各有
+1909 个 train 日志点、初始验证、九个周期验证和一次终点验证。最终 checkpoint 元数据
+step 均为 19073，model_final.pt 已生成；六路 checkpoint 仅检查 ZIP 目录和元数据，
+未作完整 tensor CRC 校验。
+
+| seed | Slurm | 结束时间 CST | final validation loss | final PPL | train seconds | 摘要 GPU·h | Slurm 分配 GPU·h |
+|---|---:|---|---:|---:|---:|---:|---:|
+| 42 | 38983 | 01:33:44 | 2.695053703 | 14.80631387 | 11467.15 | 26.2062 | 26.9333 |
+| 1234 | 38986 | 01:34:38 | 2.699135894 | 14.86687961 | 11411.30 | 26.0880 | 26.6756 |
+
+摘要 GPU·h 为 `8 × summary.wall_seconds / 3600`，包含训练程序内的验证等耗时；Slurm
+分配成本另包含入口/启动和退出阶段。两路 summary wall_seconds 分别为
+`11792.782931/11739.613108`。此时其余四路尚在训练，不与这些终点作错位效果比较。
+
+seed 1234 已完成三路共同 step 4000 / 2,097,152,000 prediction tokens validation，
+均为固定 1600 条序列、6,553,600 scored tokens；训练窗口取 step 3801、3811、…、3991
+的同 20 个日志点。
+
+| 方法 | validation loss | PPL | step 3801–3991 同步训练 loss 均值 |
+|---|---:|---:|---:|
+| GDN | 2.976907656 | 19.62702918 | 2.957300 |
+| QGDN Recall→Delta | 2.978589087 | 19.66005843 | 2.958394 |
+| Q-Delta 正号 | 2.978159103 | 19.65160675 | 2.957256 |
+
+Q-Delta 相对 GDN 的 PPL 高 0.12522%，相对 QGDN 低 0.04299%；此前 step 2000 与 GDN
+基本持平，本点转为小幅落后。seed 42 的最新共同节点仍是 step 6000，Q-Delta 小幅领先。
+这些结果尚不能确认相对 GDN 的稳定跨 seed 收益，等全部方法跑满后再计算最终配对统计。
+
+| 方法（共同 step 3991） | alpha mean/std | beta mean/std | gamma mean/std/饱和率 | lambda mean/std | alignment mean/std |
+|---|---|---|---|---|---|
+| GDN | 0.69819/0.33321 | 0.27200/0.15928 | — | — | — |
+| QGDN Recall→Delta | 0.66071/0.36431 | 0.27313/0.16150 | 0.42578/0.29935/6.443% | — | — |
+| Q-Delta 正号 | 0.69963/0.33112 | 0.27381/0.15824 | — | 0.36346/0.25600 | 0.27311/0.16058 |
+
+| seed | 方法 | Slurm | 状态 / step | 近20点吞吐中位 token/s | 峰值 GB/GPU | checkpoint step | srun error 行数 |
+|---|---|---:|---|---:|---:|---:|---:|
+| 42 | GDN | 38983 | COMPLETED / 19073 | 861.3k | 56.81 | 19073 | 97 |
+| 42 | QGDN Recall→Delta | 38984 | RUNNING / 7781 | 315.2k | 77.02 | 7000 | 134 |
+| 42 | Q-Delta 正号 | 38985 | RUNNING / 11941 | 472.0k | 66.27 | 11000 | 58 |
+| 1234 | GDN | 38986 | COMPLETED / 19073 | 866.7k | 56.82 | 19073 | 96 |
+| 1234 | QGDN Recall→Delta | 38987 | RUNNING / 5141 | 314.7k | 77.02 | 5000 | 134 |
+| 1234 | Q-Delta 正号 | 38988 | RUNNING / 7151 | 473.6k | 66.27 | 7000 | 132 |
+
+01:55 的 launcher 错误计数相对 01:20 已由 `52/67/0/53/54/66` 增至上表，38985 也出现
+同类连接重置和消息解析诊断。38983 在最终验证及权重保存后出现
+`eio_handle_mainloop: Abandoning IO 60 secs after job shutdown initiated`，sacct 显示
+训练 step 于 01:32:44 结束、主作业于 01:33:44 结束；终点 metrics/stdout 均完整且退出为 0。
+38986 另有 `Unexpected missing socket error`，仍成功退出。其余四路已继续推进至上表
+step，metrics 写入晚于最近 stderr 更新；所有已记录数值有限，两条 Q-Delta 全历史收缩
+违规率仍为 0。诊断来源/根因仍未确认，不能称为已消失或已解决；保留日志，未重启或改环境。
+
+六路冻结 commit、干净 worktree、科学配置、入口门禁和各 seed 三路初始化 hash 仍通过
+核验，无重复作业，物理 T 关闭。01:56 已回收全部现有日志与小型指标；两条 GDN 回收器
+返回 0、必需产物齐全并标记终态回收，其余四路仅缺最终 summary。大权重仍按排除规则
+保留远端。已有半小时监控继续 ACTIVE，等待其余四路；不重提已完成 GDN。
+
 ## 当前下一步
 
-1. 延续已有 `qgdn-seed` 半小时监控，等待 seed 42 的 step-8000、seed 1234 的 step-4000 三路共同验证及两条 GDN 终态；继续复核五路 launcher 错误计数与训练推进，未确认根因前不改环境。
+1. 延续已有 `qgdn-seed` 半小时监控其余四条训练，等待 seed 42 的 step-8000 和 seed 1234 的 step-6000 三路共同验证；两条 GDN 已完成并回收。继续复核 launcher 错误计数、训练推进与终态退出码，不重提已完成作业。
 2. 在同 seed 的共同 validation 节点比较 loss/PPL，跟踪 alpha/beta/gamma/lambda/alignment
    和已记录的饱和率、收缩违规率；不同 step 的最新训练 loss 仅用于健康检查。
 3. 六条全部终态后回收日志与指标，结合 seed 3407 给出三方法逐 seed 结果、均值、样本标准差、
