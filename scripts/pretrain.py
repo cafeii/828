@@ -26,38 +26,60 @@ from lit_gpt.speed_monitor import SpeedMonitorFabric as Monitor
 from lit_gpt.utils import chunked_cross_entropy, num_parameters
 
 
-def parse_args():
+def parse_args(argv=None):
+    # 先单独解析 --config：YAML 提供默认值，命令行显式参数优先于文件
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=str, default=None)
+    pre_args, _ = pre.parse_known_args(argv)
+
+    cfg = {}
+    if pre_args.config:
+        import yaml
+
+        with open(pre_args.config) as f:
+            cfg = yaml.safe_load(f) or {}
+
+    def d(key, default):
+        return cfg.get(key, default)
+
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name", type=str, required=True)
-    p.add_argument("--exp_name", type=str, required=True)
-    p.add_argument("--train_data_dir", type=str, required=True)
-    p.add_argument("--val_data_dir", type=str, default=None)
-    p.add_argument("--out_root", type=str, default="outputs/pretrain")
-    p.add_argument("--devices", type=int, default=torch.cuda.device_count() or 1)
-    p.add_argument("--nodes", type=int, default=1)
+    p.add_argument("--config", type=str, default=None,
+                   help="训练超参 YAML（如 scripts/train/configs/lsr300m-main.yaml）；命令行显式参数优先")
+    p.add_argument("--model_name", type=str, default=d("model_name", None))
+    p.add_argument("--exp_name", type=str, default=d("exp_name", None))
+    p.add_argument("--train_data_dir", type=str, default=d("train_data_dir", None))
+    p.add_argument("--val_data_dir", type=str, default=d("val_data_dir", None))
+    p.add_argument("--out_root", type=str, default=d("out_root", "outputs/pretrain"))
+    p.add_argument("--devices", type=int, default=d("devices", torch.cuda.device_count() or 1))
+    p.add_argument("--nodes", type=int, default=d("nodes", 1))
     # 训练规模
-    p.add_argument("--max_tokens", type=int, default=int(10e9))
-    p.add_argument("--micro_batch_size", type=int, default=4)
-    p.add_argument("--global_batch_size", type=int, default=512)
+    p.add_argument("--max_tokens", type=int, default=d("max_tokens", int(10e9)))
+    p.add_argument("--micro_batch_size", type=int, default=d("micro_batch_size", 4))
+    p.add_argument("--global_batch_size", type=int, default=d("global_batch_size", 512))
     # 优化器
-    p.add_argument("--learning_rate", type=float, default=4e-4)
-    p.add_argument("--min_lr_ratio", type=float, default=0.1)
-    p.add_argument("--weight_decay", type=float, default=0.1)
-    p.add_argument("--beta1", type=float, default=0.9)
-    p.add_argument("--beta2", type=float, default=0.95)
-    p.add_argument("--grad_clip", type=float, default=1.0)
-    p.add_argument("--warmup_tokens", type=int, default=None, help="默认max_tokens的1%%（对齐GDN/GDN2原版）")
+    p.add_argument("--learning_rate", type=float, default=d("learning_rate", 4e-4))
+    p.add_argument("--min_lr_ratio", type=float, default=d("min_lr_ratio", 0.1))
+    p.add_argument("--weight_decay", type=float, default=d("weight_decay", 0.1))
+    p.add_argument("--beta1", type=float, default=d("beta1", 0.9))
+    p.add_argument("--beta2", type=float, default=d("beta2", 0.95))
+    p.add_argument("--grad_clip", type=float, default=d("grad_clip", 1.0))
+    p.add_argument("--warmup_tokens", type=int, default=d("warmup_tokens", None),
+                   help="默认max_tokens的1%%（对齐GDN/GDN2原版）")
     # 日志与保存
-    p.add_argument("--log_iter_interval", type=int, default=10)
-    p.add_argument("--save_step_interval", type=int, default=500)
-    p.add_argument("--eval_step_interval", type=int, default=500)
-    p.add_argument("--eval_iters", type=int, default=50)
-    p.add_argument("--wandb", action="store_true")
-    p.add_argument("--seed", type=int, default=3407)
-    p.add_argument("--num_workers", type=int, default=4)
-    p.add_argument("--strategy", choices=["ddp", "fsdp_zero2", "fsdp"], default="ddp",
+    p.add_argument("--log_iter_interval", type=int, default=d("log_iter_interval", 10))
+    p.add_argument("--save_step_interval", type=int, default=d("save_step_interval", 500))
+    p.add_argument("--eval_step_interval", type=int, default=d("eval_step_interval", 500))
+    p.add_argument("--eval_iters", type=int, default=d("eval_iters", 50))
+    p.add_argument("--wandb", action="store_true", default=d("wandb", False))
+    p.add_argument("--seed", type=int, default=d("seed", 3407))
+    p.add_argument("--num_workers", type=int, default=d("num_workers", 4))
+    p.add_argument("--strategy", choices=["ddp", "fsdp_zero2", "fsdp"], default=d("strategy", "ddp"),
                    help="多卡策略：显存够用ddp最快；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
-    return p.parse_args()
+    args = p.parse_args(argv)
+    for key in ("model_name", "exp_name", "train_data_dir"):
+        if getattr(args, key) is None:
+            p.error(f"--{key} 必填（命令行给出或写入 --config 的 YAML）")
+    return args
 
 
 def create_dataloader(data_dir, block_size, batch_size, seed, num_workers, shuffle=True):
