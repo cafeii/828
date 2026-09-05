@@ -544,8 +544,11 @@ Q-Delta 现已按论文精确递推实现为每个真实 token 一个 rank-1 DPL
 `x=k_hat+lambda*q_hat`，`S'=alpha*S+beta*k_hat*(v-alpha*x^T*S)^T`。因此它既不走
 QGDN 虚拟 2T，也不依赖已否决的物理 T rank-2 kernel。CPU/FP64 的输出、末状态和全部
 输入梯度门禁已通过；完整 10BT 严格对齐实验
-`20260905-105931-qdelta-340m-10bt-s3407-95125c` / Slurm `38035` 已提交，入口 CUDA
-门禁通过后使用 8×H800、T4096、mb8、GB128、GA2 跑满 19073 step。后续用其真实训练
+`20260905-105931-qdelta-340m-10bt-s3407-95125c` / Slurm `38035` 已提交；入口 CUDA
+门禁在 dgx25 通过 `3/3` 后，已使用 8×H800、T4096、mb8、GB128、GA2 开始跑满
+19073 step。step 31 的首批有限指标为 loss `7.53594`、grad norm `1.11967`、lambda
+mean/std `0.28854/0.05214`、收缩区间违规率 `0`、峰值显存 `66.27 GB/GPU`；热身后
+首个有效吞吐样本约 `472.8k token/s`。后续用其真实训练
 吞吐和峰值显存分别对比 GDN 与虚拟 2T QGDN，不把通用 DPLR 的理论 rank-1 优势直接当作
 整模型速度结论。
 

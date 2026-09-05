@@ -760,8 +760,10 @@ grad norm 有限，初始 lambda mean/std 为 `0.28616 / 0.05033`，稳定性量
 `20260905-105931-qdelta-340m-10bt-s3407-95125c`，Slurm `38035`。配置与已完成的
 GDN/QGDN 严格对齐：8×H800、T=4096、micro batch 8、global batch 128、grad accumulation
 2、seed 3407、19073 step、每 2000 step 验证 1600 条序列、fused loss、关闭 activation
-checkpointing。入口先运行 Q-Delta CUDA 输出/末状态/全部输入梯度 JUnit 门禁，成功后才训练；
-当前为 `PENDING`，不会在 step 2000 提前停止。
+checkpointing。入口 Q-Delta CUDA 输出/末状态/全部输入梯度 JUnit 已在 dgx25 通过 `3/3`
+（0 failure/error）；Slurm 当前为 `RUNNING`，不会在 step 2000 提前停止。step 31 的 loss/
+grad norm 为 `7.53594 / 1.11967`，lambda mean/std 为 `0.28854 / 0.05214`，收缩区间
+违规率为 `0`，峰值显存 `66.27 GB/GPU`；热身后的首个有效吞吐样本约 `472.8k token/s`。
 
 ## 当前下一步
 
