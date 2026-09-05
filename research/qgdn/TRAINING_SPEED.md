@@ -360,7 +360,7 @@ prepared-input VJP 融合。当前算子若要达到虚拟的 `1.25x`，需从 `
 python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=8 ...
 ```
 
-## 固定 gamma=1 消融作业
+## 固定 gamma=1 消融结果
 
 Commit `538712c` 新增 Recall→Delta 和 Parallel 的 `recall_gate="fixed"` / `recall_init=1.0`
 配置；commit `49898cb` 将 CUDA 数值门禁扩展到 gamma=1 的三种更新顺序。固定 gamma
@@ -429,7 +429,14 @@ step `14141 / 14001`，beta mean/std 为 `0.26212 / 0.15805` 与
 `0.25812 / 0.15711`，gamma 继续全程严格为 `1/0/100%`。连续七个节点均否决
 固定强 recall 的效果收益。
 
-## 可训练高 gamma 初始化消融
+两路固定 gamma=1 作业已成功完成。Recall→Delta/Parallel 最终 loss/PPL 为
+`2.699919 / 14.87853`、`2.699549 / 14.87302`，相对同顺序 beta-style 高
+`0.355% / 0.297%` PPL，相对 GDN 高 `0.257% / 0.220%`。末步 beta mean/std
+为 `0.25857 / 0.15874` 与 `0.25554 / 0.15780`，gamma 全程严格为 `1/0/100%`。
+训练/墙钟有效吞吐为 `318.15k/313.90k` 与 `315.12k/310.57k token/s`，峰值
+显存 `75.6754 / 75.7184 GB/GPU`。终点完整否决固定强 recall。
+
+## 可训练高 gamma 初始化消融结果
 
 Commit `9e381f0` 新增 Recall→Delta 和 Parallel 的 trainable `gamma∼U(0.85,0.95)` 配置。
 为保证初始 gate 严格在指定区间，每层每 head 先在 gate 空间采样，再将 logit 写入
@@ -524,6 +531,15 @@ step-12000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
 `0.50085 / 0.31353 / 9.70%` 与 `0.49780 / 0.31186 / 9.31%`。六个共同节点仍然
 只支持可训练优于固定 1，不支持高 gamma 初值优于 beta-style。
 
+两路高 gamma 可训练作业已成功完成。Recall→Delta/Parallel 最终 loss/PPL 为
+`2.698479 / 14.85712`、`2.697799 / 14.84702`，相对同顺序 beta-style 高
+`0.211% / 0.122%` PPL，相对固定 gamma=1 低 `0.144% / 0.175%`，相对 GDN 高
+`0.113% / 0.045%`。末步 beta mean/std 为 `0.28953 / 0.16810` 与
+`0.28842 / 0.16793`，gamma mean/std/饱和率为 `0.48994 / 0.31519 / 9.56%` 与
+`0.48626 / 0.31390 / 9.15%`。训练/墙钟有效吞吐为 `314.18k/309.76k` 与
+`311.40k/307.11k token/s`，峰值显存 `77.0250 / 77.0617 GB/GPU`。最终结论是
+可训练优于固定 1，但高初值不如 beta-style。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -557,5 +573,5 @@ step-12000 validation 中，高 gamma Recall→Delta/Parallel 的 loss/PPL 为
 - 联合 BV16/32/64 审计：Slurm 36443/36445（全梯度通过；state/output 同时加宽因 state 逆扫恶化而否决）
 - output BV64 / state BV16 hybrid：Slurm 36448/36451（CPU 138 passed；CUDA 6/6；split backward 1.482x；峰值显存持平）
 - 完整 physical/virtual kernel 根因对照：Slurm 36830/36862（38.689 vs 15.773 ms；确认 rank-row/chunk 数未下降，串行 state VJP 与 FP32 WY 为关键差距）
-- 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练进行中）
-- 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，进行中）
+- 固定 gamma=1 的 Recall→Delta / Parallel 10BT 消融：Slurm 37379/37380（H800 preflight 均 10/10 通过，训练成功完成并回收）
+- 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，训练成功完成并回收）
