@@ -26,6 +26,20 @@ from lit_gpt.speed_monitor import SpeedMonitorFabric as Monitor
 from lit_gpt.utils import chunked_cross_entropy, num_parameters
 
 
+def load_dotenv():
+    """加载 .env（KEY=VALUE，已存在的环境变量优先）。搜索：$DOTENV_PATH → 工作区根/.env。"""
+    candidates = [os.environ.get("DOTENV_PATH", ""), str(wd / ".env")]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        for line in Path(path).read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        return
+
+
 def parse_args(argv=None):
     # 先单独解析 --config：YAML 提供默认值，命令行显式参数优先于文件
     pre = argparse.ArgumentParser(add_help=False)
@@ -77,6 +91,12 @@ def parse_args(argv=None):
                    help="多卡策略：显存够用ddp最快；zero1（优化器状态分片）省优化器显存；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
     p.add_argument("--recompute_n", type=int, default=d("recompute_n", 0),
                    help="激活重算粒度：每 n 层一段 checkpoint（0=关闭）。仅训练生效，显存换 ~1/3 额外算力")
+    # SwanLab 监控（loss/grad norm/门控/状态范数；计算节点无外网，默认 offline 事后 sync）
+    p.add_argument("--swanlab", action="store_true", default=d("swanlab", False))
+    p.add_argument("--swanlab_project", type=str, default=d("swanlab_project", "rnn-lsr"))
+    p.add_argument("--swanlab_mode", choices=["online", "offline", "local", "disabled"],
+                   default=d("swanlab_mode", "offline"),
+                   help="计算节点无外网：offline 落盘后由登录节点 swanlab sync 上云")
     args = p.parse_args(argv)
     for key in ("model_name", "exp_name", "train_data_dir"):
         if getattr(args, key) is None:
@@ -117,6 +137,7 @@ def get_lr(args, it, warmup_iters, max_iters):
 
 def main():
     args = parse_args()
+    load_dotenv()
     out_dir = os.path.join(args.out_root, args.exp_name)
     args.gradient_accumulation_steps = args.global_batch_size // (args.micro_batch_size * args.devices * args.nodes)
     if args.warmup_tokens is None:
@@ -221,7 +242,22 @@ def main():
             state["iter_num"] = 0
             state["step_count"] = 0
 
+    if args.swanlab and fabric.global_rank == 0:
+        import swanlab
+
+        swanlab.init(
+            mode=args.swanlab_mode,
+            project=args.swanlab_project,
+            name=args.exp_name.replace("/", "-"),
+            config=vars(args),
+            log_dir=os.path.join(out_dir, "swanlab"),
+        )
+
     train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monitor)
+    if args.swanlab and fabric.global_rank == 0:
+        import swanlab
+
+        swanlab.finish()
     if fabric.device.type == "cuda" and fabric.global_rank == 0:
         fabric.print(f"Peak memory: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
 
@@ -256,6 +292,13 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
             break
         iter_t0 = time.perf_counter()
 
+        # 本 iter 是否采集门控/状态统计（SwanLab 监控，与日志同频）
+        collect = args.swanlab and state["iter_num"] % args.log_iter_interval == 0
+        if collect:
+            for blk in model.transformer.h:
+                if getattr(getattr(blk, "attn", None), "collect_stats", None) is not None:
+                    blk.attn.collect_stats = True
+
         input_ids = train_data[:, 0 : model.config.block_size].long().contiguous()
         targets = train_data[:, 1 : model.config.block_size + 1].long().contiguous()
 
@@ -269,11 +312,17 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
             loss = loss_func(logits, targets)
             fabric.backward(loss / args.gradient_accumulation_steps)
 
+        grad_norm = None
         if not is_accumulating:
-            fabric.clip_gradients(model, optimizer, max_norm=args.grad_clip)
+            grad_norm = fabric.clip_gradients(model, optimizer, max_norm=args.grad_clip)
             optimizer.step()
             optimizer.zero_grad()
             state["step_count"] += 1
+
+        if collect:
+            for blk in model.transformer.h:
+                if getattr(getattr(blk, "attn", None), "collect_stats", None) is not None:
+                    blk.attn.collect_stats = False
 
         state["iter_num"] += 1
         total_lengths += input_ids.size(1)
@@ -286,6 +335,25 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
                 f" iter time {(t1 - iter_t0) * 1000:.2f}ms, trained {tokens_B:.3f}B tokens, ETA {eta_h:.2f}h"
                 + (f", peak mem {torch.cuda.max_memory_allocated() / 1e9:.1f}GB" if torch.cuda.is_available() else "")
             )
+            if args.swanlab:
+                import swanlab
+
+                metrics = {
+                    "train/loss": loss.item(),
+                    "train/lr": lr,
+                    "train/iter_time_ms": (t1 - iter_t0) * 1000,
+                    "train/tokens_B": tokens_B,
+                }
+                if grad_norm is not None:
+                    metrics["train/grad_norm"] = float(grad_norm)
+                if torch.cuda.is_available():
+                    metrics["sys/peak_mem_GB"] = torch.cuda.max_memory_allocated() / 1e9
+                for i, blk in enumerate(model.transformer.h):
+                    st = getattr(getattr(blk, "attn", None), "_stats", None)
+                    if st:
+                        for k, v in st.items():
+                            metrics[f"layer{i}/{k}"] = float(v)
+                swanlab.log(metrics, step=state["iter_num"])
         monitor.on_train_batch_end(
             state["iter_num"] * args.micro_batch_size,
             t1 - total_t0,

@@ -15,3 +15,6 @@ __pycache__/
 *.pyc
 .venv/*.egg-info/
 checkpoints/
+
+# 密钥（.env.example 为模板）
+.env
