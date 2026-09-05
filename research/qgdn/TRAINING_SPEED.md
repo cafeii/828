@@ -1,8 +1,8 @@
 # QGDN 训练加速报告
 
-> 2026-09-04 物理 T 已在独立短诊断路径上恢复优化，完整状态、失败路线和启用门槛见
-> [PHYSICAL_T_DEFERRED.md](PHYSICAL_T_DEFERRED.md)。已冻结正式训练和生产默认继续使用虚拟 2T，
-> `QGDN_USE_PHYSICAL_T=False`。
+> 当前任务为 seed 42/1234 的 GDN、QGDN Recall→Delta、正号 Q-Delta 六条完整 10BT 复现。
+> 物理 T 优化按用户要求暂存，`QGDN_USE_PHYSICAL_T=False`；下文物理 T 的计划属于历史记录，
+> 未收到新指示不得恢复。详见 [CURRENT_PROGRESS.md](CURRENT_PROGRESS.md)。
 
 ## 推荐配置
 
@@ -632,6 +632,30 @@ Q-Delta 正号的小幅质量收益现进入多 seed 复现阶段。新增 seed 
 和 Recall→Delta 的逐 seed PPL 差、均值与离散度；节点间吞吐只作为健康/成本指标，不作为
 方法质量结论。seed 42 的三路入口门禁已分别通过 `6/6`、`6/6`、`3/3`，实际共享初始化
 SHA256 逐路一致。所有实验使用唯一目录和提交锁，不重复提交。
+
+## 多 seed 接力健康与成本快照（2026-09-05 22:46 CST）
+
+四条运行、两条正常排队；原冻结代码、数据及训练参数已核对，无重复作业或重启。
+吞吐使用近 20 个已记录训练点的中位数，只反映各自节点当前成本，不能替代同节点 A/B。
+
+| seed | 方法 | Slurm | 状态 | 已记录 step | 近20点吞吐中位 token/s | 峰值 GB/GPU | JUnit |
+|---|---|---:|---|---:|---:|---:|---|
+| 42 | GDN | 38983 | RUNNING | 2871 | 861.2k | 56.81 | 6/6 |
+| 42 | QGDN Recall→Delta | 38984 | RUNNING | 961 | 314.8k | 77.02 | 6/6 |
+| 42 | Q-Delta 正号 | 38985 | RUNNING | 1331 | 471.9k | 66.27 | 3/3 |
+| 1234 | GDN | 38986 | RUNNING | 2531 | 866.9k | 56.82 | 6/6 |
+| 1234 | QGDN Recall→Delta | 38987 | PENDING(Resources) | — | — | — | 待启动 |
+| 1234 | Q-Delta 正号 | 38988 | PENDING(Priority) | — | — | — | 待启动 |
+
+seed 42 三路初始化 hash 一致；seed 1234 暂只有 GDN 启动，另两路须在启动后核对。
+两条 GDN 的 step-2000 PPL 分别为 23.08643 / 23.21941，两个 seed 均尚无三路共同
+训练后 validation，不据此判断多 seed 收益。所有已记录训练指标有限，Q-Delta 收缩违规率
+全为 0；QGDN beta 饱和率未被冻结日志记录，保持未测。
+
+四条日志只有初始化阶段的 IB/RoCE 合并 NCCL warning，后续训练持续推进，没有通信失败、
+OOM、非有限值或门禁失败证据。三个已发布 checkpoint 的 ZIP 目录和元数据可读取；
+小型日志和指标已同步，最终 summary 尚缺，不能标记为终态成功回收。
+现有 `qgdn-seed` 半小时监控已转接到当前任务，继续等待共同 validation 与后续启动门禁。
 
 ## 复现实验
 

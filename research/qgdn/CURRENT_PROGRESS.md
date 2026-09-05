@@ -4,20 +4,17 @@
 
 ## 当前目标
 
-当前路线已经切回虚拟 2T：
+当前只推进 seed 42/1234 的六条 GDN、beta-style gamma QGDN Recall→Delta 和论文正号
+Q-Delta 340M/10BT 复现实验，随后与已完成 seed 3407 汇总。已有 Slurm 38983–38988
+继续运行或排队，禁止重复提交；冻结代码、数据与训练科学配置保持不变。
 
-1. 保持单一记忆矩阵，使用已验证的虚拟 2T 实现比较三种双监督更新顺序。
-2. 下一训练候选为 `qgdn_parallel_340M`，推荐 8 卡、micro batch 8、global batch 128、
-   gradient accumulation 2、关闭 activation checkpointing、fused loss。
-3. 物理 T 优化已在不触及正式训练的独立短诊断路径上恢复；生产默认仍保持
-   `QGDN_USE_PHYSICAL_T=False`。完整接力信息见 [物理 T 优化暂存](PHYSICAL_T_DEFERRED.md)。
-4. 新训练的 token-wise gamma 默认改为与 beta 相同的初始化方案：独立
-   Xavier-uniform 权重（相同 gain）和零 bias；不再使用零权重加 `logit(0.1)`。
-   已完成的 Recall→Delta 10B 结果仍属于旧初始化，不能与新初始化的 Parallel 解释为
-   只改变更新顺序的严格配对实验。
+QGDN 继续使用已验证的虚拟 2T，`QGDN_USE_PHYSICAL_T=False`；Q-Delta 使用每个真实
+token 一个 rank-1 DPLR row。物理 T 优化按用户要求暂存，未收到新指示不得恢复。
+[物理 T 历史记录](PHYSICAL_T_DEFERRED.md)及下文历史段落中的“下一步”不代表当前执行计划。
 
-目前没有继续 QR-GDN、DT-GDN、JQC-GDN。已在同一新 gamma 初始化下提交
-Parallel 与 Delta→Recall 两个 10BT FineWeb 正式预训练，均保持虚拟 2T 默认路径。
+seed 3407 的正号 Q-Delta 终点 PPL 为 14.807112，相对 GDN 低 0.2243%，相对
+beta-style Recall→Delta 低 0.1266%。该优势仍需多 seed 确认；不重跑已完成的历史消融。
+当前健康状态见文末“多 seed 接力核验”，后续仅在同 seed、共同 validation 节点判断效果。
 
 ## 已完成
 
@@ -883,15 +880,65 @@ seed 42 的 GDN/QGDN 入口 JUnit 均已通过 `6/6`，Q-Delta 入口 JUnit 已�
 seed 1234，只在相同 step 的共同 validation 节点比较 loss/PPL，最终与 seed 3407 汇总
 均值、标准差和逐 seed 胜率。
 
+## 多 seed 接力核验（2026-09-05 22:46 CST）
+
+已用 `experiment.py status`、`squeue`、`sacct`、manifest、实际 run 配置、入口 JUnit、
+完整已记录 metrics、stdout/stderr 与 checkpoint 目录交叉核验六条已有作业。六个 worktree
+均干净且 HEAD 等于原冻结 commit，提交参数符合原科学配置，每个完整任务名仅有一条队列记录；
+本轮没有提交或重启训练。四条已启动 run 的数据 manifest 哈希均为
+`19aa6b7520c855601ac131171ba2aaae7794f92e487c5c0f1da7b8050db4de3d`。
+
+| seed | 方法 | Slurm | 状态 | 已记录 step | 近20点吞吐中位 token/s | 峰值 GB/GPU | JUnit |
+|---|---|---:|---|---:|---:|---:|---|
+| 42 | GDN | 38983 | RUNNING | 2871 | 861.2k | 56.81 | 6/6 |
+| 42 | QGDN Recall→Delta | 38984 | RUNNING | 961 | 314.8k | 77.02 | 6/6 |
+| 42 | Q-Delta 正号 | 38985 | RUNNING | 1331 | 471.9k | 66.27 | 3/3 |
+| 1234 | GDN | 38986 | RUNNING | 2531 | 866.9k | 56.82 | 6/6 |
+| 1234 | QGDN Recall→Delta | 38987 | PENDING(Resources) | — | — | — | 待启动 |
+| 1234 | Q-Delta 正号 | 38988 | PENDING(Priority) | — | — | — | 待启动 |
+
+此表是各作业在同一墙钟的健康快照，step 不同，不能用这些行的训练 loss 判断方法优劣。
+seed 42 三路共享初始化 hash 再次核对一致；seed 1234 的 GDN hash 为
+`7c3e88addd35922a07ffb58709e60debf95e7df93b49c3b04232179eacee8c57`，另两路仍未启动，
+所以该 seed 的三路 hash 检查尚未完成。
+
+两条 GDN 已有 step-2000 validation：seed 42 loss/PPL 为 `3.139245/23.08643`，seed
+1234 为 `3.144989/23.21941`。两个 seed 均尚无三路共同的训练后 validation 节点，当前不作
+跨方法或跨 seed 的效果结论。四条已启动作业的全部已记录 loss、grad norm 和门控统计有限，
+Q-Delta 全部已记录收缩违规率为 0。
+
+- seed 42 GDN，step 2871：alpha mean/std `0.70419/0.33526`，beta `0.26981/0.16467`。
+- seed 42 QGDN Recall→Delta，step 961：alpha mean/std `0.68188/0.36267`，beta `0.29172/0.17455`，gamma mean/std/饱和率 `0.48486/0.30920/8.69%`。
+- seed 42 Q-Delta 正号，step 1331：alpha mean/std `0.71222/0.33286`，beta `0.28388/0.17330`，lambda `0.35673/0.25591`，alignment `0.28199/0.17407`。
+- seed 1234 GDN，step 2531：alpha mean/std `0.70020/0.33300`，beta `0.26888/0.15798`。
+
+冻结日志仅输出 QGDN beta mean/std，未输出 beta 饱和率；gamma mean/std/饱和率齐全。
+缺失的 beta 饱和率保持未测状态，本轮不修改运行中的日志或科学配置。
+
+seed 42/1234 GDN 的 checkpoint 元数据 step 均为 2000，seed 42 Q-Delta 为 1000；
+ZIP 目录与 pickle 元数据可读取，均为原子发布的正式文件，未做全部 tensor payload CRC 扫描。
+seed 42 QGDN 在本快照为 step 961，尚未到首个 step-1000 保存点。全部 run.exitcode、
+最终 summary 和 final model 尚未生成，符合运行中/排队中的状态。
+
+四条启动日志各有 16 条 IB/RoCE 设备合并 NCCL warning，22:42 与 22:46 两轮计数一致，
+且发生于初始化阶段；后续有限训练、验证和保存继续推进，未发现 NCCL failure、OOM、
+非有限值、门禁失败或配置漂移。保留原日志，不依据该启动 warning 重启健康作业。
+
+六条现有日志、manifest 和已生成小型指标已同步至 Mac；回收器返回缺失必需产物，四条运行
+作业只缺最终 summary，两条排队作业尚缺 preflight/metrics/summary。这是运行中快照，
+不是终态成功回收。大型 checkpoint 按既有规则留在远端。
+
+已有 `qgdn-seed` 半小时 heartbeat 已从旧任务转接至当前接力任务，仍为 ACTIVE，未新建
+重复监控。后续等待 seed 1234 两路启动及共同 validation；六条终态后结合 seed 3407
+汇总逐 seed PPL、均值、样本标准差、配对差与胜率，以及吞吐、显存、耗时和稳定性，再暂停监控。
+
 ## 当前下一步
 
-1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
-   在 CPU/FP64 合约中明确验证边界 state adjoint 和全部 factor/value/decay 梯度，再考虑 CUDA。
-2. 八个严格对齐作业现已全部成功完成并回收，不得重提。固定 gamma=1 和
-   `U(0.85,0.95)` 高 gamma 初始化都不如 beta-style 初始化；Recall→Delta 虽是最优路径，
-   但相对 GDN 的终点收益只有 `0.098%` PPL，按小信号处理。
-3. 继续监控新增 seed 42/1234 的六条三路复现实验；优先确认入口 JUnit、同 seed 共享初始化
-   哈希和首批有限训练指标，随后在共同验证节点比较 GDN、Recall→Delta 与 Q-Delta 正号。
-   不重提已完成的 seed 3407 或 Q-Delta 负号作业。
+1. 延续已有 `qgdn-seed` 半小时监控，检查 seed 1234 的 QGDN/Q-Delta 启动门禁及三路 hash。
+2. 在同 seed 的共同 validation 节点比较 loss/PPL，跟踪 alpha/beta/gamma/lambda/alignment
+   和已记录的饱和率、收缩违规率；不同 step 的最新训练 loss 仅用于健康检查。
+3. 六条全部终态后回收日志与指标，结合 seed 3407 给出三方法逐 seed 结果、均值、样本标准差、
+   Q-Delta 配对差和胜率，连同训练成本、稳定性一起判断，再暂停监控。
+4. 保留已完成作业和物理 T 暂存结果；不重提旧作业，不恢复物理 T，不改变科学配置。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。
