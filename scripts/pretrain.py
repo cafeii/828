@@ -7,6 +7,7 @@
 import argparse
 import math
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -24,6 +25,21 @@ from lit_gpt.config import Config
 from lit_gpt.model import GPT, Block
 from lit_gpt.speed_monitor import SpeedMonitorFabric as Monitor
 from lit_gpt.utils import chunked_cross_entropy, num_parameters
+
+
+def _newest_ckpt(out_dir):
+    """找最新周期 ckpt（step{N}-model-ckpt.pth 最大 N）；兼容旧命名 latest-model-ckpt.pth。"""
+    if not os.path.isdir(out_dir):
+        return None
+    steps = [
+        int(m.group(1))
+        for f in os.listdir(out_dir)
+        if (m := re.fullmatch(r"step(\d+)-model-ckpt\.pth", f))
+    ]
+    if steps:
+        return os.path.join(out_dir, f"step{max(steps)}-model-ckpt.pth")
+    legacy = os.path.join(out_dir, "latest-model-ckpt.pth")
+    return legacy if os.path.exists(legacy) else None
 
 
 def load_dotenv():
@@ -52,6 +68,16 @@ def parse_args(argv=None):
 
         with open(pre_args.config) as f:
             cfg = yaml.safe_load(f) or {}
+
+    # yaml 里写逗号分隔数字（如 15,728,640,000）会被读成字符串，对 int 字段做容错归一
+    _int_keys = {
+        "devices", "nodes", "max_tokens", "micro_batch_size", "global_batch_size",
+        "warmup_tokens", "log_iter_interval", "save_step_interval", "eval_step_interval",
+        "eval_iters", "seed", "num_workers", "recompute_n", "save_total_limit",
+    }
+    for k in _int_keys & cfg.keys():
+        if isinstance(cfg[k], str):
+            cfg[k] = int(cfg[k].replace(",", "").replace("_", ""))
 
     def d(key, default):
         return cfg.get(key, default)
@@ -82,6 +108,8 @@ def parse_args(argv=None):
     # 日志与保存
     p.add_argument("--log_iter_interval", type=int, default=d("log_iter_interval", 10))
     p.add_argument("--save_step_interval", type=int, default=d("save_step_interval", 500))
+    p.add_argument("--save_total_limit", type=int, default=d("save_total_limit", 3),
+                   help="周期 ckpt 只保留最新 N 个（step{N}-model-ckpt.pth 滚动删除）；final ckpt 不计入")
     p.add_argument("--eval_step_interval", type=int, default=d("eval_step_interval", 500))
     p.add_argument("--eval_iters", type=int, default=d("eval_iters", 50))
     p.add_argument("--wandb", action="store_true", default=d("wandb", False))
@@ -170,7 +198,8 @@ def main():
     fabric.seed_everything(args.seed)
 
     config = Config.from_name(args.model_name)
-    resume = os.path.exists(os.path.join(out_dir, "latest-model-ckpt.pth"))
+    ckpt_to_resume = _newest_ckpt(out_dir)
+    resume = ckpt_to_resume is not None
     if fabric.global_rank == 0:
         os.makedirs(out_dir, exist_ok=True)
         fabric.print(f"Config: {config.__dict__}")
@@ -228,12 +257,11 @@ def main():
     state = {"model": model, "optimizer": optimizer, "iter_num": 0, "step_count": 0}
 
     if resume:
-        ckpt = os.path.join(out_dir, "latest-model-ckpt.pth")
         # resume是best-effort：ckpt可能被挪走/损坏，或Lustre元数据缓存给出stale的
         # exists()（28741：mv后15秒内启动的作业误判resume）。失败则从头训练。
         try:
-            fabric.print(f"Resuming from {ckpt}")
-            fabric.load(ckpt, state)
+            fabric.print(f"Resuming from {ckpt_to_resume}")
+            fabric.load(ckpt_to_resume, state)
             dl_state = os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth")
             if os.path.exists(dl_state):
                 _streaming_dataloader(train_dataloader).load_state_dict(torch.load(dl_state, weights_only=False))
@@ -275,8 +303,11 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
     total_lengths = 0
 
     def save_checkpoint(final=False):
-        name = "final" if final else "latest"
-        path = os.path.join(out_dir, f"{name}-model-ckpt.pth")
+        path = (
+            os.path.join(out_dir, "final-model-ckpt.pth")
+            if final
+            else os.path.join(out_dir, f"step{state['step_count']}-model-ckpt.pth")
+        )
         fabric.print(f"Saving checkpoint to {path!r}")
         if final:
             state["optimizer"] = None
@@ -286,6 +317,17 @@ def train(args, out_dir, fabric, state, train_dataloader, val_dataloader, monito
                 _streaming_dataloader(train_dataloader).state_dict(),
                 os.path.join(out_dir, f"latest-data-state-rank{fabric.global_rank}.pth"),
             )
+            # 滚动保留最新 save_total_limit 个周期 ckpt（final 不计入）
+            if args.save_total_limit > 0:
+                steps = sorted(
+                    (int(re.search(r"step(\d+)-model-ckpt", f).group(1))
+                     for f in os.listdir(out_dir) if re.fullmatch(r"step\d+-model-ckpt\.pth", f)),
+                    reverse=True,
+                )
+                for s in steps[args.save_total_limit:]:
+                    if fabric.global_rank == 0:
+                        os.remove(os.path.join(out_dir, f"step{s}-model-ckpt.pth"))
+                fabric.barrier()
 
     for train_data in train_dataloader:
         if state["iter_num"] >= max_iters:

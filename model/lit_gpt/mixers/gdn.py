@@ -66,6 +66,9 @@ class GatedDeltaNet(nn.Module):
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
+        # 训练监控（SwanLab）：collect_stats=True 时 forward 顺带记录门控统计与状态范数
+        self.collect_stats = False
+        self._stats: Optional[dict] = None
 
         self.head_k_dim = head_dim
         self.head_v_dim = int(head_dim * expand_v)
@@ -169,6 +172,15 @@ class GatedDeltaNet(nn.Module):
         k = rearrange(k, "... (g d) -> ... g d", d=self.head_k_dim)
         v = rearrange(v, "... (g d) -> ... g d", d=self.latent_dim)
 
+        # 门控统计（组级张量，repeat 之前）：遗忘门 g(log-decay) / 擦除写入门 β
+        if self.collect_stats:
+            self._stats = {
+                "forget_mean": g.detach().float().mean(),
+                "forget_std": g.detach().float().std(),
+                "beta_mean": b.detach().float().mean(),
+                "beta_std": b.detach().float().std(),
+            }
+
         # 策略2：组级张量repeat到H份进kernel（组内头共享，头g*I..(g+1)*I-1属于组g）
         if self.heads_per_group > 1:
             k, v = (repeat(x, "... g d -> ... (g i) d", i=self.heads_per_group) for x in (k, v))
@@ -178,13 +190,14 @@ class GatedDeltaNet(nn.Module):
             b = b * 2.0
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
+        output_state = use_cache or self.collect_stats
         if mode == "chunk":
             from ..kernels import get_chunk_gated_delta_rule
 
             o, recurrent_state = get_chunk_gated_delta_rule()(
                 q=q, k=k, v=v, g=g, beta=b,
                 initial_state=recurrent_state,
-                output_final_state=use_cache,
+                output_final_state=output_state,
                 use_qk_l2norm_in_kernel=True,
                 cu_seqlens=kwargs.get("cu_seqlens"),
             )
@@ -194,7 +207,7 @@ class GatedDeltaNet(nn.Module):
             o, recurrent_state = get_fused_recurrent_gated_delta_rule()(
                 q=q, k=k, v=v, g=g, beta=b,
                 initial_state=recurrent_state,
-                output_final_state=use_cache,
+                output_final_state=output_state,
                 use_qk_l2norm_in_kernel=True,
                 cu_seqlens=kwargs.get("cu_seqlens"),
             )
@@ -212,6 +225,14 @@ class GatedDeltaNet(nn.Module):
             o = o.to(hidden_states.dtype)
         else:
             raise NotImplementedError(f"Not supported mode `{mode}`.")
+
+        # 状态范数（detach，仅监控用）
+        if self.collect_stats and recurrent_state is not None:
+            per_head = recurrent_state.detach().float().norm(dim=(-2, -1))  # [B, H]
+            if self._stats is None:
+                self._stats = {}
+            self._stats["state_fro_mean"] = per_head.mean()
+            self._stats["state_fro_max"] = per_head.max()
 
         if past_key_values is not None:
             from .cache import update_layer_cache

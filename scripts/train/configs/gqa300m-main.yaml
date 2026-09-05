@@ -1,11 +1,9 @@
-# 340M 主实验训练配置（LSR）。
-# 用法：python scripts/pretrain.py --config scripts/train/configs/lsr300m-main.yaml
-# 优先级：命令行显式参数 > 本文件 > 代码内置默认（如冒烟可 --max_tokens 100000000 覆盖）。
-# 注意：exp_name 为当前实验记录值，新实验务必修改（决定输出目录 <out_root>/<exp_name>）。
+# 340M 主实验训练配置（GQA baseline，与 lsr300m-main.yaml 仅 model_name/exp_name 不同）。
+# 用法：python scripts/pretrain.py --config scripts/train/configs/gqa300m-main.yaml
 
 # ---- 模型与实验 ----
-model_name: gdn2_lsr_340M          # Config.from_name（model/lit_gpt/config.py）
-exp_name: 20260905-1148-lsr300m-16B/gdn2_lsr_340M
+model_name: gdn2_gqa_340M          # Config.from_name（model/lit_gpt/config.py）
+exp_name: 20260905-1148-lsr300m-16B/gdn2_gqa_340M
 
 # ---- 数据 ----
 train_data_dir: /work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT/train
