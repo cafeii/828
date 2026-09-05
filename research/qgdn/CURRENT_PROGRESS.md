@@ -859,6 +859,30 @@ mean/std 为 `0.28960/0.16919` 与 `0.29348/0.17255`，lambda mean/std 为
 `497.6k/488.7k` 与 `497.4k/486.9k token/s`，峰值显存为
 `66.2665/66.2684 GB/GPU`。科学差异不影响训练成本，符号收益来自验证质量而非速度。
 
+为检验 seed 3407 上 Q-Delta 正号相对 GDN 的 `0.224%` PPL 小收益是否可复现，已按完全相同
+340M/10BT 配方新增 seed `42` 和 `1234` 两组严格配对实验；每组同时包含 GDN、beta-style
+gamma 的 QGDN Recall→Delta、论文正号 Q-Delta，共六条。GDN/QGDN 复用冻结 commit
+`7eb73ca89411c54d4fe7a8ffb427df44e7709cfa`，Q-Delta 正号复用 commit
+`18dc085bb42d83f760ac7d5136f14b7ae75fcb15`，没有改变方法或训练科学配置。六条均为
+8×H800、T=4096、micro batch 8、global batch 128、gradient accumulation 2、19073 step /
+`9,999,745,024` prediction tokens、每 2000 step 验证 1600 条序列、fused loss、关闭
+activation checkpointing。
+
+seed 42 的 GDN / QGDN Recall→Delta / Q-Delta 分别为实验
+`20260905-220447-gdn-aligned-340m-10bt-s42-f40eca` / Slurm `38983`、
+`20260905-220447-qgdn-recall-delta-340m-10bt-s42-f27540` / `38984`、
+`20260905-220447-qdelta-plus-340m-10bt-s42-127db0` / `38985`；三条已在不同 H800 节点
+进入 `RUNNING`。seed 1234 的对应实验为
+`20260905-220447-gdn-aligned-340m-10bt-s1234-37d39a` / `38986`、
+`20260905-220447-qgdn-recall-delta-340m-10bt-s1234-857e5f` / `38987`、
+`20260905-220448-qdelta-plus-340m-10bt-s1234-5d44e4` / `38988`；当前正常处于
+`PENDING(Resources/Priority)`。所有作业均已使用唯一实验目录与提交锁，禁止重复提交。
+seed 42 的 GDN/QGDN 入口 JUnit 均已通过 `6/6`，Q-Delta 入口 JUnit 已通过 `3/3`；三路
+实际 `shared_initialization_sha256` 完全一致，均为
+`554a0f9ad8683718f006e320ca21bc7ec900ef928f42aae5bb5aeeb818245f39`。后续同样核对
+seed 1234，只在相同 step 的共同 validation 节点比较 loss/PPL，最终与 seed 3407 汇总
+均值、标准差和逐 seed 胜率。
+
 ## 当前下一步
 
 1. 物理 T 下一候选先拆分 dependency-only state adjoint 与 chunk-parallel transition VJP；
@@ -866,7 +890,8 @@ mean/std 为 `0.28960/0.16919` 与 `0.29348/0.17255`，lambda mean/std 为
 2. 八个严格对齐作业现已全部成功完成并回收，不得重提。固定 gamma=1 和
    `U(0.85,0.95)` 高 gamma 初始化都不如 beta-style 初始化；Recall→Delta 虽是最优路径，
    但相对 GDN 的终点收益只有 `0.098%` PPL，按小信号处理。
-3. Q-Delta 正负号 10BT 配对已完成并回收；保留论文正号作为候选，后续若继续验证，优先用
-   多 seed 或更大模型确认 `0.224%` 相对 GDN 的小幅收益是否稳健，不再重提本轮作业。
+3. 继续监控新增 seed 42/1234 的六条三路复现实验；优先确认入口 JUnit、同 seed 共享初始化
+   哈希和首批有限训练指标，随后在共同验证节点比较 GDN、Recall→Delta 与 Q-Delta 正号。
+   不重提已完成的 seed 3407 或 Q-Delta 负号作业。
 
 远程开发仓库为 `/work/projects/memos-b3/code/wangzr/828`，分支 `QGDN`，专用环境为 `/work/projects/memos-b3/software/miniconda3/envs/wangzr-qgdn`。GitHub 为 `cafeii/828`。

@@ -623,6 +623,16 @@ step-12000/14000 的第六、七个共同 validation 中，正号/负号 PPL 为
 为 `0.37806/0.26132` 与 `0.39943/0.26680`，alpha/alignment 统计及所有梯度有限，
 全程收缩违规率为 `0`。两符号计算成本实质相同；正号是质量上的小幅、稳定优势。
 
+Q-Delta 正号的小幅质量收益现进入多 seed 复现阶段。新增 seed `42` 与 `1234`，每个 seed
+分别运行 GDN、beta-style Recall→Delta QGDN 和论文正号 Q-Delta，完整跑满 19073 step /
+`9,999,745,024` prediction tokens。六条继续使用 8×H800、T4096、mb8、GB128、GA2、
+每 2000 step 验证 1600 条序列、fused loss、关闭 activation checkpointing；GDN/QGDN
+冻结在 `7eb73ca8`，Q-Delta 冻结在 `18dc085b`。seed 42 的 Slurm `38983/38984/38985`
+已运行，seed 1234 的 `38986/38987/38988` 正常排队。该批实验用于估计 Q-Delta 相对 GDN
+和 Recall→Delta 的逐 seed PPL 差、均值与离散度；节点间吞吐只作为健康/成本指标，不作为
+方法质量结论。seed 42 的三路入口门禁已分别通过 `6/6`、`6/6`、`3/3`，实际共享初始化
+SHA256 逐路一致。所有实验使用唯一目录和提交锁，不重复提交。
+
 ## 复现实验
 
 - 同一专用环境、同一节点的最终 8 卡三路对照：Slurm 35313
@@ -660,3 +670,5 @@ step-12000/14000 的第六、七个共同 validation 中，正号/负号 PPL 为
 - 可训练 gamma∼U(0.85,0.95) 的 Recall→Delta / Parallel 10BT 消融：Slurm 37413/37414（dgx37/dgx38，H800 preflight 13/13，训练成功完成并回收）
 - 论文 Q-Delta 严格对齐 10BT：Slurm 38035（实验 `20260905-105931-qdelta-340m-10bt-s3407-95125c`；commit `18dc085b`；入口 CUDA 门禁后跑满 19073 step）
 - Q-Delta 负号严格配对 10BT：Slurm 38065（实验 `20260905-113033-qdelta-minus-340m-10bt-s3407-2ab048`；commit `790d93d`；入口正负号联合 CUDA 门禁 `5/5`）
+- seed 42 三路 10BT 复现：GDN / Recall→Delta / Q-Delta 正号 Slurm `38983/38984/38985`
+- seed 1234 三路 10BT 复现：GDN / Recall→Delta / Q-Delta 正号 Slurm `38986/38987/38988`
