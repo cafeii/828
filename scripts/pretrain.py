@@ -73,8 +73,8 @@ def parse_args(argv=None):
     p.add_argument("--wandb", action="store_true", default=d("wandb", False))
     p.add_argument("--seed", type=int, default=d("seed", 3407))
     p.add_argument("--num_workers", type=int, default=d("num_workers", 4))
-    p.add_argument("--strategy", choices=["ddp", "fsdp_zero2", "fsdp"], default=d("strategy", "ddp"),
-                   help="多卡策略：显存够用ddp最快；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
+    p.add_argument("--strategy", choices=["ddp", "zero1", "fsdp_zero2", "fsdp"], default=d("strategy", "ddp"),
+                   help="多卡策略：显存够用ddp最快；zero1（优化器状态分片）省优化器显存；OOM再升fsdp_zero2（≈ZeRO2）/fsdp（全分片）")
     args = p.parse_args(argv)
     for key in ("model_name", "exp_name", "train_data_dir"):
         if getattr(args, key) is None:
@@ -129,8 +129,8 @@ def main():
 
     if args.devices * args.nodes > 1:
         # 显存够时 ddp 最快（无参数收集通信）；OOM 再逐级升分片：
-        # ddp（仅梯度allreduce）< fsdp_zero2（+参数不分片、梯度/优化器分片）< fsdp（全分片≈ZeRO3）
-        if args.strategy == "ddp":
+        # ddp（仅梯度allreduce）< zero1（+优化器状态分片）< fsdp_zero2（+梯度/优化器分片）< fsdp（全分片≈ZeRO3）
+        if args.strategy in ("ddp", "zero1"):
             strategy = "ddp"
         elif args.strategy == "fsdp_zero2":
             strategy = FSDPStrategy(
@@ -179,13 +179,25 @@ def main():
         fabric.print(f"Total parameters: {num_parameters(model):,}")
 
     model = fabric.setup(model)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
-        betas=(args.beta1, args.beta2),
-        fused=(fabric.device.type == "cuda"),
-    )
+    if args.strategy == "zero1":
+        # ZeRO Stage 1：优化器状态按 rank 分片（参数/梯度仍复制，通信与 ddp 相同）
+        from torch.distributed.optim import ZeroRedundancyOptimizer
+
+        optimizer = ZeroRedundancyOptimizer(
+            model.parameters(),
+            optimizer_class=torch.optim.AdamW,
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+            betas=(args.beta1, args.beta2),
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+            betas=(args.beta1, args.beta2),
+            fused=(fabric.device.type == "cuda"),
+        )
     optimizer = fabric.setup_optimizers(optimizer)
     state = {"model": model, "optimizer": optimizer, "iter_num": 0, "step_count": 0}
 

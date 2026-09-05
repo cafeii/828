@@ -9,7 +9,6 @@ exp_name: 20260831-2009-lsa300m-main/gdn2_lsr_340M
 
 # ---- 数据 ----
 train_data_dir: /work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT/train
-val_data_dir: /work/projects/memos-b3/datasets/lzc_rnn/fineweb-litdata/100BT/val
 out_root: outputs
 
 # ---- 资源与并行 ----
@@ -18,9 +17,9 @@ nodes: 1
 strategy: ddp                      # 显存够用 ddp 最快；OOM 再升 fsdp_zero2/fsdp
 
 # ---- 训练量与 batch ----
-max_tokens: 15000000000            # 15B tokens ≈ 7150 steps
-global_batch_size: 512             # 512×4096 = 2M tok/step
-micro_batch_size: 4                # grad_accum = 512/(4×8卡) = 16
+max_tokens: 16106127360            # 15×1024^3 ≈ 16.1B tokens；gbs 128 时 ≈ 30720 steps
+global_batch_size: 128             # 128×4096 = 0.5M tok/step
+micro_batch_size: 4                # grad_accum = 128/(4×8卡) = 4
 
 # ---- 优化器（对齐 GDN/GDN2 原版）----
 learning_rate: 4.0e-4
@@ -31,11 +30,9 @@ beta2: 0.95
 grad_clip: 1.0
 warmup_tokens: null                # null → max_tokens 的 1%
 
-# ---- 日志 / ckpt / 验证 ----
+# ---- 日志 / ckpt ----
 log_iter_interval: 5
 save_step_interval: 500
-eval_step_interval: 500
-eval_iters: 50
 wandb: false
 seed: 3407
 num_workers: 4
