@@ -259,6 +259,7 @@ class Block(nn.Module):
                 num_v_heads=config.num_v_heads,
                 use_lsr=config.use_lsr,
                 lsr_latent_dim=config.lsr_latent_dim,
+                lsr_init_p=config.lsr_init_p,
                 use_short_conv=config.use_short_conv,
                 conv_size=config.conv_size,
                 allow_neg_eigval=config.allow_neg_eigval,

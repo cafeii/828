@@ -103,6 +103,9 @@ def parse_args(argv=None):
     p.add_argument("--beta1", type=float, default=d("beta1", 0.9))
     p.add_argument("--beta2", type=float, default=d("beta2", 0.95))
     p.add_argument("--grad_clip", type=float, default=d("grad_clip", 1.0))
+    p.add_argument("--no_wd_patterns", type=str, nargs="*", default=d("no_wd_patterns", []),
+                   help="豁免weight decay的参数名正则（如 'p_mat'）；仅作用于AdamW匹配到的参数，"
+                        "不改变其余参数的wd，也不消费_no_weight_decay标记")
     p.add_argument("--warmup_tokens", type=int, default=d("warmup_tokens", None),
                    help="默认max_tokens的1%%（对齐GDN/GDN2原版）")
     # 日志与保存
@@ -234,12 +237,27 @@ def main():
             fabric.print(f"Activation checkpointing: every {args.recompute_n} layers")
 
     model = fabric.setup(model)
+    named_params = list(model.named_parameters())
+    if args.no_wd_patterns:
+        no_wd = [
+            p for n, p in named_params
+            if any(re.fullmatch(pat, n) or re.search(pat, n) for pat in args.no_wd_patterns)
+        ]
+        wd_params = [p for n, p in named_params if not any(p is q for q in no_wd)]
+        assert wd_params, "no_wd_patterns 匹配了全部参数，wd组为空"
+        param_groups = [
+            {"params": wd_params, "weight_decay": args.weight_decay},
+            {"params": no_wd, "weight_decay": 0.0},
+        ]
+    else:
+        no_wd = []
+        param_groups = [p for _, p in named_params]
     if args.strategy == "zero1":
         # ZeRO Stage 1：优化器状态按 rank 分片（参数/梯度仍复制，通信与 ddp 相同）
         from torch.distributed.optim import ZeroRedundancyOptimizer
 
         optimizer = ZeroRedundancyOptimizer(
-            model.parameters(),
+            param_groups,
             optimizer_class=torch.optim.AdamW,
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
@@ -247,12 +265,15 @@ def main():
         )
     else:
         optimizer = torch.optim.AdamW(
-            model.parameters(),
+            param_groups,
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
             betas=(args.beta1, args.beta2),
             fused=(fabric.device.type == "cuda"),
         )
+    if no_wd and fabric.global_rank == 0:
+        no_wd_names = [n for n, p in named_params if any(p is q for q in no_wd)]
+        fabric.print(f"weight decay豁免 {len(no_wd_names)} 个参数张量（no_wd_patterns={args.no_wd_patterns}）: {no_wd_names[:8]}{'...' if len(no_wd_names) > 8 else ''}")
     optimizer = fabric.setup_optimizers(optimizer)
     state = {"model": model, "optimizer": optimizer, "iter_num": 0, "step_count": 0}
 

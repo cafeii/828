@@ -51,6 +51,7 @@ class Config:
     num_v_heads: Optional[int] = None  # v头总数（方案：GQA+增加v_head，状态数=v头数）；None→等同组数
     use_lsr: bool = False  # LSR开关：组级潜状态 + 静态P还原
     lsr_latent_dim: Optional[int] = None  # 潜维d_c；None→head_v_dim
+    lsr_init_p: str = "xavier"  # P初始化："xavier"（旧口径，3D整体fan错位）| "identity"（P=I热启动，初始精确退化GQA）
     use_short_conv: bool = True
     conv_size: int = 4
     allow_neg_eigval: bool = False
@@ -153,6 +154,9 @@ configs = [
     dict(_gdn2_340M_base, name="gdn2_gqa_340M", num_groups=4),
     dict(_gdn2_340M_base, name="gdn2_gva_340M", num_groups=4, num_v_heads=16),
     dict(_gdn2_340M_base, name="gdn2_lsr_340M", num_groups=4, use_lsr=True),
+    dict(_gdn2_340M_base, name="gdn2_lsr_pI_340M", num_groups=4, use_lsr=True, lsr_init_p="identity"),
+    # ---- ~340M 降头数 GVA 消融（q-k-v=4-4-16，用户裁定 2026-09-07；n_embd/intermediate_size 不变）----
+    dict(_gdn2_340M_base, name="gdn2_gva_h4_340M", n_head=4, num_groups=4, num_v_heads=16),
     # ---- ~340M GDN/KDA 骨架对照（沿用gdn2骨架超参，只换mixer）----
     dict(_gdn2_340M_base, name="gdn_mha_340M", mixer="gdn"),
     dict(_gdn2_340M_base, name="gdn_gqa_340M", mixer="gdn", num_groups=4),

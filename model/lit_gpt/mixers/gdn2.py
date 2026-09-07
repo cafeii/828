@@ -42,9 +42,10 @@ class GatedDeltaNet2(nn.Module):
     d_v=head_dim*expand_v, d_c=lsr_latent_dim）：
       q: [B,T,H,d_k] 逐头
       k/b/g: [B,T,G,d_k] 组级
-      v/w:  [B,T,G,d_s] 组级，d_s = d_c（LSR）或 d_v（GQA）
-      递归状态: G份 [d_k, d_s]（策略2下kernel内冗余为H份，数学等价）
+      v/w:  [B,T,J,d_s] J=num_v_heads（默认=G 组级；GVA 增头），d_s = d_c（LSR）或 d_v
+      递归状态: J份 [d_k, d_s]（策略2下kernel内按q/v头数较大者冗余，数学等价）
       LSR还原: P [H, d_v, d_c]，o = einsum('bthc,hvc->bthv', o_latent, P)
+      （lsr_init_p="identity" 时 P=I 热启动，初始精确退化为 GQA）
     """
 
     def __init__(
@@ -57,6 +58,7 @@ class GatedDeltaNet2(nn.Module):
         num_v_heads: Optional[int] = None,
         use_lsr: bool = False,
         lsr_latent_dim: Optional[int] = None,
+        lsr_init_p: str = "xavier",
         mode: Literal["chunk", "fused_recurrent", "naive"] = "chunk",
         use_short_conv: bool = True,
         allow_neg_eigval: bool = False,
@@ -75,11 +77,16 @@ class GatedDeltaNet2(nn.Module):
         self.heads_per_group = num_heads // self.num_groups
         # 方案「GQA+增加v_head」：k/遗忘门/擦除门保持组级G份，v/w头数增至num_v_heads
         # （状态数=num_v_heads份，对照LSR的G份潜状态）。None→组级；与LSR互斥。
+        # num_v_heads ≤ num_heads：q逐头、v按组repeat进kernel（GVA 16-4-16）；
+        # num_v_heads > num_heads（GVA 4-4-16）：kernel以v头数M为状态份数，q广播到M份
+        # 读取再在组内r=J/H个头间取平均（语义：M份状态每份被r个q头读，输出按组聚合）。
         self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_groups
         assert not (use_lsr and self.num_v_heads != self.num_groups), "LSR的潜v是组级，与num_v_heads互斥"
-        assert self.num_v_heads % self.num_groups == 0 and num_heads % self.num_v_heads == 0, \
-            "需满足整除链 num_groups | num_v_heads | num_heads"
+        assert self.num_v_heads % self.num_groups == 0, "需满足 num_groups | num_v_heads"
+        assert self.num_v_heads % num_heads == 0 or num_heads % self.num_v_heads == 0, \
+            "需满足 num_v_heads 与 num_heads 互相整除（GVA 16-4-16 或 4-4-16）"
         self.use_lsr = use_lsr
+        self.lsr_init_p = lsr_init_p
         self.allow_neg_eigval = allow_neg_eigval
         self.use_short_conv = use_short_conv
         self.layer_idx = layer_idx
@@ -131,6 +138,17 @@ class GatedDeltaNet2(nn.Module):
         # LSR静态还原矩阵 P [H, d_v, d_c]
         if use_lsr:
             self.p_mat = nn.Parameter(torch.empty(self.num_heads, self.head_v_dim, self.latent_dim))
+            assert lsr_init_p in ("xavier", "identity"), f"未知lsr_init_p: {lsr_init_p!r}"
+            if lsr_init_p == "identity":
+                # P=I 热启动：初始精确退化为 GQA（docs/research.md 归纳证明 + 单测）。
+                # 组内各 P_i 初始相同不构成对称性陷阱——梯度经逐头 q_i 与 o_proj/g_proj
+                # 的逐头列块回传，各 P_i 第一步起即分化，无需对称性破缺噪声（用户裁定 2026-09-07）。
+                # d_v≠d_c 时取矩形主对角 1（min(d_v,d_c) 维恒等嵌入）。
+                with torch.no_grad():
+                    self.p_mat.zero_()
+                    diag = min(self.head_v_dim, self.latent_dim)
+                    idx = torch.arange(diag)
+                    self.p_mat[:, idx, idx] = 1.0
 
         # 输出路径：逐头SiLU门控RMSNorm + 输出投影
         self.g_proj = nn.Sequential(
@@ -153,7 +171,7 @@ class GatedDeltaNet2(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
-        if module is self and self.use_lsr:
+        if module is self and self.use_lsr and self.lsr_init_p != "identity":
             nn.init.xavier_uniform_(self.p_mat, gain=2**-2.5)
         module._is_hf_initialized = True
 
@@ -195,7 +213,13 @@ class GatedDeltaNet2(nn.Module):
         b = self.b_proj(hidden_states).sigmoid()
         w = self.w_proj(hidden_states).sigmoid()
 
+        # 策略2：组级/低头数张量repeat到进kernel的头数（连续块划分，头g*I..(g+1)*I-1属于组g）。
+        # kernel头数取 M = max(H, J)：num_v_heads>num_heads 时（GVA 4-4-16）状态份数=M=J，
+        # q/k/g/b 广播到M份（数学上等价于q被多个v头读取），出口再聚回H头。
+        m_heads = max(self.num_heads, self.num_v_heads)
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
+        if self.num_heads < m_heads:
+            q = repeat(q, "... h d -> ... (h r) d", r=m_heads // self.num_heads)
         k, g, b = (rearrange(x, "... (g d) -> ... g d", d=self.head_k_dim) for x in (k, g, b))
         v, w = (rearrange(x, "... (g d) -> ... g d", d=self.latent_dim) for x in (v, w))
 
@@ -210,11 +234,11 @@ class GatedDeltaNet2(nn.Module):
                 "write_std": w.detach().float().std(),
             }
 
-        # 策略2：组级/低头数张量repeat到H份进kernel（连续块划分，头g*I..(g+1)*I-1属于组g）
-        if self.num_groups < self.num_heads:
-            k, g, b = (repeat(x, "... g d -> ... (g i) d", i=self.heads_per_group) for x in (k, g, b))
-        if self.num_v_heads < self.num_heads:
-            v, w = (repeat(x, "... j d -> ... (j r) d", r=self.num_heads // self.num_v_heads) for x in (v, w))
+        # 策略2（续）：k/g/b、v/w repeat 到 M 份
+        if self.num_groups < m_heads:
+            k, g, b = (repeat(x, "... g d -> ... (g i) d", i=m_heads // self.num_groups) for x in (k, g, b))
+        if self.num_v_heads < m_heads:
+            v, w = (repeat(x, "... j d -> ... (j r) d", r=m_heads // self.num_v_heads) for x in (v, w))
 
         if self.allow_neg_eigval:
             b = b * 2.0
@@ -269,6 +293,12 @@ class GatedDeltaNet2(nn.Module):
                 conv_state=(conv_q, conv_k, conv_v) if self.use_short_conv else None,
                 offset=T,
             )
+
+        # num_v_heads > num_heads（GVA 4-4-16）：kernel 按 M=J 份状态读出 [B,T,M,d_v]，
+        # 聚回 H 头——组内 r=J/H 个 v 头对应同一 q 头，取平均（读出线性，均值保序等价）。
+        if self.num_v_heads > self.num_heads:
+            r = self.num_v_heads // self.num_heads
+            o = rearrange(o, "... (h r) d -> ... h r d", r=r).mean(dim=-2)
 
         # LSR出口还原：潜空间读取结果乘静态P回到每头value空间
         if self.use_lsr:

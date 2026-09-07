@@ -21,8 +21,8 @@ NUM_SAMPLES="${NUM_SAMPLES:-500}"
 
 RULER_SCRIPTS="${WORKSPACE}/third_party/RULER/scripts"
 TASKS=(niah_single_1 niah_single_2 niah_single_3 niah_multikey_1)
-# 前期快速验证子集（docs/experiment.md 评估安排）
-[[ "${QUICK:-0}" = "1" ]] && TASKS=(niah_single_2 niah_single_3)
+# 前期快速验证子集（docs/experiment.md 评估安排 + 2026-09-07 用户裁定加入 niah_single_1）
+[[ "${QUICK:-0}" = "1" ]] && TASKS=(niah_single_1 niah_single_2 niah_single_3)
 SEQ_LENGTHS=(1024 2048 4096 8192)
 # nltk punkt 已预下载（服务器无外网）；tokenizer 从本地路径加载不触网
 export NLTK_DATA="${NLTK_DATA:-${WORKSPACE}/dataset/eval_data/nltk_data}"
