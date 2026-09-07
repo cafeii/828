@@ -50,8 +50,9 @@ TASKS=(
   based_nq_2048
   based_triviaqa
 )
-# 前期快速验证子集（docs/experiment.md 评估安排）
-[[ "${QUICK:-0}" = "1" ]] && TASKS=(based_fda based_swde based_squad)
+# 前期快速验证子集：按实测/估算耗时取最短三项（2026-09-07 用户裁定）
+# SWDE 27.6min / FDA 33.6min / TriviaQA ~40-45min（原 SQuAD 82-86min 移出 QUICK）
+[[ "${QUICK:-0}" = "1" ]] && TASKS=(based_swde based_fda based_triviaqa)
 
 mkdir -p "${OUTPUT_DIR}"
 cd "${HARNESS}"
