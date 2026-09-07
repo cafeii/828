@@ -24,6 +24,6 @@ save_total_limit: 3
 wandb: false
 swanlab: true
 swanlab_project: rnn-lsr
-swanlab_mode: online
+swanlab_mode: offline
 seed: 3407
 num_workers: 4

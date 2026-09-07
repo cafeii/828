@@ -9,7 +9,7 @@ strategy: ddp
 recompute_n: 0
 max_tokens: 15,728,640,000
 global_batch_size: 128
-micro_batch_size: 4
+micro_batch_size: 2  # 601M参数+v>q广播致OOM(39977)，从4降到2（grad_accum自动升为8，gbs不变）
 learning_rate: 6e-4
 min_lr_ratio: 0.1
 weight_decay: 0.1
@@ -24,6 +24,6 @@ save_total_limit: 3
 wandb: false
 swanlab: true
 swanlab_project: rnn-lsr
-swanlab_mode: online
+swanlab_mode: offline
 seed: 3407
 num_workers: 4
